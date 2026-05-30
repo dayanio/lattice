@@ -258,16 +258,21 @@ async function handleDetailSave() {
   if (!detailServer.value || !editEndpoint.value.trim()) return
   store.formName = detailServer.value.name
   store.formSpec.endpoint = editEndpoint.value.trim()
-  store.formSpec.peerName = editPeerName.value.trim() || undefined
+  const pn = editPeerName.value.trim()
+  store.formSpec.peerName = pn || ''
   store.formSpec.tools = editTools.value.filter(t => t.name.trim())
   store.drawerType = 'edit'
   store.selectedServer = detailServer.value
-  const ok = await store.handleCreateOrUpdate()
-  if (ok) {
-    toast.success(t('manage.mcpServers.editSuccess'))
-    detailOpen.value = false
-  } else {
-    toast.error(t('manage.mcpServers.saveFailed'))
+  try {
+    const ok = await store.handleCreateOrUpdate()
+    if (ok) {
+      toast.success(t('manage.mcpServers.editSuccess'))
+      detailOpen.value = false
+    } else {
+      toast.error(t('manage.mcpServers.saveFailed'))
+    }
+  } catch (e: any) {
+    toast.error(e?.message || t('manage.mcpServers.saveFailed'))
   }
 }
 
@@ -298,11 +303,15 @@ function removeFormTool(i: number) {
 
 async function handleCreate() {
   if (!store.formName.trim() || !store.formSpec.endpoint.trim()) return
-  const ok = await store.handleCreateOrUpdate()
-  if (ok) {
-    toast.success(t('manage.mcpServers.createSuccess'))
-  } else {
-    toast.error(t('manage.mcpServers.saveFailed'))
+  try {
+    const ok = await store.handleCreateOrUpdate()
+    if (ok) {
+      toast.success(t('manage.mcpServers.createSuccess'))
+    } else {
+      toast.error(t('manage.mcpServers.saveFailed'))
+    }
+  } catch (e: any) {
+    toast.error(e?.message || t('manage.mcpServers.saveFailed'))
   }
 }
 

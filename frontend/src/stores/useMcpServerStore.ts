@@ -111,15 +111,16 @@ export const useMcpServerStore = defineStore('mcpServer', () => {
     loading.value = true
     try {
       if (drawerType.value === 'create') {
-        await createMCPServer({ name: formName.value.trim(), spec: formSpec.value })
+        await createMCPServer({ name: formName.value.trim(), spec: { ...formSpec.value } })
       } else {
-        await updateMCPServer(formName.value, formSpec.value)
+        await updateMCPServer(formName.value, { ...formSpec.value })
       }
       isDrawerOpen.value = false
       await refresh()
       return true
-    } catch {
-      return false
+    } catch (e: any) {
+      console.error('[mcp-server] save failed:', e?.message, e?.response?.data)
+      throw e
     } finally {
       loading.value = false
     }
