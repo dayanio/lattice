@@ -704,7 +704,11 @@
     "discoverSuccess": "发现 {count} 个工具",
     "discoverFailed": "发现工具失败，请检查端点 URL",
     "discoverHint": "工具较多时可用搜索过滤",
+    "discovering": "正在发现工具...",
     "searchTools": "搜索工具...",
+    "expandTools": "展开全部 {count} 个工具",
+    "collapseTools": "收起",
+    "editTool": "编辑工具",
     "createSuccess": "MCP Server 创建成功",
     "detail": {
       "peerAddress": "Peer 地址"

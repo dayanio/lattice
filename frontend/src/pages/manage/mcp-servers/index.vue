@@ -235,6 +235,7 @@ const detailServer = ref<MCPServer | null>(null)
 const editEndpoint = ref('')
 const editPeerName = ref('')
 const editTools = ref<MCPTool[]>([])
+const detailToolsExpanded = ref(false)
 
 function openDetail(type: 'view' | 'edit', srv: MCPServer) {
   detailType.value = type
@@ -242,6 +243,7 @@ function openDetail(type: 'view' | 'edit', srv: MCPServer) {
   editEndpoint.value = srv.spec.endpoint
   editPeerName.value = srv.spec.peerName ?? ''
   editTools.value = JSON.parse(JSON.stringify(srv.spec.tools ?? []))
+  detailToolsExpanded.value = false
   detailOpen.value = true
 }
 
@@ -271,19 +273,18 @@ async function handleDetailSave() {
 
 // ── Create dialog ─────────────────────────────────────────────────
 const toolSearch = ref('')
+const toolsExpanded = ref(false)
+const editingToolIdx = ref(-1)
 
 function openCreate() {
   toolSearch.value = ''
+  toolsExpanded.value = false
+  editingToolIdx.value = -1
   store.openDrawer('create')
 }
 
-async function handleDiscover() {
-  const ok = await store.discoverTools()
-  if (ok) {
-    toast.success(t('manage.mcpServers.discoverSuccess', { count: store.formSpec.tools?.length ?? 0 }))
-  } else {
-    toast.error(t('manage.mcpServers.discoverFailed'))
-  }
+function toggleToolEdit(i: number) {
+  editingToolIdx.value = editingToolIdx.value === i ? -1 : i
 }
 
 function addFormTool() {
@@ -291,6 +292,8 @@ function addFormTool() {
 }
 function removeFormTool(i: number) {
   store.removeTool(i)
+  if (editingToolIdx.value === i) editingToolIdx.value = -1
+  else if (editingToolIdx.value > i) editingToolIdx.value--
 }
 
 async function handleCreate() {
@@ -521,16 +524,16 @@ onMounted(() => store.refresh())
         </div>
         <div class="space-y-1.5">
           <Label>{{ t('manage.mcpServers.formURL') }}</Label>
-          <div class="flex gap-2">
-            <Input v-model="store.formSpec.endpoint" placeholder="https://mcp.example.com" class="flex-1 h-9" />
-            <Button variant="outline" size="sm" class="shrink-0 gap-1.5 h-9"
-              :disabled="store.discovering || !store.formSpec.endpoint?.trim()"
-              @click="handleDiscover">
-              <RefreshCw v-if="store.discovering" class="size-3.5 animate-spin" />
-              <Search v-else class="size-3.5" />
-              {{ t('manage.mcpServers.discoverTools') }}
-            </Button>
+          <div class="relative">
+            <Input v-model="store.formSpec.endpoint" placeholder="https://mcp.example.com" class="h-9 pr-9"
+              @input="store.autoDiscover()" />
+            <RefreshCw v-if="store.discovering"
+              class="absolute right-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground animate-spin" />
           </div>
+          <p v-if="store.discovering" class="text-[11px] text-muted-foreground">{{ t('manage.mcpServers.discovering') }}</p>
+          <p v-else-if="store.formSpec.tools?.length" class="text-[11px] text-emerald-600 dark:text-emerald-400">
+            {{ t('manage.mcpServers.discoverSuccess', { count: store.formSpec.tools.length }) }}
+          </p>
         </div>
 
         <Separator />
@@ -542,37 +545,74 @@ onMounted(() => store.refresh())
                 ({{ store.formSpec.tools.length }})
               </span>
             </Label>
-            <span v-if="(store.formSpec.tools?.length ?? 0) > 5" class="text-[11px] text-muted-foreground">
-              {{ t('manage.mcpServers.discoverHint') }}
-            </span>
+            <Button variant="outline" size="sm" class="h-6 px-2 text-[11px] gap-1" @click="addFormTool">
+              <Plus class="size-3" /> {{ t('manage.mcpServers.addTool') }}
+            </Button>
           </div>
-          <div v-if="(store.formSpec.tools?.length ?? 0) > 5" class="relative">
+
+          <!-- Search (when many tools) -->
+          <div v-if="(store.formSpec.tools?.length ?? 0) > 8" class="relative">
             <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
             <Input v-model="toolSearch" :placeholder="t('manage.mcpServers.searchTools')" class="pl-8 h-8 text-xs" />
           </div>
-          <div v-for="(tool, i) in store.formSpec.tools" :key="i" class="flex items-center gap-2"
-            v-show="!toolSearch || tool.name.toLowerCase().includes(toolSearch.toLowerCase()) || (tool.description ?? '').toLowerCase().includes(toolSearch.toLowerCase())">
-            <Input v-model="tool.name" placeholder="tool_name" class="flex-1 h-8 text-xs" />
-            <Input v-model="tool.description" :placeholder="t('manage.mcpServers.formToolDesc')" class="flex-1 h-8 text-xs" />
-            <DropdownMenu>
-              <DropdownMenuTrigger as-child>
-                <Button variant="outline" size="sm" class="w-[80px] justify-between text-xs h-8">
-                  {{ tool.riskLevel ?? 'low' }}
-                  <ChevronDown class="size-3 opacity-50" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent>
-                <DropdownMenuItem v-for="level in ['low', 'medium', 'high', 'critical']" :key="level"
-                  @click="tool.riskLevel = level as any">{{ level }}</DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button variant="ghost" size="icon" class="size-7 text-destructive shrink-0" @click="removeFormTool(i)">
-              <X class="size-3.5" />
-            </Button>
+
+          <!-- Compact tag grid -->
+          <div v-if="store.formSpec.tools?.length" class="rounded-lg border bg-muted/30 p-2.5 space-y-2"
+            :class="toolsExpanded ? 'max-h-[240px] overflow-y-auto' : ''">
+            <div class="flex flex-wrap gap-1.5">
+              <template v-for="(tool, i) in store.formSpec.tools" :key="i">
+                <button
+                  v-show="!toolSearch || tool.name.toLowerCase().includes(toolSearch.toLowerCase())"
+                  class="group inline-flex items-center gap-1 text-[11px] font-medium pl-2 pr-1 py-0.5 rounded-md cursor-pointer transition-colors"
+                  :class="riskColor[tool.riskLevel ?? 'low'] ?? riskColor.low"
+                  :title="tool.description || tool.name"
+                  @click="toggleToolEdit(i)"
+                >
+                  <span class="truncate max-w-[140px]">{{ tool.name || '(unnamed)' }}</span>
+                  <X class="size-3 opacity-0 group-hover:opacity-100 hover:text-destructive shrink-0"
+                    @click.stop="removeFormTool(i)" />
+                </button>
+              </template>
+            </div>
+
+            <!-- Expand/collapse -->
+            <button v-if="(store.formSpec.tools?.length ?? 0) > 12"
+              class="w-full text-[11px] text-muted-foreground hover:text-foreground transition-colors py-1"
+              @click="toolsExpanded = !toolsExpanded">
+              {{ toolsExpanded ? t('manage.mcpServers.collapseTools') : t('manage.mcpServers.expandTools', { count: store.formSpec.tools!.length }) }}
+            </button>
           </div>
-          <Button variant="outline" size="sm" class="gap-1 text-xs" @click="addFormTool">
-            <Plus class="size-3" /> {{ t('manage.mcpServers.addTool') }}
-          </Button>
+
+          <!-- Inline editor for selected tool -->
+          <div v-if="editingToolIdx >= 0 && store.formSpec.tools?.[editingToolIdx]" class="rounded-lg border p-3 space-y-2 bg-card">
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-muted-foreground">{{ t('manage.mcpServers.editTool') }}</span>
+              <Button variant="ghost" size="icon" class="size-5" @click="editingToolIdx = -1">
+                <X class="size-3" />
+              </Button>
+            </div>
+            <Input v-model="store.formSpec.tools[editingToolIdx].name" placeholder="tool_name" class="h-8 text-xs" />
+            <Input v-model="store.formSpec.tools[editingToolIdx].description" :placeholder="t('manage.mcpServers.formToolDesc')" class="h-8 text-xs" />
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] text-muted-foreground shrink-0">Risk:</span>
+              <DropdownMenu>
+                <DropdownMenuTrigger as-child>
+                  <Button variant="outline" size="sm" class="w-[90px] justify-between text-xs h-7">
+                    {{ store.formSpec.tools[editingToolIdx].riskLevel ?? 'low' }}
+                    <ChevronDown class="size-3 opacity-50" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem v-for="level in ['low', 'medium', 'high', 'critical']" :key="level"
+                    @click="store.formSpec.tools![editingToolIdx].riskLevel = level as any">{{ level }}</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+
+          <p v-if="!store.formSpec.tools?.length && !store.discovering" class="text-xs text-muted-foreground/50 py-1">
+            {{ t('manage.mcpServers.noToolsHint') }}
+          </p>
         </div>
       </div>
 
@@ -703,16 +743,22 @@ onMounted(() => store.refresh())
 
           <!-- View mode -->
           <div v-if="detailType === 'view'">
-            <div v-if="detailServer.spec.tools?.length" class="space-y-1.5">
-              <div v-for="(tool, i) in detailServer.spec.tools" :key="i"
-                class="flex items-center justify-between rounded-md bg-muted px-3 py-2">
-                <div class="flex items-center gap-2 min-w-0">
-                  <span class="text-xs font-medium truncate">{{ tool.name }}</span>
-                  <span v-if="tool.riskLevel" class="text-[10px] font-medium px-1.5 py-0.5 rounded"
-                    :class="riskColor[tool.riskLevel] ?? riskColor.low">{{ tool.riskLevel }}</span>
-                </div>
-                <span v-if="tool.description" class="text-[11px] text-muted-foreground truncate ml-2">{{ tool.description }}</span>
+            <div v-if="detailServer.spec.tools?.length" class="rounded-lg border bg-muted/30 p-2.5 space-y-2"
+              :class="detailToolsExpanded ? 'max-h-[240px] overflow-y-auto' : ''">
+              <div class="flex flex-wrap gap-1.5">
+                <span v-for="(tool, i) in detailServer.spec.tools" :key="i"
+                  class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-md cursor-default"
+                  :class="riskColor[tool.riskLevel ?? 'low'] ?? riskColor.low"
+                  :title="tool.description || tool.name">
+                  <span class="truncate max-w-[140px]">{{ tool.name }}</span>
+                  <span v-if="tool.riskLevel && tool.riskLevel !== 'low'" class="opacity-60">{{ tool.riskLevel }}</span>
+                </span>
               </div>
+              <button v-if="detailServer.spec.tools.length > 12"
+                class="w-full text-[11px] text-muted-foreground hover:text-foreground transition-colors py-1"
+                @click="detailToolsExpanded = !detailToolsExpanded">
+                {{ detailToolsExpanded ? t('manage.mcpServers.collapseTools') : t('manage.mcpServers.expandTools', { count: detailServer.spec.tools.length }) }}
+              </button>
             </div>
             <p v-else class="text-xs text-muted-foreground/50 py-1">{{ t('manage.mcpServers.noToolsHint') }}</p>
           </div>

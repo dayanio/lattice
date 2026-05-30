@@ -78,6 +78,7 @@ export const useMcpServerStore = defineStore('mcpServer', () => {
 
   // ── Discover tools from MCP server ───────────────────────────────
   const discovering = ref(false)
+  let discoverTimer: ReturnType<typeof setTimeout> | null = null
 
   async function discoverTools(): Promise<boolean> {
     const endpoint = formSpec.value.endpoint?.trim()
@@ -95,6 +96,14 @@ export const useMcpServerStore = defineStore('mcpServer', () => {
     } finally {
       discovering.value = false
     }
+  }
+
+  /** Auto-discover with debounce. Call on endpoint input changes. */
+  function autoDiscover(delay = 800) {
+    if (discoverTimer) clearTimeout(discoverTimer)
+    const endpoint = formSpec.value.endpoint?.trim()
+    if (!endpoint || !endpoint.startsWith('http')) return
+    discoverTimer = setTimeout(() => { discoverTools() }, delay)
   }
 
   async function handleCreateOrUpdate() {
@@ -166,7 +175,7 @@ export const useMcpServerStore = defineStore('mcpServer', () => {
     formName, formSpec,
     deleteDialogOpen, deleteTarget,
     refresh, openDrawer,
-    addTool, removeTool, discoverTools,
+    addTool, removeTool, discoverTools, autoDiscover,
     handleCreateOrUpdate, handleDelete, openDeleteDialog,
     toolsSummary, phaseClass, modeClass,
   }

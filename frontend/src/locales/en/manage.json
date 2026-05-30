@@ -704,7 +704,11 @@
     "discoverSuccess": "Discovered {count} tools",
     "discoverFailed": "Failed to discover tools. Check the endpoint URL.",
     "discoverHint": "Use search to filter tools",
+    "discovering": "Discovering tools...",
     "searchTools": "Search tools...",
+    "expandTools": "Show all {count} tools",
+    "collapseTools": "Show less",
+    "editTool": "Edit Tool",
     "createSuccess": "MCP Server created",
     "detail": {
       "peerAddress": "Peer Address"
