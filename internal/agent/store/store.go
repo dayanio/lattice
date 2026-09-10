@@ -272,6 +272,13 @@ type PeerIdentityRepository interface {
 	Update(ctx context.Context, m *models.PeerIdentity) error
 	Delete(ctx context.Context, id string) error
 	ListByNetwork(ctx context.Context, networkID string) ([]*models.PeerIdentity, error)
+	// ListIDs enumerates every identity primary key; used by the TTL
+	// reconciler's resync KeyLister.
+	ListIDs(ctx context.Context) ([]string, error)
+	// ClearGracePeriod zeroes previous_peer_ref, previous_peer_ip and
+	// grace_period_expires_at. It exists because GORM's Updates skips
+	// zero-valued struct fields, which would silently keep the old binding.
+	ClearGracePeriod(ctx context.Context, id string) error
 }
 
 // AgentIdentityRepository manages AI Agent identity records.
@@ -282,4 +289,10 @@ type AgentIdentityRepository interface {
 	Update(ctx context.Context, m *models.AgentIdentity) error
 	Delete(ctx context.Context, id string) error
 	ListByTenant(ctx context.Context, tenantID string) ([]*models.AgentIdentity, error)
+	// ListIDs enumerates every identity primary key; used by the TTL
+	// reconciler's resync KeyLister.
+	ListIDs(ctx context.Context) ([]string, error)
+	// UpdatePhase persists only the phase column, avoiding lost updates
+	// on other fields written concurrently by the API layer.
+	UpdatePhase(ctx context.Context, id string, phase string) error
 }
