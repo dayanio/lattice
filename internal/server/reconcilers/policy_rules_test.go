@@ -59,7 +59,7 @@ func TestPeerRuleCalculator_IdentityRefResolvesToIPs(t *testing.T) {
 		{Name: "api", Address: addr("10.0.0.10")},
 		{Name: "db", Address: addr("10.0.0.5")},
 	}
-	identities := []models.PeerIdentity{{
+	identities := []*models.PeerIdentity{{
 		NetworkID: "net-1", Name: "prod-db", PeerRef: "db",
 		ResolvedPeerIP: "10.0.0.5", PreviousPeerIP: "10.0.0.4",
 		GracePeriodExpiresAt: &grace,
@@ -91,7 +91,7 @@ func TestPeerRuleCalculator_IPBlockPassthrough(t *testing.T) {
 		}),
 	}}
 	peers := []*infra.Peer{{Name: "web", Address: addr("10.0.0.20")}}
-	identities := []models.PeerIdentity{}
+	var identities []*models.PeerIdentity
 
 	calc := reconcilers.NewPeerRuleCalculator(reconcilers.NewPolicyIdentityResolver(identities))
 	rule, err := calc.ComputeForPeer(ctx, policies, peers, peers[0])
@@ -122,7 +122,7 @@ func TestPeerRuleCalculator_DefaultDenyTail(t *testing.T) {
 		{Name: "api", Address: addr("10.0.0.10")},
 		{Name: "db", Address: addr("10.0.0.5")},
 	}
-	identities := []models.PeerIdentity{{NetworkID: "net-1", Name: "prod-db", PeerRef: "db", ResolvedPeerIP: "10.0.0.5"}}
+	identities := []*models.PeerIdentity{{NetworkID: "net-1", Name: "prod-db", PeerRef: "db", ResolvedPeerIP: "10.0.0.5"}}
 
 	calc := reconcilers.NewPeerRuleCalculator(reconcilers.NewPolicyIdentityResolver(identities))
 	rule, err := calc.ComputeForPeer(ctx, policies, peers, peers[0])
@@ -183,7 +183,7 @@ func TestPeerRuleCalculator_ExpiredGraceExcluded(t *testing.T) {
 		}),
 	}}
 	peers := []*infra.Peer{{Name: "api", Address: addr("10.0.0.10")}}
-	identities := []models.PeerIdentity{{
+	identities := []*models.PeerIdentity{{
 		NetworkID: "net-1", Name: "prod-db", PeerRef: "db",
 		ResolvedPeerIP: "10.0.0.5", PreviousPeerIP: "10.0.0.4",
 		GracePeriodExpiresAt: &stale,

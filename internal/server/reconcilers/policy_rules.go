@@ -36,10 +36,12 @@ type PolicyIdentityResolver struct {
 }
 
 // NewPolicyIdentityResolver indexes the snapshot by identity name.
-func NewPolicyIdentityResolver(identities []models.PeerIdentity) *PolicyIdentityResolver {
+func NewPolicyIdentityResolver(identities []*models.PeerIdentity) *PolicyIdentityResolver {
 	byName := make(map[string]models.PeerIdentity, len(identities))
 	for _, id := range identities {
-		byName[id.Name] = id
+		if id != nil {
+			byName[id.Name] = *id
+		}
 	}
 	return &PolicyIdentityResolver{byName: byName}
 }
@@ -94,18 +96,29 @@ func (c *PeerRuleCalculator) ComputeForPeer(
 	peers []*infra.Peer,
 	target *infra.Peer,
 ) (*infra.FirewallRule, error) {
-	infraPolicies := make([]*infra.Policy, 0, len(policies))
+	infraPolicies, err := c.BuildWirePolicies(policies)
+	if err != nil {
+		return nil, err
+	}
+
+	network := &infra.Network{Peers: peers}
+	return c.evaluator.Evaluate(ctx, target, network, infraPolicies)
+}
+
+// BuildWirePolicies converts persisted policy rows into their wire form,
+// expanding identity selections into resolved IPs. It is exported because
+// the netmap builder needs the same conversion for msg.Policies.
+func (c *PeerRuleCalculator) BuildWirePolicies(policies []*models.Policy) ([]*infra.Policy, error) {
+	out := make([]*infra.Policy, 0, len(policies))
 	now := time.Now()
 	for _, p := range policies {
 		var spec dto.PolicySpec
 		if err := json.Unmarshal([]byte(p.Spec), &spec); err != nil {
 			return nil, fmt.Errorf("parse spec of policy %q: %w", p.Name, err)
 		}
-		infraPolicies = append(infraPolicies, c.buildPolicy(p.Name, p.Action, &spec, now))
+		out = append(out, c.buildPolicy(p.Name, p.Action, &spec, now))
 	}
-
-	network := &infra.Network{Peers: peers}
-	return c.evaluator.Evaluate(ctx, target, network, infraPolicies)
+	return out, nil
 }
 
 // buildPolicy converts one persisted spec into the wire format, expanding

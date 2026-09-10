@@ -40,6 +40,7 @@ type Store interface {
 	ToolSpans() ToolSpanRepository
 	FlowEvents() FlowEventRepository
 	PeerIdentities() PeerIdentityRepository
+	Peers() PeerRepository
 	AgentIdentities() AgentIdentityRepository
 
 	Close() error
@@ -271,6 +272,17 @@ type ToolSpanRepository interface {
 type FlowEventRepository interface {
 	Write(ctx context.Context, e *models.FlowEvent) error
 	ListByTrace(ctx context.Context, traceID string) ([]*models.FlowEvent, error)
+}
+
+// PeerRepository manages the standalone peer registry (t_peer), mirroring
+// the netmap-relevant fields of the LatticePeer CRD.
+type PeerRepository interface {
+	Create(ctx context.Context, m *models.Peer) error
+	GetByID(ctx context.Context, id string) (*models.Peer, error)
+	GetByAppID(ctx context.Context, appID string) (*models.Peer, error)
+	ListByWorkspace(ctx context.Context, workspaceID string) ([]*models.Peer, error)
+	Update(ctx context.Context, m *models.Peer) error
+	Delete(ctx context.Context, id string) error
 }
 
 // PeerIdentityRepository manages stable logical identities for devices.
