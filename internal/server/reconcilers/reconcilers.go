@@ -30,6 +30,7 @@ import (
 const (
 	KindAgentIdentity = "AgentIdentity"
 	KindPeerIdentity  = "PeerIdentity"
+	KindPolicy        = "LatticePolicy"
 )
 
 // AgentIdentityStore is the narrow store surface the GC reconciler needs.
