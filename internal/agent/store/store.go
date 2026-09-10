@@ -41,6 +41,7 @@ type Store interface {
 	FlowEvents() FlowEventRepository
 	PeerIdentities() PeerIdentityRepository
 	Peers() PeerRepository
+	EnrollmentTokens() EnrollmentTokenRepository
 	AgentIdentities() AgentIdentityRepository
 
 	Close() error
@@ -282,6 +283,18 @@ type PeerRepository interface {
 	GetByAppID(ctx context.Context, appID string) (*models.Peer, error)
 	ListByWorkspace(ctx context.Context, workspaceID string) ([]*models.Peer, error)
 	Update(ctx context.Context, m *models.Peer) error
+	Delete(ctx context.Context, id string) error
+	// CountAll counts every registered peer (license node-limit checks).
+	CountAll(ctx context.Context) (int64, error)
+}
+
+// EnrollmentTokenRepository manages the standalone device enrollment
+// tokens (the DB equivalent of the LatticeEnrollmentToken CRD).
+type EnrollmentTokenRepository interface {
+	Create(ctx context.Context, token *models.EnrollmentToken) error
+	GetByToken(ctx context.Context, token string) (*models.EnrollmentToken, error)
+	// IncrementUsedCount atomically bumps the usage counter.
+	IncrementUsedCount(ctx context.Context, id string) error
 	Delete(ctx context.Context, id string) error
 }
 
