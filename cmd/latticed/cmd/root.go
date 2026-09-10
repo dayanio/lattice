@@ -62,6 +62,7 @@ func init() {
 	fs.StringP("server-url", "", "", "management server url")
 	fs.StringP("signaling-url", "", "", "NATS server URL for agent signaling (server-side)")
 	fs.BoolP("version", "", false, "Print version information")
+	fs.BoolP("standalone", "", false, "run without Kubernetes: serve peers, policies and netmaps from the embedded database")
 	fs.BoolP("save", "", false, "whether save config to file")
 
 }

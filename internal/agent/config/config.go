@@ -248,9 +248,13 @@ func (cm *ConfigManager) load(cmd *cobra.Command) error {
 //   - Metrics/Probe   → MetricsAddr (default :8443)
 type Config struct {
 	// ── Base / Runtime ───────────────────────────────────────────
-	Listen        string `mapstructure:"listen"` // HTTP listen address, default :8080
-	Level         string `mapstructure:"level"`  // log level
-	Env           string `mapstructure:"env"`    // runtime environment: dev / prod
+	Listen string `mapstructure:"listen"` // HTTP listen address, default :8080
+	// Standalone runs the control plane without Kubernetes: peer registry,
+	// netmaps, enrollment and TTL reconciliation are served from the
+	// embedded database. Default false (K8s controller mode).
+	Standalone    bool   `mapstructure:"standalone"`
+	Level         string `mapstructure:"level"` // log level
+	Env           string `mapstructure:"env"`   // runtime environment: dev / prod
 	Debug         bool   `mapstructure:"debug"`
 	Auth          string `mapstructure:"auth"`
 	AppId         string `mapstructure:"app-id"`

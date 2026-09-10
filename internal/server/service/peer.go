@@ -234,6 +234,9 @@ func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest)
 }
 
 func (p *peerService) CreateToken(ctx context.Context, tokenDto *dto.TokenDto) ([]byte, error) {
+	if p.client == nil {
+		return p.createTokenStandalone(ctx, tokenDto)
+	}
 	var token v1alpha1.LatticeEnrollmentToken
 	if err := p.client.Get(ctx, client.ObjectKey{Namespace: tokenDto.Namespace, Name: tokenDto.Name}, &token); err != nil {
 		if errors.IsNotFound(err) {
@@ -612,6 +615,32 @@ func (p *peerService) ensureDefaultNetwork(ctx context.Context, nsName string) e
 		}
 	}
 	return nil
+}
+
+// createTokenStandalone persists the workspace enrollment token in the
+// database (the DB equivalent of the LatticeEnrollmentToken CRD).
+func (p *peerService) createTokenStandalone(ctx context.Context, tokenDto *dto.TokenDto) ([]byte, error) {
+	if existing, err := p.store.EnrollmentTokens().GetByToken(ctx, tokenDto.Name); err == nil {
+		return []byte(existing.Token), nil // idempotent create
+	}
+	duration, err := time.ParseDuration(tokenDto.Expiry)
+	if err != nil {
+		return nil, fmt.Errorf("parse expiry: %w", err)
+	}
+	ws, err := p.store.Workspaces().GetByNamespace(ctx, tokenDto.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("workspace not found: %w", err)
+	}
+	tok := &models.EnrollmentToken{
+		Token:       tokenDto.Name,
+		WorkspaceID: ws.ID,
+		ExpiresAt:   time.Now().Add(duration),
+		UsageLimit:  tokenDto.Limit,
+	}
+	if err := p.store.EnrollmentTokens().Create(ctx, tok); err != nil {
+		return nil, err
+	}
+	return []byte(tok.Token), nil
 }
 
 // randomToken generates a 256-bit random credential for a newly

@@ -41,6 +41,15 @@ func (t *tokenService) Delete(ctx context.Context, token string) error {
 		return err
 	}
 
+	if t.client == nil {
+		// Standalone: delete from the DB registry; missing token is a no-op.
+		tok, err := t.store.EnrollmentTokens().GetByToken(ctx, token)
+		if err != nil {
+			return nil
+		}
+		return t.store.EnrollmentTokens().Delete(ctx, tok.ID)
+	}
+
 	res := &v1alpha1.LatticeEnrollmentToken{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      token,

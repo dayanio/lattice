@@ -24,7 +24,10 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/controller"
 	internalnats "github.com/alatticeio/lattice/internal/agent/nats"
 	"github.com/alatticeio/lattice/internal/db"
+	"github.com/alatticeio/lattice/internal/reconcile"
 	"github.com/alatticeio/lattice/internal/server"
+	"github.com/alatticeio/lattice/internal/server/reconcilers"
+	"github.com/go-logr/logr"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -49,16 +52,27 @@ func runLatticed(flags *config.Config) error {
 
 	// 3. Initialize the database (SQLite open-source default, MariaDB for production)
 	fmt.Println("Initializing storage...")
-	_, err := db.NewStore(flags)
+	st, err := db.NewStore(flags)
 	if err != nil {
 		return fmt.Errorf("failed to init db: %w", err)
 	}
 
-	// 4. Start the K8s controller and business manager (logic layer)
-	g.Go(func() error {
-		fmt.Println("Starting Lattice Controllers...")
-		return controller.Start(flags)
-	})
+	// 4. Control plane logic layer: standalone (DB-backed) or K8s controller.
+	if flags.Standalone {
+		g.Go(func() error {
+			fmt.Println("Starting standalone reconcile runner (identity TTL, policy TTL)...")
+			runner := reconcile.NewRunner()
+			if err := reconcilers.RegisterAll(runner, st, logr.Discard()); err != nil {
+				return fmt.Errorf("register reconcilers: %w", err)
+			}
+			return runner.Start(ctx)
+		})
+	} else {
+		g.Go(func() error {
+			fmt.Println("Starting Lattice Controllers...")
+			return controller.Start(flags)
+		})
+	}
 
 	// 5. Wait for NATS to be ready before starting management
 	g.Go(func() error {
