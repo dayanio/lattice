@@ -64,4 +64,11 @@ func (r *peerRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Peer{}).Error
 }
 
+// CountAll counts every registered peer across workspaces.
+func (r *peerRepo) CountAll(ctx context.Context) (int64, error) {
+	var n int64
+	err := r.db.WithContext(ctx).Model(&models.Peer{}).Count(&n).Error
+	return n, err
+}
+
 var _ store.PeerRepository = (*peerRepo)(nil)

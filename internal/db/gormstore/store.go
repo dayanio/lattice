@@ -37,6 +37,7 @@ type GormStore struct {
 	flowEvents            store.FlowEventRepository
 	peerIdentities        store.PeerIdentityRepository
 	peers                 store.PeerRepository
+	enrollmentTokens      store.EnrollmentTokenRepository
 	agentIdentities       store.AgentIdentityRepository
 }
 
@@ -71,6 +72,7 @@ func newStore(db *gorm.DB) *GormStore {
 		flowEvents:            NewFlowEventRepo(db),
 		peerIdentities:        newPeerIdentityRepo(db),
 		peers:                 newPeerRepo(db),
+		enrollmentTokens:      newEnrollmentTokenRepo(db),
 		agentIdentities:       newAgentIdentityRepo(db),
 	}
 }
@@ -94,13 +96,14 @@ func (s *GormStore) NetworkSnapshots() store.NetworkSnapshotRepository { return 
 func (s *GormStore) AgentEnrollmentTokens() store.AgentEnrollmentTokenRepository {
 	return s.agentEnrollmentTokens
 }
-func (s *GormStore) Seed() store.SeedRepository                     { return s.seed }
-func (s *GormStore) RefreshTokens() store.RefreshTokenRepository    { return s.refreshTokens }
-func (s *GormStore) ToolSpans() store.ToolSpanRepository            { return s.toolSpans }
-func (s *GormStore) FlowEvents() store.FlowEventRepository          { return s.flowEvents }
-func (s *GormStore) PeerIdentities() store.PeerIdentityRepository   { return s.peerIdentities }
-func (s *GormStore) Peers() store.PeerRepository                    { return s.peers }
-func (s *GormStore) AgentIdentities() store.AgentIdentityRepository { return s.agentIdentities }
+func (s *GormStore) Seed() store.SeedRepository                        { return s.seed }
+func (s *GormStore) RefreshTokens() store.RefreshTokenRepository       { return s.refreshTokens }
+func (s *GormStore) ToolSpans() store.ToolSpanRepository               { return s.toolSpans }
+func (s *GormStore) FlowEvents() store.FlowEventRepository             { return s.flowEvents }
+func (s *GormStore) PeerIdentities() store.PeerIdentityRepository      { return s.peerIdentities }
+func (s *GormStore) Peers() store.PeerRepository                       { return s.peers }
+func (s *GormStore) EnrollmentTokens() store.EnrollmentTokenRepository { return s.enrollmentTokens }
+func (s *GormStore) AgentIdentities() store.AgentIdentityRepository    { return s.agentIdentities }
 
 // Tx executes fn within a database transaction, providing a temporary Store for all Repository access.
 func (s *GormStore) Tx(ctx context.Context, fn func(store.Store) error) error {
