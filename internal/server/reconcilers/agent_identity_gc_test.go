@@ -38,7 +38,7 @@ func newTestStore(t *testing.T) store.Store {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1) // single shared in-memory database
-	require.NoError(t, db.AutoMigrate(&models.AgentIdentity{}, &models.PeerIdentity{}))
+	require.NoError(t, db.AutoMigrate(&models.AgentIdentity{}, &models.PeerIdentity{}, &models.Policy{}))
 	st, err := gormstore.New(db)
 	require.NoError(t, err)
 	return st

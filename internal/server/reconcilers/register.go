@@ -35,9 +35,17 @@ func RegisterAll(runner *reconcile.Runner, st store.Store, logger logr.Logger, o
 	); err != nil {
 		return err
 	}
-	return runner.RegisterWithResync(KindPeerIdentity,
+	if err := runner.RegisterWithResync(KindPeerIdentity,
 		NewPeerIdentityGrace(peers, logger.WithName("peer-identity-grace"), opts...),
 		NewPeerIdentityKeyLister(peers),
+		reconcile.DefaultResyncInterval,
+	); err != nil {
+		return err
+	}
+	policies := st.Policies()
+	return runner.RegisterWithResync(KindPolicy,
+		NewPolicyTTL(policies, logger.WithName("policy-ttl")),
+		NewPolicyTTLKeyLister(policies),
 		reconcile.DefaultResyncInterval,
 	)
 }

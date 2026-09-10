@@ -161,6 +161,15 @@ type PolicyRepository interface {
 	List(ctx context.Context, filter PolicyFilter) ([]*models.Policy, int64, error)
 	Update(ctx context.Context, policy *models.Policy) error
 	Delete(ctx context.Context, workspaceID, name string) error
+	// UpdateStatus persists only the status column (used by the standalone
+	// policy TTL reconciler).
+	UpdateStatus(ctx context.Context, id string, status models.PolicyStatus) error
+	// ListIDsActiveWithExpiry enumerates active policies carrying a TTL;
+	// used by the policy TTL reconciler's resync KeyLister.
+	ListIDsActiveWithExpiry(ctx context.Context) ([]string, error)
+	// ListActiveByWorkspace returns the workspace's active policies whose
+	// TTL has not elapsed — the TTL-enforced read for policy distribution.
+	ListActiveByWorkspace(ctx context.Context, workspaceID string) ([]*models.Policy, error)
 }
 
 // WorkflowRepository manages workflow approval requests.

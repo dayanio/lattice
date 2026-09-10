@@ -56,6 +56,10 @@ type EgressRule struct {
 type PeerSelection struct {
 	PeerSelector *LabelSelector `json:"peerSelector,omitempty"`
 	IPBlock      *IPBlock       `json:"ipBlock,omitempty"`
+	// IdentityRef selects a PeerIdentity by name (resolved in
+	// spec.network); matches the CRD field so REST-created policies can
+	// express identity-based rules.
+	IdentityRef string `json:"identityRef,omitempty"`
 }
 
 // IPBlock mirrors v1alpha1.IPBlock.
