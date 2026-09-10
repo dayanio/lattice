@@ -23,6 +23,7 @@ import (
 	"github.com/alatticeio/lattice/internal/license"
 	"github.com/alatticeio/lattice/internal/server/dto"
 	managementnats "github.com/alatticeio/lattice/internal/server/nats"
+	"github.com/alatticeio/lattice/internal/server/reconcilers"
 	"github.com/alatticeio/lattice/internal/server/resource"
 	"github.com/alatticeio/lattice/internal/server/vo"
 	"strings"
@@ -63,6 +64,9 @@ type peerService struct {
 	store           store.Store
 	presence        *managementnats.NodePresenceStore
 	licenseVerifier license.Verifier
+	// netmapBuilder serves netmaps from the standalone DB registry when
+	// no K8s client exists (client == nil).
+	netmapBuilder *reconcilers.NetmapBuilder
 }
 
 const (
@@ -265,16 +269,24 @@ func (p *peerService) CreateToken(ctx context.Context, tokenDto *dto.TokenDto) (
 }
 
 func NewPeerService(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier) PeerService {
-	return &peerService{
+	svc := &peerService{
 		client:          client,
 		logger:          log.GetLogger("peer-service"),
 		store:           st,
 		presence:        presence,
 		licenseVerifier: verifier,
 	}
+	if client == nil && st != nil {
+		// Standalone mode: build netmaps from the DB peer registry.
+		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities())
+	}
+	return svc
 }
 
 func (p *peerService) GetNetmap(ctx context.Context, token string, appId string) (*infra.Message, error) {
+	if p.netmapBuilder != nil {
+		return p.netmapBuilder.BuildForAppID(ctx, appId, token)
+	}
 	return p.client.GetNetworkMap(ctx, token, appId)
 }
 

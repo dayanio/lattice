@@ -36,6 +36,7 @@ type GormStore struct {
 	toolSpans             store.ToolSpanRepository
 	flowEvents            store.FlowEventRepository
 	peerIdentities        store.PeerIdentityRepository
+	peers                 store.PeerRepository
 	agentIdentities       store.AgentIdentityRepository
 }
 
@@ -69,6 +70,7 @@ func newStore(db *gorm.DB) *GormStore {
 		toolSpans:             NewToolSpanRepo(db),
 		flowEvents:            NewFlowEventRepo(db),
 		peerIdentities:        newPeerIdentityRepo(db),
+		peers:                 newPeerRepo(db),
 		agentIdentities:       newAgentIdentityRepo(db),
 	}
 }
@@ -97,6 +99,7 @@ func (s *GormStore) RefreshTokens() store.RefreshTokenRepository    { return s.r
 func (s *GormStore) ToolSpans() store.ToolSpanRepository            { return s.toolSpans }
 func (s *GormStore) FlowEvents() store.FlowEventRepository          { return s.flowEvents }
 func (s *GormStore) PeerIdentities() store.PeerIdentityRepository   { return s.peerIdentities }
+func (s *GormStore) Peers() store.PeerRepository                    { return s.peers }
 func (s *GormStore) AgentIdentities() store.AgentIdentityRepository { return s.agentIdentities }
 
 // Tx executes fn within a database transaction, providing a temporary Store for all Repository access.
