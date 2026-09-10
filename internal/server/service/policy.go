@@ -164,9 +164,13 @@ func (p *policyService) ApplyDirect(ctx context.Context, wsID, operatorID, opera
 		Spec: spec,
 	}
 
-	manager := client.FieldOwner("lattice-controller-manager")
-	if err = p.client.Patch(ctx, crd, client.Apply, manager); err != nil {
-		return nil, err
+	// Standalone mode: the DB record below is the source of truth; skip
+	// the CRD patch entirely.
+	if p.client != nil {
+		manager := client.FieldOwner("lattice-controller-manager")
+		if err = p.client.Patch(ctx, crd, client.Apply, manager); err != nil {
+			return nil, err
+		}
 	}
 
 	// Upsert DB record.
