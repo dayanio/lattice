@@ -292,16 +292,19 @@ func (r *Runner) loop(ctx context.Context, tasks chan task, completions chan com
 		}
 	}
 
-	// fireDue pops every event whose deadline has passed. Resync events
+	// fireDue pops every event whose deadline has passed, using the time
+	// the timer fired at (not a fresh Now() read: with a manually advanced
+	// fake clock, virtual time may already have moved past several deadlines
+	// by the time the scheduler wakes up, and re-reading Now() here would
+	// reschedule resyncs relative to the wrong instant). Resync events
 	// schedule their next occurrence before listing keys so a concurrent
 	// clock advance can never miss the following round.
-	fireDue := func() {
-		now := r.clock.Now()
-		for eq.Len() > 0 && !eq[0].at.After(now) {
+	fireDue := func(firedAt time.Time) {
+		for eq.Len() > 0 && !eq[0].at.After(firedAt) {
 			ev := heap.Pop(&eq).(event)
 			if ev.resync {
 				if reg := regs[ev.kind]; reg != nil && reg.lister != nil && reg.resync > 0 {
-					heap.Push(&eq, event{at: now.Add(reg.resync), kind: ev.kind, resync: true})
+					heap.Push(&eq, event{at: firedAt.Add(reg.resync), kind: ev.kind, resync: true})
 				}
 				reg := regs[ev.kind]
 				if reg == nil || reg.lister == nil {
@@ -372,8 +375,8 @@ func (r *Runner) loop(ctx context.Context, tasks chan task, completions chan com
 		case <-r.wake:
 			drainInbox()
 			dispatch()
-		case <-timerC:
-			fireDue()
+		case firedAt := <-timerC:
+			fireDue(firedAt)
 			dispatch()
 		case c := <-completions:
 			busy--

@@ -42,3 +42,17 @@ func (r *agentIdentityRepo) Delete(ctx context.Context, id string) error {
 }
 
 var _ store.AgentIdentityRepository = (*agentIdentityRepo)(nil)
+
+// ListIDs enumerates every identity primary key (soft-deleted rows excluded).
+func (r *agentIdentityRepo) ListIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.DB().WithContext(ctx).Model(&models.AgentIdentity{}).Pluck("id", &ids).Error
+	return ids, err
+}
+
+// UpdatePhase persists only the phase column.
+func (r *agentIdentityRepo) UpdatePhase(ctx context.Context, id string, phase string) error {
+	return r.DB().WithContext(ctx).Model(&models.AgentIdentity{}).
+		Where("id = ?", id).
+		Update("phase", phase).Error
+}
