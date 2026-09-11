@@ -443,29 +443,34 @@ func (s *Server) initPlaygroundWorkspace(ctx context.Context) error {
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	// Register NATS signaling routes (agent ↔ server). These work in both
+	// K8s and standalone modes — the handlers branch internally on
+	// client == nil — so they must NOT be gated on the K8s manager.
+	if s.nats != nil {
+		routes := map[string]Handler{
+			// agent ↔ server (peer signaling) — keep these
+			"lattice.signals.peer.register":  s.Register,
+			"lattice.signals.peer.GetNetMap": s.GetNetMap,
+			"lattice.signals.peer.heartbeat": s.Heartbeat,
+
+			// CLI routes removed — CLI now uses HTTP REST
+		}
+
+		for route, handler := range routes {
+			s.nats.Service(route, "lattice_queue", handler)
+		}
+
+		// Critical: ensure subscription commands have reached and been processed by the NATS Server
+		if err := s.nats.Flush(); err != nil {
+			s.logger.Error("NATS subscription sync failed", err)
+		}
+	}
+
 	if s.manager == nil {
-		// K8s manager unavailable: block until ctx is cancelled, letting the goroutine exit cleanly.
+		// Standalone mode: HTTP API + NATS signaling serve from the DB.
+		// Block until ctx is cancelled, letting the goroutine exit cleanly.
 		<-ctx.Done()
 		return nil
-	}
-
-	// Register NATS service
-	routes := map[string]Handler{
-		// agent ↔ server (peer signaling) — keep these
-		"lattice.signals.peer.register":  s.Register,
-		"lattice.signals.peer.GetNetMap": s.GetNetMap,
-		"lattice.signals.peer.heartbeat": s.Heartbeat,
-
-		// CLI routes removed — CLI now uses HTTP REST
-	}
-
-	for route, handler := range routes {
-		s.nats.Service(route, "lattice_queue", handler)
-	}
-
-	// Critical: ensure subscription commands have reached and been processed by the NATS Server
-	if err := s.nats.Flush(); err != nil {
-		s.logger.Error("NATS subscription sync failed", err)
 	}
 
 	return s.manager.Start(ctx)

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/controller"
@@ -60,9 +61,15 @@ func runLatticed(flags *config.Config) error {
 	// 4. Control plane logic layer: standalone (DB-backed) or K8s controller.
 	if flags.Standalone {
 		g.Go(func() error {
-			fmt.Println("Starting standalone reconcile runner (identity TTL, policy TTL)...")
+			resync := reconcile.DefaultResyncInterval
+			if flags.ResyncInterval != "" {
+				if d, parseErr := time.ParseDuration(flags.ResyncInterval); parseErr == nil && d > 0 {
+					resync = d
+				}
+			}
+			fmt.Printf("Starting standalone reconcile runner (identity TTL, policy TTL, resync %s)...\n", resync)
 			runner := reconcile.NewRunner()
-			if err := reconcilers.RegisterAll(runner, st, logr.Discard()); err != nil {
+			if err := reconcilers.RegisterAllWithResync(runner, st, resync, logr.Discard()); err != nil {
 				return fmt.Errorf("register reconcilers: %w", err)
 			}
 			return runner.Start(ctx)
