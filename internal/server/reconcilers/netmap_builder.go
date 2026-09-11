@@ -108,6 +108,7 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 	}
 
 	current := dbToInfraPeer(peer)
+	current.PrivateKey = peer.PrivateKey // the owner gets its own key back
 	network := &infra.Network{
 		NetworkId:   peer.WorkspaceID,
 		NetworkName: peer.WorkspaceID,
@@ -176,6 +177,7 @@ func dbToInfraPeer(p *models.Peer) *infra.Peer {
 		Hostname:  p.Hostname,
 		Platform:  p.Platform,
 		NetworkId: p.WorkspaceID,
+		PublicKey: p.PublicKey,
 	}
 	if p.Labels != "" {
 		_ = json.Unmarshal([]byte(p.Labels), &peer.Labels)

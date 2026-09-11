@@ -108,6 +108,9 @@ type Node struct {
 	provisioner provision.Provisioner
 	natsService infra.SignalService
 
+	// NetmapPollInterval drives the pull-based convergence loop; <=0 disables it.
+	NetmapPollInterval time.Duration
+
 	// GetNetworkMap is set externally after NewAgent returns and before Start
 	// is called. It fetches the current network topology from the control plane.
 	GetNetworkMap func() (*infra.Message, error)
@@ -523,7 +526,18 @@ func (c *Node) Start(ctx context.Context) error {
 		return err
 	}
 
-	return c.messageHandler.ApplyFullConfig(ctx, remoteCfg)
+	if err := c.messageHandler.ApplyFullConfig(ctx, remoteCfg); err != nil {
+		return err
+	}
+
+	// Pull-based convergence fallback: without the K8s push channel
+	// (standalone mode), policy and topology changes must be re-fetched.
+	if c.NetmapPollInterval > 0 {
+		go RunNetmapSync(ctx, c.NetmapPollInterval, c.GetNetworkMap, func(msg *infra.Message) error {
+			return c.messageHandler.ApplyFullConfig(ctx, msg)
+		})
+	}
+	return nil
 }
 
 // RefreshConfig re-fetches the current network map from the control plane and

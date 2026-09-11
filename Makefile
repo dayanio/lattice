@@ -248,6 +248,11 @@ test-e2e-standalone: ## 运行 standalone（无 K8s）E2E：真实启动 lattice
 
 .PHONY: test-e2e-standalone
 
+test-e2e-connectivity: ## 运行真实连通性 E2E：管理面容器 + 两个真实 agent 容器，WireGuard ping + 策略执行（需 Docker）
+	bash test/e2e_standalone/connectivity.sh
+
+.PHONY: test-e2e-connectivity
+
 .PHONY: e2e-teardown
 e2e-teardown: ## 销毁 E2E 测试用的 k3d 集群并清理 kubeconfig
 	k3d cluster delete $(LOCAL_CLUSTER_NAME) || true

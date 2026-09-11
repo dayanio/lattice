@@ -16,8 +16,6 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	stderrors "errors"
 	"fmt"
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -30,6 +28,7 @@ import (
 	"github.com/alatticeio/lattice/internal/server/reconcilers"
 	"github.com/alatticeio/lattice/internal/server/resource"
 	"github.com/alatticeio/lattice/internal/server/vo"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gorm.io/gorm"
 	"strings"
 	"time"
@@ -321,44 +320,55 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
 	}
 	if existingErr != nil {
-		if err := p.checkNodeLimitStandalone(ctx); err != nil {
-			return nil, err
+		if limitErr := p.checkNodeLimitStandalone(ctx); limitErr != nil {
+			return nil, limitErr
 		}
 	}
 	if tok.UsageLimit > 0 && existingErr != nil && tok.UsedCount >= tok.UsageLimit {
 		return nil, fmt.Errorf("token usage limit reached (%d)", tok.UsageLimit)
 	}
-	if err := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); err != nil {
-		return nil, err
+	if incErr := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); incErr != nil {
+		return nil, incErr
 	}
 
 	peer := existing
 	if peer == nil {
-		rows, err := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
-		if err != nil {
-			return nil, err
+		rows, listErr := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
+		if listErr != nil {
+			return nil, listErr
 		}
 		taken := make([]string, 0, len(rows))
 		for _, r := range rows {
 			taken = append(taken, r.Address)
 		}
-		address, err := reconcilers.AllocateAddress(taken)
-		if err != nil {
-			return nil, err
-		}
-		credential, err := randomToken()
-		if err != nil {
-			return nil, err
+		address, allocErr := reconcilers.AllocateAddress(taken)
+		if allocErr != nil {
+			return nil, allocErr
 		}
 		peer = &models.Peer{
 			WorkspaceID: tok.WorkspaceID,
 			Name:        dto.Name,
 			AppID:       dto.AppID,
-			Token:       credential,
+			Token:       dto.Token, // K8s semantics: the agent polls GetNetMap with its enrollment token
 			Address:     address,
 		}
 	}
-	peer.PublicKey = dto.PublicKey
+	// The control plane owns the WireGuard keypair (same as the K8s path):
+	// generate on first enrollment, reuse on re-registration.
+	var key wgtypes.Key
+	if peer.PrivateKey != "" {
+		key, err = wgtypes.ParseKey(peer.PrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("parse stored key: %w", err)
+		}
+	} else {
+		key, err = wgtypes.GeneratePrivateKey()
+		if err != nil {
+			return nil, fmt.Errorf("generate key: %w", err)
+		}
+		peer.PrivateKey = key.String()
+	}
+	peer.PublicKey = key.PublicKey().String()
 	peer.Endpoint = dto.Endpoint
 	peer.Hostname = dto.Hostname
 	peer.Platform = dto.Platform
@@ -370,15 +380,16 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 
 	address := peer.Address
 	node := &infra.Peer{
-		Name:      peer.Name,
-		AppID:     peer.AppID,
-		Address:   &address,
-		Token:     peer.Token,
-		PublicKey: peer.PublicKey,
-		Endpoint:  peer.Endpoint,
-		Hostname:  peer.Hostname,
-		Platform:  peer.Platform,
-		NetworkId: peer.WorkspaceID,
+		Name:       peer.Name,
+		AppID:      peer.AppID,
+		Address:    &address,
+		Token:      peer.Token,
+		PrivateKey: peer.PrivateKey,
+		PublicKey:  peer.PublicKey,
+		Endpoint:   peer.Endpoint,
+		Hostname:   peer.Hostname,
+		Platform:   peer.Platform,
+		NetworkId:  peer.WorkspaceID,
 	}
 
 	// Look up enforcer_mode from the workspace owner's profile (best effort,
@@ -641,14 +652,4 @@ func (p *peerService) createTokenStandalone(ctx context.Context, tokenDto *dto.T
 		return nil, err
 	}
 	return []byte(tok.Token), nil
-}
-
-// randomToken generates a 256-bit random credential for a newly
-// registered peer.
-func randomToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate peer token: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
