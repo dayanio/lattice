@@ -23,6 +23,7 @@ import (
 	"github.com/alatticeio/lattice/internal/server/controller"
 	"github.com/alatticeio/lattice/internal/server/dto"
 	"github.com/alatticeio/lattice/internal/server/models"
+	"github.com/alatticeio/lattice/internal/server/service"
 
 	"github.com/glebarez/sqlite"
 	. "github.com/onsi/gomega"
@@ -42,7 +43,7 @@ func setupPolicyTest(t *testing.T) (controller.PolicyController, *gorm.DB) {
 	}
 	// Pass nil for resource.Client — only Submit and ListPolicy are tested here,
 	// which do not require K8s CRD operations.
-	pc := controller.NewPolicyController(nil, st)
+	pc := controller.NewPolicyController(nil, st, service.NewPolicyIntentService(nil, st))
 	return pc, db
 }
 

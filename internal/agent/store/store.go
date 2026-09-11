@@ -42,6 +42,7 @@ type Store interface {
 	PeerIdentities() PeerIdentityRepository
 	Peers() PeerRepository
 	EnrollmentTokens() EnrollmentTokenRepository
+	PolicyVersions() PolicyVersionRepository
 	AgentIdentities() AgentIdentityRepository
 
 	Close() error
@@ -273,6 +274,13 @@ type ToolSpanRepository interface {
 type FlowEventRepository interface {
 	Write(ctx context.Context, e *models.FlowEvent) error
 	ListByTrace(ctx context.Context, traceID string) ([]*models.FlowEvent, error)
+}
+
+// PolicyVersionRepository appends and reads the immutable policy version
+// timeline (t_policy_version).
+type PolicyVersionRepository interface {
+	Create(ctx context.Context, v *models.PolicyVersion) error
+	ListByPolicyID(ctx context.Context, policyID string) ([]*models.PolicyVersion, error)
 }
 
 // PeerRepository manages the standalone peer registry (t_peer), mirroring
