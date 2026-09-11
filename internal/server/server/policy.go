@@ -26,6 +26,47 @@ func (s *Server) listPolicies(c *gin.Context) {
 	resp.OK(c, vo)
 }
 
+// handlePreviewPolicy computes the deterministic per-peer effect of a draft
+// policy ("预览即事实") without persisting anything.
+func (s *Server) handlePreviewPolicy() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req dto.PolicyDto
+		if err := c.ShouldBindJSON(&req); err != nil {
+			resp.BadRequest(c, err.Error())
+			return
+		}
+		wsID, _ := c.Request.Context().Value(infra.WorkspaceKey).(string)
+		vo, err := s.policyController.PreviewPolicy(c.Request.Context(), wsID, &req)
+		if err != nil {
+			resp.Error(c, err.Error())
+			return
+		}
+		resp.OK(c, vo)
+	}
+}
+
+// handleTranslatePolicy translates a natural-language description into a
+// draft PolicySpec ("描述即策略"). No side effects: the caller still
+// previews and submits through the normal approval gates.
+func (s *Server) handleTranslatePolicy() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req struct {
+			Description string `json:"description" binding:"required,min=2"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			resp.BadRequest(c, err.Error())
+			return
+		}
+		wsID, _ := c.Request.Context().Value(infra.WorkspaceKey).(string)
+		vo, err := s.policyIntentSvc.Translate(c.Request.Context(), wsID, req.Description)
+		if err != nil {
+			resp.Error(c, err.Error())
+			return
+		}
+		resp.OK(c, vo)
+	}
+}
+
 func (s *Server) createOrUpdatePolicy(c *gin.Context) {
 	var req dto.PolicyDto
 	if err := c.ShouldBindJSON(&req); err != nil {

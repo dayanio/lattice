@@ -17,10 +17,16 @@ type PolicyController interface {
 	ApplyDirect(ctx context.Context, wsID, operatorID, operatorName string, policyDto *dto.PolicyDto) (*vo.PolicyVo, error)
 	Apply(ctx context.Context, policyID string) error
 	DeletePolicy(ctx context.Context, name string) error
+	// PreviewPolicy computes the deterministic per-peer effect of a draft
+	// policy without persisting anything.
+	PreviewPolicy(ctx context.Context, wsID string, draft *dto.PolicyDto) (*vo.PolicyPreviewVo, error)
+	// Translate converts a natural-language description into a draft spec.
+	Translate(ctx context.Context, wsID, description string) (*vo.PolicyTranslationVo, error)
 }
 
 type policyController struct {
-	policyService service.PolicyService
+	policyService   service.PolicyService
+	policyIntentSvc service.PolicyIntentService
 }
 
 func (p *policyController) ListPolicy(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PolicyVo], error) {
@@ -43,8 +49,17 @@ func (p *policyController) DeletePolicy(ctx context.Context, name string) error 
 	return p.policyService.DeletePolicy(ctx, name)
 }
 
-func NewPolicyController(client *resource.Client, st store.Store) PolicyController {
+func (p *policyController) PreviewPolicy(ctx context.Context, wsID string, draft *dto.PolicyDto) (*vo.PolicyPreviewVo, error) {
+	return p.policyService.PreviewPolicy(ctx, wsID, *draft)
+}
+
+func (p *policyController) Translate(ctx context.Context, wsID, description string) (*vo.PolicyTranslationVo, error) {
+	return p.policyIntentSvc.Translate(ctx, wsID, description)
+}
+
+func NewPolicyController(client *resource.Client, st store.Store, policyIntentSvc service.PolicyIntentService) PolicyController {
 	return &policyController{
-		policyService: service.NewPolicyService(client, st),
+		policyService:   service.NewPolicyService(client, st),
+		policyIntentSvc: policyIntentSvc,
 	}
 }

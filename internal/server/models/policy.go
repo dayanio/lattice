@@ -34,6 +34,10 @@ type Policy struct {
 	// ExpiresAt stops distribution once passed; the standalone PolicyTTL
 	// reconciler flips status to expired at the deadline.
 	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
+	// Intent keeps the natural-language description the policy was created
+	// from ("描述即策略") — an audit asset answering why the policy exists.
+	Intent  string `gorm:"type:text" json:"intent,omitempty"`
+	Version int    `gorm:"not null;default:1" json:"version"`
 
 	// IsSeed marks records injected by the seed data injector for new workspaces.
 	IsSeed bool `gorm:"default:false;index" json:"isSeed,omitempty"`
