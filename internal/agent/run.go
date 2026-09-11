@@ -91,6 +91,12 @@ func Start(ctx context.Context, flags *config.Config) error {
 		return msg, nil
 	}
 
+	// Pull-based convergence: re-fetch the netmap periodically so policy
+	// and topology changes reach running agents without a push channel.
+	if d, perr := time.ParseDuration(flags.NetmapPollInterval); perr == nil && d > 0 {
+		c.NetmapPollInterval = d
+	}
+
 	// t0 is recorded immediately before Start so that TTFH includes
 	// WireGuard device bring-up and initial peer config application.
 	t0 := time.Now()

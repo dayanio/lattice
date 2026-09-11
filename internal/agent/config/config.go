@@ -256,14 +256,17 @@ type Config struct {
 	// ResyncInterval is the standalone reconcile runner's resync period
 	// (e.g. "30s"). Shorter values converge faster at higher DB cost.
 	ResyncInterval string `mapstructure:"resync-interval"`
-	Level          string `mapstructure:"level"` // log level
-	Env            string `mapstructure:"env"`   // runtime environment: dev / prod
-	Debug          bool   `mapstructure:"debug"`
-	Auth           string `mapstructure:"auth"`
-	AppId          string `mapstructure:"app-id"`
-	Name           string `mapstructure:"name"` // display name shown in the UI (optional)
-	Token          string `mapstructure:"token"`
-	InterfaceName  string `mapstructure:"interface-name"` // WireGuard interface name
+	// NetmapPollInterval is how often a running agent re-fetches the
+	// network map (pull-based convergence). Default "30s"; "0" disables.
+	NetmapPollInterval string `mapstructure:"netmap-poll-interval"`
+	Level              string `mapstructure:"level"` // log level
+	Env                string `mapstructure:"env"`   // runtime environment: dev / prod
+	Debug              bool   `mapstructure:"debug"`
+	Auth               string `mapstructure:"auth"`
+	AppId              string `mapstructure:"app-id"`
+	Name               string `mapstructure:"name"` // display name shown in the UI (optional)
+	Token              string `mapstructure:"token"`
+	InterfaceName      string `mapstructure:"interface-name"` // WireGuard interface name
 
 	// ── Network / Address ─────────────────────────────────────────
 
@@ -608,6 +611,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("listen", ":8080")
 	v.SetDefault("standalone", false)
 	v.SetDefault("resync-interval", "")
+	v.SetDefault("netmap-poll-interval", "30s")
 	v.SetDefault("level", "info")
 	v.SetDefault("env", "dev")
 

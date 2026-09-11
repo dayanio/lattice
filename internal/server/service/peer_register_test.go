@@ -88,7 +88,8 @@ func TestPeerService_RegisterStandalone_CreatesPeer(t *testing.T) {
 	assert.Equal(t, "api", node.Name)
 	require.NotNil(t, node.Address)
 	assert.Equal(t, "10.96.0.2", *node.Address, "first peer gets the first address")
-	assert.NotEmpty(t, node.Token, "a per-peer credential must be issued")
+	assert.Equal(t, "enr-test-token", node.Token, "netmap token follows the K8s semantics (enrollment token)")
+	assert.NotEmpty(t, node.PrivateKey, "the control plane must issue a WireGuard private key")
 	assert.Equal(t, "ws1", node.NetworkId)
 
 	got, err := st.Peers().GetByAppID(ctx, "app-1")
@@ -128,6 +129,7 @@ func TestPeerService_RegisterStandalone_ReRegistrationResumes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, *first.Address, *again.Address, "re-registration keeps the overlay address")
 	assert.Equal(t, first.Token, again.Token, "re-registration keeps the peer credential")
+	assert.Equal(t, first.PrivateKey, again.PrivateKey, "re-registration keeps the WireGuard key")
 
 	rows, err := st.Peers().ListByWorkspace(ctx, "ws1")
 	require.NoError(t, err)
