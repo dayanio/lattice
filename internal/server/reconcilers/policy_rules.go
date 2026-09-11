@@ -84,7 +84,7 @@ type PeerRuleCalculator struct {
 func NewPeerRuleCalculator(resolver *PolicyIdentityResolver) *PeerRuleCalculator {
 	return &PeerRuleCalculator{
 		identityResolver: resolver,
-		evaluator:        controller.NewPolicyEvaluator(),
+		evaluator:        controller.NewPolicyEvaluatorWithoutIdentity(),
 	}
 }
 
@@ -129,20 +129,31 @@ func (c *PeerRuleCalculator) buildPolicy(name, action string, spec *dto.PolicySp
 		Action:     strings.ToUpper(action),
 	}
 	for _, r := range spec.Ingress {
-		for _, port := range r.Ports {
-			pol.Ingress = append(pol.Ingress, c.buildRule(r.From, port, now))
-		}
+		pol.Ingress = append(pol.Ingress, c.buildRules(pol.Action, r.From, r.Ports, now)...)
 	}
 	for _, r := range spec.Egress {
-		for _, port := range r.Ports {
-			pol.Egress = append(pol.Egress, c.buildRule(r.To, port, now))
-		}
+		pol.Egress = append(pol.Egress, c.buildRules(pol.Action, r.To, r.Ports, now)...)
 	}
 	return pol
 }
 
-func (c *PeerRuleCalculator) buildRule(selections []dto.PeerSelection, port dto.NetworkPolicyPort, now time.Time) *infra.Rule {
+// buildRules expands a policy direction into wire rules — one per declared
+// port, or a single all-ports rule when no ports are declared (K8s
+// NetworkPolicy semantics: omitted ports = all ports).
+func (c *PeerRuleCalculator) buildRules(action string, selections []dto.PeerSelection, ports []dto.NetworkPolicyPort, now time.Time) []*infra.Rule {
+	if len(ports) == 0 {
+		return []*infra.Rule{c.buildRule(action, selections, dto.NetworkPolicyPort{}, now)}
+	}
+	rules := make([]*infra.Rule, 0, len(ports))
+	for _, port := range ports {
+		rules = append(rules, c.buildRule(action, selections, port, now))
+	}
+	return rules
+}
+
+func (c *PeerRuleCalculator) buildRule(action string, selections []dto.PeerSelection, port dto.NetworkPolicyPort, now time.Time) *infra.Rule {
 	rule := &infra.Rule{
+		Action:   action,
 		Protocol: strings.ToUpper(port.Protocol),
 		Port:     int(port.Port),
 	}

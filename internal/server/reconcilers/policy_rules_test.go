@@ -200,3 +200,61 @@ func TestPeerRuleCalculator_ExpiredGraceExcluded(t *testing.T) {
 	assert.NotContains(t, egressIPs, "10.0.0.4", "expired grace IP must be excluded")
 	assert.Contains(t, egressIPs, "10.0.0.5")
 }
+
+// A policy without ports means "all ports" (K8s NetworkPolicy semantics):
+// it must still produce one rule per selection, with zero-value port.
+func TestPeerRuleCalculator_NoPortsMeansAllPorts(t *testing.T) {
+	ctx := context.Background()
+	policies := []*models.Policy{{
+		WorkspaceID: "ws1", Name: "allow-mesh", Action: "Allow", Status: models.PolicyStatusActive,
+		Spec: specJSON(t, dto.PolicySpec{
+			Egress: []dto.EgressRule{{
+				To: []dto.PeerSelection{{IPBlock: &dto.IPBlock{CIDR: "10.96.0.0/24"}}},
+			}},
+		}),
+	}}
+	peers := []*infra.Peer{{Name: "api", Address: addr("10.96.0.2")}}
+
+	calc := reconcilers.NewPeerRuleCalculator(reconcilers.NewPolicyIdentityResolver(nil))
+	rule, err := calc.ComputeForPeer(ctx, policies, peers, peers[0])
+	require.NoError(t, err)
+
+	found := false
+	for _, tr := range rule.Egress {
+		for _, ip := range tr.Peers {
+			if ip == "10.96.0.0/24" {
+				found = true
+				assert.Zero(t, tr.Port, "unspecified ports must render as port 0 (all ports)")
+			}
+		}
+	}
+	assert.True(t, found, "the all-ports allow rule must exist")
+}
+
+// An ALLOW policy must render ACCEPT iptables targets — an empty Action
+// would silently flip allow rules into DROPs in the provisioner.
+func TestPeerRuleCalculator_AllowRuleCarriesAcceptAction(t *testing.T) {
+	ctx := context.Background()
+	policies := []*models.Policy{{
+		WorkspaceID: "ws1", Name: "allow-mesh", Action: "Allow", Status: models.PolicyStatusActive,
+		Spec: specJSON(t, dto.PolicySpec{
+			Egress: []dto.EgressRule{{
+				To: []dto.PeerSelection{{IPBlock: &dto.IPBlock{CIDR: "10.96.0.0/24"}}},
+			}},
+		}),
+	}}
+	peers := []*infra.Peer{{Name: "api", Address: addr("10.96.0.2")}}
+
+	calc := reconcilers.NewPeerRuleCalculator(reconcilers.NewPolicyIdentityResolver(nil))
+	rule, err := calc.ComputeForPeer(ctx, policies, peers, peers[0])
+	require.NoError(t, err)
+
+	allowSeen := false
+	for _, tr := range rule.Egress {
+		if len(tr.Peers) > 0 {
+			allowSeen = true
+			assert.Equal(t, "ACCEPT", tr.Action, "explicit allow rule must render ACCEPT")
+		}
+	}
+	assert.True(t, allowSeen)
+}

@@ -295,6 +295,9 @@ type EnrollmentTokenRepository interface {
 	GetByToken(ctx context.Context, token string) (*models.EnrollmentToken, error)
 	// IncrementUsedCount atomically bumps the usage counter.
 	IncrementUsedCount(ctx context.Context, id string) error
+	// ListByWorkspace enumerates the workspace's enrollment tokens
+	// (standalone token list page).
+	ListByWorkspace(ctx context.Context, workspaceID string) ([]*models.EnrollmentToken, error)
 	Delete(ctx context.Context, id string) error
 }
 

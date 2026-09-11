@@ -48,6 +48,13 @@ func NewPolicyEvaluator() PolicyEvaluator {
 	}
 }
 
+// NewPolicyEvaluatorWithoutIdentity returns a PolicyEvaluator that never
+// resolves IdentityRefs — for callers that pre-resolve identity selections
+// into concrete IPs (the standalone netmap calculator).
+func NewPolicyEvaluatorWithoutIdentity() PolicyEvaluator {
+	return &policyEvaluator{}
+}
+
 // NewPolicyEvaluatorWithClient returns a PolicyEvaluator with a client for identity resolution.
 func NewPolicyEvaluatorWithClient(c client.Client) PolicyEvaluator {
 	return &policyEvaluator{
