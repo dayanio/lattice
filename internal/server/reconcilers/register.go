@@ -15,6 +15,8 @@
 package reconcilers
 
 import (
+	"time"
+
 	"github.com/alatticeio/lattice/internal/agent/store"
 	"github.com/alatticeio/lattice/internal/reconcile"
 	"github.com/go-logr/logr"
@@ -25,20 +27,25 @@ import (
 // default resync interval applies, so convergence does not depend on any
 // notification reaching the runner.
 func RegisterAll(runner *reconcile.Runner, st store.Store, logger logr.Logger, opts ...GCOption) error {
+	return RegisterAllWithResync(runner, st, reconcile.DefaultResyncInterval, logger, opts...)
+}
+
+// RegisterAllWithResync is RegisterAll with an explicit resync period.
+func RegisterAllWithResync(runner *reconcile.Runner, st store.Store, resync time.Duration, logger logr.Logger, opts ...GCOption) error {
 	agents := st.AgentIdentities()
 	peers := st.PeerIdentities()
 
 	if err := runner.RegisterWithResync(KindAgentIdentity,
 		NewAgentIdentityGC(agents, logger.WithName("agent-identity-gc"), opts...),
 		NewAgentIdentityKeyLister(agents),
-		reconcile.DefaultResyncInterval,
+		resync,
 	); err != nil {
 		return err
 	}
 	if err := runner.RegisterWithResync(KindPeerIdentity,
 		NewPeerIdentityGrace(peers, logger.WithName("peer-identity-grace"), opts...),
 		NewPeerIdentityKeyLister(peers),
-		reconcile.DefaultResyncInterval,
+		resync,
 	); err != nil {
 		return err
 	}
@@ -46,6 +53,6 @@ func RegisterAll(runner *reconcile.Runner, st store.Store, logger logr.Logger, o
 	return runner.RegisterWithResync(KindPolicy,
 		NewPolicyTTL(policies, logger.WithName("policy-ttl")),
 		NewPolicyTTLKeyLister(policies),
-		reconcile.DefaultResyncInterval,
+		resync,
 	)
 }

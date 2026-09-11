@@ -252,15 +252,18 @@ type Config struct {
 	// Standalone runs the control plane without Kubernetes: peer registry,
 	// netmaps, enrollment and TTL reconciliation are served from the
 	// embedded database. Default false (K8s controller mode).
-	Standalone    bool   `mapstructure:"standalone"`
-	Level         string `mapstructure:"level"` // log level
-	Env           string `mapstructure:"env"`   // runtime environment: dev / prod
-	Debug         bool   `mapstructure:"debug"`
-	Auth          string `mapstructure:"auth"`
-	AppId         string `mapstructure:"app-id"`
-	Name          string `mapstructure:"name"` // display name shown in the UI (optional)
-	Token         string `mapstructure:"token"`
-	InterfaceName string `mapstructure:"interface-name"` // WireGuard interface name
+	Standalone bool `mapstructure:"standalone"`
+	// ResyncInterval is the standalone reconcile runner's resync period
+	// (e.g. "30s"). Shorter values converge faster at higher DB cost.
+	ResyncInterval string `mapstructure:"resync-interval"`
+	Level          string `mapstructure:"level"` // log level
+	Env            string `mapstructure:"env"`   // runtime environment: dev / prod
+	Debug          bool   `mapstructure:"debug"`
+	Auth           string `mapstructure:"auth"`
+	AppId          string `mapstructure:"app-id"`
+	Name           string `mapstructure:"name"` // display name shown in the UI (optional)
+	Token          string `mapstructure:"token"`
+	InterfaceName  string `mapstructure:"interface-name"` // WireGuard interface name
 
 	// ── Network / Address ─────────────────────────────────────────
 
@@ -603,6 +606,8 @@ func peekConfigDir(cmd *cobra.Command) string {
 //     This avoids the risk of "using the wrong environment" (e.g., accidentally connecting to a production MariaDB).
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("listen", ":8080")
+	v.SetDefault("standalone", false)
+	v.SetDefault("resync-interval", "")
 	v.SetDefault("level", "info")
 	v.SetDefault("env", "dev")
 

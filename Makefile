@@ -243,6 +243,11 @@ test-e2e: ## 运行 E2E 集成测试（自动 port-forward，测试结束后停�
 .PHONY: e2e
 e2e: e2e-setup test-e2e ## 一键运行完整 E2E（搭建环境 + 测试）；完成后集群保留，可用 make e2e-teardown 清理
 
+test-e2e-standalone: ## 运行 standalone（无 K8s）E2E：真实启动 latticed --standalone 并走注册/策略/TTL 完整闭环（需 4222 端口空闲）
+	go test ./test/e2e_standalone/ -v -timeout 15m
+
+.PHONY: test-e2e-standalone
+
 .PHONY: e2e-teardown
 e2e-teardown: ## 销毁 E2E 测试用的 k3d 集群并清理 kubeconfig
 	k3d cluster delete $(LOCAL_CLUSTER_NAME) || true

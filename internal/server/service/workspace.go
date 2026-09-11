@@ -370,7 +370,10 @@ func (w *workspaceService) InitNewNamespace(ctx context.Context, workspaceId str
 
 func (w *workspaceService) InitializeTenant(ctx context.Context, wsID, role string, maxNodeCount int) error {
 	if w.client == nil {
-		return fmt.Errorf("workspace initialization requires Kubernetes — no K8s client available")
+		// Standalone mode: no namespaces/quotas/RoleBindings to create —
+		// the DB registry rows (workspace, policies, peers) are the whole
+		// tenant. The default-deny policy is seeded by token creation.
+		return nil
 	}
 	nsName := wsID
 

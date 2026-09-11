@@ -64,8 +64,12 @@ func Start(flags *config.Config) error {
 			logger.Warn("k8s manager unavailable, starting API server without cache sync")
 		}
 
+		listenAddr := config.GlobalConfig.Listen
+		if listenAddr == "" {
+			listenAddr = ":8080"
+		}
 		srv := &http.Server{
-			Addr:    ":8080",
+			Addr:    listenAddr,
 			Handler: hs, // Your gin.Engine
 		}
 

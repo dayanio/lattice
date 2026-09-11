@@ -41,6 +41,7 @@ rules:
   - latticepeers
   - latticepolicies
   - latticerelayservers
+  - peeridentities
   verbs:
   - create
   - delete
@@ -71,6 +72,7 @@ rules:
   - latticepeers/status
   - latticepolicies/status
   - latticerelayservers/status
+  - peeridentities/status
   verbs:
   - get
   - patch

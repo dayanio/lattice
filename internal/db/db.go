@@ -16,6 +16,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/store"
 	"github.com/alatticeio/lattice/internal/db/gormstore"
 	"log"
+	"strings"
 	"time"
 
 	gormsqlite "github.com/glebarez/sqlite"
@@ -56,6 +57,12 @@ func NewStore(cfg *config.Config) (store.Store, error) {
 		// Open-source default: SQLite. DSN is the file path, defaults to lattice.db when empty.
 		if dsn == "" {
 			dsn = "lattice.db"
+		}
+		// Serialize writers gracefully: WAL + a busy timeout prevent
+		// SQLITE_BUSY errors when background workers (reconcile runner,
+		// heartbeats) contend with API reads on the single connection.
+		if !strings.Contains(dsn, "?") {
+			dsn += "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 		}
 		db, err = gorm.Open(gormsqlite.Open(dsn), gormCfg)
 		if err != nil {
