@@ -320,8 +320,11 @@ func (p *policyService) DeletePolicy(ctx context.Context, name string) error {
 			Namespace: workspace.Namespace,
 		},
 	}
-	// Best-effort CRD deletion (may not exist if policy is still pending).
-	_ = p.client.Delete(ctx, crd)
+	// Standalone mode: deleting the DB row is the whole operation.
+	if p.client != nil {
+		// Best-effort CRD deletion (may not exist if policy is still pending).
+		_ = p.client.Delete(ctx, crd)
+	}
 
 	if err := p.store.Policies().Delete(ctx, wsID, name); err != nil {
 		return err
