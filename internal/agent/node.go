@@ -445,6 +445,8 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		switch enforcerMode {
 		case provision.ModeEBPF:
 			policyEnforcer = provision.NewEBPFEnforcer(node.Name, cfg.Logger)
+		case provision.ModeNone:
+			policyEnforcer = provision.NewNoopEnforcer(cfg.Logger)
 		default:
 			policyEnforcer = provision.NewIptablesEnforcer(cfg.Logger, node.Name)
 		}

@@ -15,6 +15,7 @@
 package provision
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/alatticeio/lattice/internal/agent/config"
@@ -23,9 +24,10 @@ import (
 
 func TestSelectEnforcerMode_Community(t *testing.T) {
 	logger := log.GetLogger("test")
-	mode := SelectEnforcerMode(&config.Config{}, "community", logger)
+	cfg := &config.Config{EnforcerMode: "iptables"}
+	mode := SelectEnforcerMode(cfg, "community", logger)
 	if mode != ModeIPTables {
-		t.Errorf("expected ModeIPTables for community tier, got %v", mode)
+		t.Errorf("expected ModeIPTables for explicit iptables, got %v", mode)
 	}
 }
 
@@ -51,5 +53,25 @@ func TestEnforcerMode_String(t *testing.T) {
 		if got := tt.mode.String(); got != tt.want {
 			t.Errorf("EnforcerMode(%d).String() = %q, want %q", tt.mode, got, tt.want)
 		}
+	}
+}
+
+func TestSelectEnforcerMode_None(t *testing.T) {
+	logger := log.GetLogger("test")
+	cfg := &config.Config{EnforcerMode: "none"}
+	mode := SelectEnforcerMode(cfg, "community", logger)
+	if mode != ModeNone {
+		t.Fatalf("expected ModeNone for explicit none, got %v", mode)
+	}
+}
+
+func TestSelectEnforcerMode_DarwinAutoSelectsNone(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("darwin-only behaviour")
+	}
+	logger := log.GetLogger("test")
+	mode := SelectEnforcerMode(&config.Config{}, "community", logger)
+	if mode != ModeNone {
+		t.Fatalf("expected ModeNone auto-selected on darwin, got %v", mode)
 	}
 }
