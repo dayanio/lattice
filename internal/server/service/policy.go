@@ -31,6 +31,8 @@ type PolicyService interface {
 	// PreviewPolicy computes the deterministic per-peer effect of a draft
 	// policy without persisting anything ("预览即事实").
 	PreviewPolicy(ctx context.Context, wsID string, draft dto.PolicyDto) (*vo.PolicyPreviewVo, error)
+	ExportPolicies(ctx context.Context, wsID string) (string, error)
+	ImportPolicies(ctx context.Context, wsID, content string, dryRun bool, operatorID, operatorName string) (*vo.PolicyImportVo, error)
 
 	// ApplyDirect writes to k8s immediately and upserts a DB record with status=active.
 	// Used for admin direct-create (POST) or direct-update (PUT).
@@ -72,7 +74,9 @@ func (p *policyService) Submit(ctx context.Context, wsID, createdBy, createdByNa
 		Action:        policyDto.Action,
 		PolicyTypes:   string(typesBytes),
 		Spec:          string(specBytes),
+		Intent:        policyDto.Intent,
 		ExpiresAt:     policyDto.ExpiresAt,
+		Version:       1,
 		Status:        models.PolicyStatusPending,
 		CreatedBy:     createdBy,
 		CreatedByName: createdByName,
@@ -224,6 +228,7 @@ func (p *policyService) ApplyDirect(ctx context.Context, wsID, operatorID, opera
 	existing.Action = policyDto.Action
 	existing.PolicyTypes = string(typesBytes)
 	existing.Spec = string(specBytes)
+	existing.Intent = policyDto.Intent
 	existing.ExpiresAt = policyDto.ExpiresAt
 	existing.Status = models.PolicyStatusActive
 	existing.ErrorMessage = ""

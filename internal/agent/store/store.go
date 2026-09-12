@@ -274,6 +274,9 @@ type ToolSpanRepository interface {
 type FlowEventRepository interface {
 	Write(ctx context.Context, e *models.FlowEvent) error
 	ListByTrace(ctx context.Context, traceID string) ([]*models.FlowEvent, error)
+	// SumByAgents aggregates flow count and bytes for the given agent ids
+	// since the cutoff (policy traffic statistics).
+	SumByAgents(ctx context.Context, agentIDs []string, since time.Time) (flows int64, bytes int64, err error)
 }
 
 // PolicyVersionRepository appends and reads the immutable policy version

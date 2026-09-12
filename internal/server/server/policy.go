@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/server/dto"
@@ -51,6 +52,42 @@ func (s *Server) handlePolicyDeliveryStatus() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		wsID, _ := c.Request.Context().Value(infra.WorkspaceKey).(string)
 		vo, err := s.peerController.PolicyDeliveryStatus(c.Request.Context(), wsID)
+		if err != nil {
+			resp.Error(c, err.Error())
+			return
+		}
+		resp.OK(c, vo)
+	}
+}
+
+// handleExportPolicies renders active policies as a multi-doc YAML bundle
+// ("策略即代码" 工件).
+func (s *Server) handleExportPolicies() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		wsID, _ := c.Request.Context().Value(infra.WorkspaceKey).(string)
+		content, err := s.policyController.ExportPolicies(c.Request.Context(), wsID)
+		if err != nil {
+			resp.Error(c, err.Error())
+			return
+		}
+		c.Header("Content-Type", "text/yaml; charset=utf-8")
+		c.String(200, content)
+	}
+}
+
+// handleImportPolicies imports a YAML bundle; ?dryRun=true validates only.
+func (s *Server) handleImportPolicies() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		dryRun := c.Query("dryRun") == "true"
+		content, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			resp.BadRequest(c, err.Error())
+			return
+		}
+		wsID, _ := c.Request.Context().Value(infra.WorkspaceKey).(string)
+		vo, err := s.policyController.ImportPolicies(
+			c.Request.Context(), wsID, string(content), dryRun,
+			c.GetString("user_id"), c.GetString("username"))
 		if err != nil {
 			resp.Error(c, err.Error())
 			return

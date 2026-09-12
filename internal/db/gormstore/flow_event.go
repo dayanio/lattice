@@ -16,6 +16,7 @@ package gormstore
 
 import (
 	"context"
+	"time"
 
 	"github.com/alatticeio/lattice/internal/server/models"
 	"gorm.io/gorm"
@@ -29,6 +30,22 @@ func NewFlowEventRepo(db *gorm.DB) *flowEventRepo {
 
 func (r *flowEventRepo) Write(ctx context.Context, e *models.FlowEvent) error {
 	return r.db.WithContext(ctx).Create(e).Error
+}
+
+// SumByAgents aggregates flow count and bytes for the given agent ids since cutoff.
+func (r *flowEventRepo) SumByAgents(ctx context.Context, agentIDs []string, since time.Time) (int64, int64, error) {
+	var count, totalBytes int64
+	if len(agentIDs) == 0 {
+		return 0, 0, nil
+	}
+	q := r.db.WithContext(ctx).Model(&models.FlowEvent{}).Where("agent_id IN ? AND ts >= ?", agentIDs, since)
+	if err := q.Count(&count).Error; err != nil {
+		return 0, 0, err
+	}
+	if err := q.Select("COALESCE(SUM(bytes), 0) AS total_bytes").Scan(&totalBytes).Error; err != nil {
+		return 0, 0, err
+	}
+	return count, totalBytes, nil
 }
 
 func (r *flowEventRepo) ListByTrace(ctx context.Context, traceID string) ([]*models.FlowEvent, error) {

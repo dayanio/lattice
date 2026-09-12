@@ -240,3 +240,81 @@ func TestPolicyService_PreviewEditingExcludesSelf(t *testing.T) {
 	assert.Equal(t, []string{"10.96.0.3/32"}, pp.Removed[0].Peers)
 	require.NotEmpty(t, pp.Added, "the new rule must show as added")
 }
+
+func TestPolicyService_ExportImportRoundtrip(t *testing.T) {
+	st := newPreviewStore(t)
+	ctx := context.Background()
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Dev",
+	}))
+	policySvc := service.NewPolicyService(nil, st)
+
+	original := dto.PolicyDto{
+		Name:   "allow-db",
+		Action: "Allow",
+		Intent: "只允许访问数据库 5432",
+		PolicySpec: dto.PolicySpec{
+			Egress: []dto.EgressRule{{
+				To:    []dto.PeerSelection{{IPBlock: &dto.IPBlock{CIDR: "10.96.0.3/32"}}},
+				Ports: []dto.NetworkPolicyPort{{Port: 5432, Protocol: "TCP"}},
+			}},
+		},
+	}
+	_, err := policySvc.ApplyDirect(ctx, "ws1", "op", "Op", &original)
+	require.NoError(t, err)
+
+	yamlOut, err := policySvc.ExportPolicies(ctx, "ws1")
+	require.NoError(t, err)
+	assert.Contains(t, yamlOut, "allow-db")
+	assert.Contains(t, yamlOut, "只允许访问数据库 5432")
+	assert.Contains(t, yamlOut, "lattice.io/v1alpha1")
+
+	// Re-import into the same workspace as dry-run: validated, nothing duplicated.
+	res, err := policySvc.ImportPolicies(ctx, "ws1", yamlOut, true, "op", "Op")
+	require.NoError(t, err)
+	assert.True(t, res.DryRun)
+	require.Len(t, res.Items, 1)
+	assert.True(t, res.Items[0].OK)
+
+	// Real import into a second workspace: policy is applied there.
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws2"}, Namespace: "wf-ws2", DisplayName: "Prod",
+	}))
+	res, err = policySvc.ImportPolicies(ctx, "ws2", yamlOut, false, "op", "Op")
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.OK)
+	assert.Zero(t, res.Failed)
+
+	got, err := st.Policies().GetByName(ctx, "ws2", "allow-db")
+	require.NoError(t, err)
+	assert.Equal(t, models.PolicyStatusActive, got.Status)
+	assert.Equal(t, "只允许访问数据库 5432", got.Intent, "intent must travel with the policy")
+}
+
+func TestPolicyService_ImportRejectsInvalidCIDR(t *testing.T) {
+	st := newPreviewStore(t)
+	ctx := context.Background()
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1",
+	}))
+	bundle := `apiVersion: lattice.io/v1alpha1
+kind: LatticePolicy
+metadata:
+  name: bad
+  workspaceId: ws1
+action: Allow
+spec:
+  egress:
+    - to:
+        - ipBlock:
+            cidr: not-a-cidr
+`
+	res, err := policySvcForTest(st).ImportPolicies(ctx, "ws1", bundle, true, "op", "Op")
+	require.NoError(t, err)
+	require.Len(t, res.Items, 1)
+	assert.NotEmpty(t, res.Items[0].Error, "invalid CIDR must fail the item")
+}
+
+func policySvcForTest(st store.Store) service.PolicyService {
+	return service.NewPolicyService(nil, st)
+}

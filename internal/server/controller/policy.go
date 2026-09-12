@@ -22,6 +22,8 @@ type PolicyController interface {
 	PreviewPolicy(ctx context.Context, wsID string, draft *dto.PolicyDto) (*vo.PolicyPreviewVo, error)
 	// Translate converts a natural-language description into a draft spec.
 	Translate(ctx context.Context, wsID, description string) (*vo.PolicyTranslationVo, error)
+	ExportPolicies(ctx context.Context, wsID string) (string, error)
+	ImportPolicies(ctx context.Context, wsID, content string, dryRun bool, operatorID, operatorName string) (*vo.PolicyImportVo, error)
 }
 
 type policyController struct {
@@ -55,6 +57,14 @@ func (p *policyController) PreviewPolicy(ctx context.Context, wsID string, draft
 
 func (p *policyController) Translate(ctx context.Context, wsID, description string) (*vo.PolicyTranslationVo, error) {
 	return p.policyIntentSvc.Translate(ctx, wsID, description)
+}
+
+func (p *policyController) ExportPolicies(ctx context.Context, wsID string) (string, error) {
+	return p.policyService.ExportPolicies(ctx, wsID)
+}
+
+func (p *policyController) ImportPolicies(ctx context.Context, wsID, content string, dryRun bool, operatorID, operatorName string) (*vo.PolicyImportVo, error) {
+	return p.policyService.ImportPolicies(ctx, wsID, content, dryRun, operatorID, operatorName)
 }
 
 func NewPolicyController(client *resource.Client, st store.Store, policyIntentSvc service.PolicyIntentService) PolicyController {
