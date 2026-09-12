@@ -26,7 +26,7 @@ import {
 import { toast } from 'vue-sonner'
 import { usePolicyPageStore } from '@/stores/usePolicyPageStore'
 import AppAlertDialog from '@/components/AlertDialog.vue'
-import { translatePolicy, previewPolicy } from '@/api/policy'
+import { translatePolicy, previewPolicy, policyDeliveryStatus, policyFlowStats } from '@/api/policy'
 
 definePage({
   meta: { titleKey: 'manage.policies.title', descKey: 'manage.policies.desc' },
@@ -34,7 +34,10 @@ definePage({
 
 const { t } = useI18n()
 const store = usePolicyPageStore()
-onMounted(() => store.actions.refresh())
+onMounted(async () => {
+  await store.actions.refresh()
+  refreshOps()
+})
 
 // ── Types ─────────────────────────────────────────────────────────
 type Policy = (typeof store.rows)[number]
@@ -60,6 +63,30 @@ function promptDelete(policy: Policy) {
 async function confirmDelete() {
   if (deleteTarget.value) await store.actions.handleDelete(deleteTarget.value, toast)
   deleteTarget.value = null
+}
+
+// ── 下发收敛 + 流量统计（workspace 级） ──────────────────────────────
+const delivery = ref<{ total: number; convergedCount: number; converged: boolean } | null>(null)
+const flowStats = ref<{ totalFlows: number; totalBytes: number } | null>(null)
+
+async function refreshOps() {
+  try {
+    const [d, f] = await Promise.all([
+      policyDeliveryStatus(),
+      policyFlowStats(7),
+    ])
+    delivery.value = d.data?.data ?? null
+    flowStats.value = f.data?.data ?? null
+  } catch { /* 状态条失败不影响列表 */ }
+}
+
+function fmtBytes(n?: number): string {
+  if (!n) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(i ? 1 : 0)} ${units[i]}`
 }
 
 // ── 描述即策略：自然语言 → 策略 → 效果预览 ─────────────────────────
@@ -442,6 +469,22 @@ const table = useVueTable({
         </div>
       </div>
 
+    </div>
+
+    <!-- ── 下发收敛 + 流量统计状态条 ──────────────────────────────── -->
+    <div v-if="delivery" class="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5 text-xs">
+      <span class="flex items-center gap-1.5 font-medium">
+        <span
+          class="inline-block size-2 rounded-full"
+          :class="delivery.converged ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'"
+        />
+        {{ delivery.converged ? '已全部生效' : '下发中' }}
+        {{ delivery.convergedCount }}/{{ delivery.total }} 节点
+      </span>
+      <span class="text-muted-foreground">|</span>
+      <span v-if="flowStats" class="text-muted-foreground">
+        近 7 天流量：{{ flowStats.totalFlows }} 条连接 / {{ fmtBytes(flowStats.totalBytes) }}
+      </span>
     </div>
 
     <!-- ── Toolbar ────────────────────────────────────────────────── -->
