@@ -29,6 +29,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/provision"
 	"github.com/alatticeio/lattice/internal/agent/wireguard"
+	"github.com/alatticeio/lattice/internal/daemon"
 	"github.com/alatticeio/lattice/internal/relay"
 	ctrclient "github.com/alatticeio/lattice/internal/server/client"
 	"github.com/alatticeio/lattice/internal/server/nats"
@@ -114,6 +115,7 @@ type Node struct {
 
 	appliedVersionMu sync.RWMutex
 	appliedVersion   string // last successfully applied netmap ConfigVersion
+	startedAt        time.Time
 
 	// GetNetworkMap is set externally after NewAgent returns and before Start
 	// is called. It fetches the current network topology from the control plane.
@@ -208,6 +210,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// ── Phase 1: Network foundation ──────────────────────────────────────────
 
 	node = new(Node)
+	node.startedAt = time.Now()
 	node.manager.peerManager = infra.NewPeerManager()
 	node.logger = cfg.Logger
 	// TurnManager removed — using external coturn for STUN
@@ -635,6 +638,21 @@ func (c *Node) setAppliedVersion(v string) {
 }
 
 // AppliedVersion returns the last applied netmap ConfigVersion.
+// StatusSnapshot renders the node's runtime state for the daemon IPC.
+func (c *Node) StatusSnapshot(pid int) daemon.StatusInfo {
+	snapshot := daemon.StatusInfo{
+		State:          "running",
+		PID:            pid,
+		AppID:          c.Name,
+		AppliedVersion: c.AppliedVersion(),
+		UptimeSeconds:  int64(time.Since(c.startedAt).Seconds()),
+	}
+	if c.current != nil && c.current.Address != nil {
+		snapshot.Address = *c.current.Address
+	}
+	return snapshot
+}
+
 func (c *Node) AppliedVersion() string {
 	c.appliedVersionMu.RLock()
 	defer c.appliedVersionMu.RUnlock()
