@@ -83,6 +83,8 @@ func init() {
 	rootCmd.AddCommand(initCmd())
 	rootCmd.AddCommand(loginCmd())
 	rootCmd.AddCommand(upCmd())
+	rootCmd.AddCommand(downCmd())
+	rootCmd.AddCommand(serviceCmd())
 	rootCmd.AddCommand(statusCmd())
 	rootCmd.AddCommand(token.NewTokenCommand())
 	rootCmd.AddCommand(workspace.NewWorkspaceCommand())

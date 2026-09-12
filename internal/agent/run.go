@@ -24,6 +24,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/wireguard"
+	"github.com/alatticeio/lattice/internal/daemon"
 	"github.com/alatticeio/lattice/internal/dns"
 	"net"
 	"os"
@@ -114,6 +115,29 @@ func Start(ctx context.Context, flags *config.Config) error {
 
 	// Start heartbeat so the management server can track online status.
 	go c.StartHeartbeat(gCtx)
+
+	// Local IPC socket: `lattice status` / `lattice down` talk to the node
+	// through it (daemon mode). Failure to serve is logged, not fatal —
+	// the tunnel keeps running without the CLI control channel.
+	go func() {
+		if err := daemon.ServeIPCWithDown(gCtx, daemon.SocketPath(),
+			func(req daemon.Request) daemon.Response {
+				switch req.Op {
+				case "status":
+					st := c.StatusSnapshot(os.Getpid())
+					return daemon.Response{OK: true, Status: &st}
+				default:
+					return daemon.Response{OK: false, Error: "unknown op: " + req.Op}
+				}
+			},
+			func() {
+				// 优雅关闭：SIGTERM 走 NotifyContext 的既有处理
+				_ = syscall.Kill(os.Getpid(), syscall.SIGTERM)
+			},
+		); err != nil {
+			logger.Error("IPC server exited", err)
+		}
+	}()
 
 	logger.Debug("Interface name", "name", c.Name)
 
@@ -284,4 +308,68 @@ func writePIDFile(path string) error {
 		return err
 	}
 	return os.WriteFile(path, []byte(strconv.Itoa(os.Getpid())), 0644)
+}
+
+// InstallService writes the platform service definition (systemd unit on
+// Linux, launchd plist on macOS) for the node daemon and enables it.
+// Requires root on Linux.
+func InstallService(flags *config.Config) error {
+	execPath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executable: %w", err)
+	}
+	user := os.Getenv("SUDO_USER")
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+
+	switch runtime.GOOS {
+	case "linux":
+		unit := daemon.SystemdUnitContent(execPath, user)
+		path := "/etc/systemd/system/lattice.service"
+		if err := os.WriteFile(path, []byte(unit), 0o644); err != nil {
+			return fmt.Errorf("write %s (需要 root): %w", path, err)
+		}
+		fmt.Printf("service installed: %s\n", path)
+		fmt.Println("enable with:  systemctl enable --now lattice")
+		return nil
+	case "darwin":
+		home, _ := os.UserHomeDir()
+		label := "io.lattice.node"
+		dir := home + "/Library/LaunchAgents"
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		path := dir + "/" + label + ".plist"
+		if err := os.WriteFile(path, []byte(daemon.LaunchdPlistContent(execPath, label)), 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("launchd plist installed: %s\n", path)
+		fmt.Println("load with:  launchctl load " + path)
+		return nil
+	default:
+		return fmt.Errorf("service install not supported on %s", runtime.GOOS)
+	}
+}
+
+// UninstallService removes the platform service definition.
+func UninstallService(flags *config.Config) error {
+	switch runtime.GOOS {
+	case "linux":
+		path := "/etc/systemd/system/lattice.service"
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		fmt.Println("service uninstalled (run: systemctl daemon-reload)")
+		return nil
+	case "darwin":
+		home, _ := os.UserHomeDir()
+		path := home + "/Library/LaunchAgents/io.lattice.node.plist"
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		fmt.Println("launchd plist removed")
+		return nil
+	}
+	return nil
 }
