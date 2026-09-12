@@ -52,3 +52,20 @@ type PolicyTranslationVo struct {
 	Summary  string         `json:"summary"`
 	Warnings []string       `json:"warnings,omitempty"`
 }
+
+// PolicyDeliveryStatusVo is the workspace-level policy convergence view:
+// expected netmap version vs what each node reports applied.
+type PolicyDeliveryStatusVo struct {
+	Total          int                        `json:"total"`
+	ConvergedCount int                        `json:"convergedCount"`
+	Converged      bool                       `json:"converged"`
+	Peers          []PolicyDeliveryStatusPeer `json:"peers"`
+}
+
+// PolicyDeliveryStatusPeer is one node's convergence state.
+type PolicyDeliveryStatusPeer struct {
+	Name           string `json:"name"`
+	Address        string `json:"address,omitempty"`
+	AppliedVersion string `json:"appliedVersion,omitempty"`
+	Converged      bool   `json:"converged"`
+}

@@ -41,6 +41,7 @@ type PeerController interface {
 	UpdateStatus(ctx context.Context, status int) error
 
 	ListPeers(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error)
+	PolicyDeliveryStatus(ctx context.Context, workspaceID string) (*vo.PolicyDeliveryStatusVo, error)
 	UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (*vo.PeerVo, error)
 	DisablePeer(ctx context.Context, namespace, name string) error
 	EnablePeer(ctx context.Context, namespace, name string) error
@@ -65,6 +66,10 @@ func (p *peerController) UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (
 
 func (p *peerController) ListPeers(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error) {
 	return p.peerService.ListPeers(ctx, pageParam)
+}
+
+func (p *peerController) PolicyDeliveryStatus(ctx context.Context, workspaceID string) (*vo.PolicyDeliveryStatusVo, error) {
+	return p.peerService.PolicyDeliveryStatus(ctx, workspaceID)
 }
 
 func (p *peerController) CreateToken(ctx context.Context, request []byte) ([]byte, error) {

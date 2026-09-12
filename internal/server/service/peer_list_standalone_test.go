@@ -93,3 +93,24 @@ func TestNetworkService_ListTokensStandalone(t *testing.T) {
 	assert.Equal(t, "Dev", page.List[0].WorkspaceDisplayName)
 	assert.False(t, page.List[0].IsExpired)
 }
+
+func TestPeerService_PolicyDeliveryStatus(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Dev",
+	}))
+	for _, p := range []string{"a", "b"} {
+		_, err := svc.Register(ctx, &dto.PeerDto{Name: p, AppID: "app-" + p, Token: "enr-test-token"})
+		require.NoError(t, err)
+	}
+
+	status, err := svc.PolicyDeliveryStatus(ctx, "ws1")
+	require.NoError(t, err)
+	assert.False(t, status.Converged, "no heartbeats yet — cannot be converged")
+	assert.Equal(t, 2, status.Total)
+	for _, p := range status.Peers {
+		assert.Empty(t, p.AppliedVersion, "no heartbeat means no applied version")
+	}
+}

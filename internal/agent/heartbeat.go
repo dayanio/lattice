@@ -26,7 +26,8 @@ const heartbeatInterval = 30 * time.Second
 const heartbeatTimeout = 5 * time.Second
 
 type heartbeatPayload struct {
-	AppID string `json:"appId"`
+	AppID         string `json:"appId"`
+	ConfigVersion string `json:"configVersion,omitempty"`
 }
 
 // StartHeartbeat sends a periodic heartbeat to the management server via NATS
@@ -36,13 +37,15 @@ func (c *Node) StartHeartbeat(ctx context.Context) {
 	logger := log.GetLogger("heartbeat")
 	appId := config.Conf.AppId
 
-	data, err := json.Marshal(heartbeatPayload{AppID: appId})
-	if err != nil {
-		logger.Error("marshal heartbeat payload failed", err)
-		return
-	}
-
 	send := func() {
+		// Marshal at send time: the applied config version changes as the
+		// netmap sync loop converges, and every heartbeat must carry the
+		// version currently applied — not the one from process start.
+		data, err := json.Marshal(heartbeatPayload{AppID: appId, ConfigVersion: c.AppliedVersion()})
+		if err != nil {
+			logger.Error("marshal heartbeat payload failed", err)
+			return
+		}
 		hbCtx, cancel := context.WithTimeout(ctx, heartbeatTimeout)
 		defer cancel()
 		if _, err := c.ctrClient.RequestNats(hbCtx, "lattice.signals.peer", "heartbeat", data); err != nil {
