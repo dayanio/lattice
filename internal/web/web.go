@@ -59,6 +59,15 @@ func RegisterHandlers(r *gin.Engine) {
 			contentType = "text/html; charset=utf-8"
 		}
 
+		// index.html must always be revalidated (it references hashed
+		// assets that change on every build); hashed assets are immutable
+		// and cacheable forever.
+		if filePath == "index.html" {
+			c.Header("Cache-Control", "no-cache")
+		} else if strings.HasPrefix(filePath, "assets/") {
+			c.Header("Cache-Control", "public, max-age=31536000, immutable")
+		}
+
 		c.Data(http.StatusOK, contentType, data)
 	})
 }
