@@ -307,3 +307,63 @@ func (c *Client) PeerLabel(namespace, peerName string, labels map[string]string)
 	}
 	return w.Flush()
 }
+
+// ImportPolicies uploads a YAML policy bundle to the management API.
+// dryRun=true validates only; false applies every valid policy.
+func (c *Client) ImportPolicies(namespace, content string, dryRun bool) error {
+	wsID, err := c.resolveWorkspaceID(namespace)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Code int `json:"code"`
+		Data *struct {
+			Total  int `json:"total"`
+			OK     int `json:"ok"`
+			Failed int `json:"failed"`
+			Items  []struct {
+				Name  string `json:"name"`
+				OK    bool   `json:"ok"`
+				Error string `json:"error"`
+			} `json:"items"`
+		} `json:"data"`
+		Msg string `json:"msg"`
+	}
+	req := map[string]any{"content": content, "dryRun": dryRun}
+	if err := c.do(context.Background(), http.MethodPost,
+		"/api/v1/policies/import?dryRun="+fmt.Sprintf("%t", dryRun), wsID, req, &result); err != nil {
+		return err
+	}
+	if result.Data == nil {
+		return fmt.Errorf("import failed: %s", result.Msg)
+	}
+	for _, item := range result.Data.Items {
+		status := "ok"
+		if !item.OK {
+			status = "FAILED: " + item.Error
+		}
+		fmt.Printf("  %-24s %s\n", item.Name, status)
+	}
+	if result.Data.Failed > 0 {
+		return fmt.Errorf("%d of %d policies failed to import", result.Data.Failed, result.Data.Total)
+	}
+	return nil
+}
+
+// ExportPolicies prints the workspace's active policies as a YAML bundle.
+func (c *Client) ExportPolicies(namespace string) error {
+	wsID, err := c.resolveWorkspaceID(namespace)
+	if err != nil {
+		return err
+	}
+	var result struct {
+		Code int    `json:"code"`
+		Data string `json:"data"`
+		Msg  string `json:"msg"`
+	}
+	if err := c.do(context.Background(), http.MethodGet, "/api/v1/policies/export", wsID, nil, &result); err != nil {
+		return err
+	}
+	fmt.Print(result.Data)
+	return nil
+}

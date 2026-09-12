@@ -17,6 +17,7 @@ package gormstore_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alatticeio/lattice/internal/db/gormstore"
 	"github.com/alatticeio/lattice/internal/server/models"
@@ -46,4 +47,27 @@ func TestPolicyVersion_CreateAndListOrdered(t *testing.T) {
 	assert.Equal(t, 3, rows[0].Version, "newest version first")
 	assert.Equal(t, "created", rows[2].Action)
 	assert.Equal(t, "描述", rows[2].Intent)
+}
+
+func TestFlowEvent_SumByAgents(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.FlowEvent{}))
+	st, err := gormstore.New(db)
+	require.NoError(t, err)
+	ctx := context.Background()
+	now := time.Now()
+
+	for _, e := range []models.FlowEvent{
+		{AgentID: "app-a", Bytes: 100, Ts: now.Add(-time.Minute)},
+		{AgentID: "app-a", Bytes: 50, Ts: now.Add(-2 * time.Minute)},
+		{AgentID: "app-b", Bytes: 10, Ts: now.Add(-3 * time.Hour)}, // outside window
+	} {
+		require.NoError(t, st.FlowEvents().Write(ctx, &e))
+	}
+
+	count, bytes, err := st.FlowEvents().SumByAgents(ctx, []string{"app-a"}, now.Add(-24*time.Hour))
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, count)
+	assert.EqualValues(t, 150, bytes)
 }

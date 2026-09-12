@@ -69,3 +69,40 @@ type PolicyDeliveryStatusPeer struct {
 	AppliedVersion string `json:"appliedVersion,omitempty"`
 	Converged      bool   `json:"converged"`
 }
+
+// FlowStatsVo aggregates observed traffic for a workspace.
+type FlowStatsVo struct {
+	WorkspaceID string           `json:"workspaceId"`
+	Since       string           `json:"since"`
+	Days        int              `json:"days"`
+	TotalFlows  int64            `json:"totalFlows"`
+	TotalBytes  int64            `json:"totalBytes"`
+	PerAgent    []FlowAgentStats `json:"perAgent"`
+}
+
+// FlowAgentStats is one agent's traffic totals within the window.
+type FlowAgentStats struct {
+	AgentID string `json:"agentId"`
+	Name    string `json:"name,omitempty"`
+	Flows   int64  `json:"flows"`
+	Bytes   int64  `json:"bytes"`
+}
+
+// PolicyImportItem is one policy's import outcome.
+type PolicyImportItem struct {
+	Name     string   `json:"name"`
+	DryRun   bool     `json:"dryRun"`
+	OK       bool     `json:"ok"`
+	Error    string   `json:"error,omitempty"`
+	Action   string   `json:"action,omitempty"` // applied / validated
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// PolicyImportVo reports per-item import outcomes.
+type PolicyImportVo struct {
+	DryRun bool               `json:"dryRun"`
+	Total  int                `json:"total"`
+	OK     int                `json:"ok"`
+	Failed int                `json:"failed"`
+	Items  []PolicyImportItem `json:"items"`
+}
