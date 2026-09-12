@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 
 	"github.com/alatticeio/lattice/internal/agent/store"
@@ -130,7 +131,8 @@ func (s *policyIntentService) Translate(ctx context.Context, workspaceID, descri
 }
 
 // parsePolicyDraft extracts the JSON object from an LLM completion,
-// tolerating markdown code fences.
+// tolerating markdown code fences, then normalizes known LLM quirks
+// (identityRef as object, string-typed ports) before decoding.
 func parsePolicyDraft(content string) (*policyDraftLLM, error) {
 	content = strings.TrimSpace(content)
 	content = strings.TrimPrefix(content, "```json")
@@ -141,11 +143,100 @@ func parsePolicyDraft(content string) (*policyDraftLLM, error) {
 	if start < 0 || end <= start {
 		return nil, fmt.Errorf("no JSON object in completion")
 	}
-	var draft policyDraftLLM
-	if err := json.Unmarshal([]byte(content[start:end+1]), &draft); err != nil {
+
+	var raw struct {
+		Spec     json.RawMessage `json:"spec"`
+		Summary  string          `json:"summary"`
+		Warnings []string        `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(content[start:end+1]), &raw); err != nil {
 		return nil, err
 	}
-	return &draft, nil
+
+	spec, err := lenientSpecDecode(raw.Spec)
+	if err != nil {
+		return nil, err
+	}
+	return &policyDraftLLM{Spec: spec, Summary: raw.Summary, Warnings: raw.Warnings}, nil
+}
+
+// lenientSpecDecode decodes a PolicySpec tolerating LLM quirks: coercing
+// identityRef objects to their name and string-typed ports to numbers.
+func lenientSpecDecode(raw json.RawMessage) (dto.PolicySpec, error) {
+	var spec dto.PolicySpec
+	if len(raw) == 0 {
+		return spec, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return spec, err
+	}
+	normalizeSelections := func(rules any) {
+		list, ok := rules.([]any)
+		if !ok {
+			return
+		}
+		for _, rv := range list {
+			rule, ok := rv.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, key := range []string{"from", "to"} {
+				sels, ok := rule[key].([]any)
+				if !ok {
+					continue
+				}
+				for i, sv := range sels {
+					sel, ok := sv.(map[string]any)
+					if !ok {
+						continue
+					}
+					if ref, exists := sel["identityRef"]; exists {
+						switch v := ref.(type) {
+						case string:
+							sel["identityRef"] = v
+						case map[string]any:
+							for _, k := range []string{"name", "id", "value"} {
+								if s, ok := v[k].(string); ok {
+									sel["identityRef"] = s
+									break
+								}
+							}
+						}
+					}
+					sels[i] = sel
+				}
+				rule[key] = sels
+			}
+			if ports, ok := rule["ports"].([]any); ok {
+				for i, pv := range ports {
+					if pm, ok := pv.(map[string]any); ok {
+						switch v := pm["port"].(type) {
+						case string:
+							if n, err := strconv.Atoi(v); err == nil {
+								pm["port"] = float64(n)
+							}
+						case float64:
+							pm["port"] = v
+						}
+						ports[i] = pm
+					}
+				}
+				rule["ports"] = ports
+			}
+		}
+	}
+	normalizeSelections(m["ingress"])
+	normalizeSelections(m["egress"])
+
+	norm, err := json.Marshal(m)
+	if err != nil {
+		return spec, err
+	}
+	if err := json.Unmarshal(norm, &spec); err != nil {
+		return spec, err
+	}
+	return spec, nil
 }
 
 func joinOrEmpty(items []string) string {

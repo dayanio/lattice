@@ -318,3 +318,32 @@ spec:
 func policySvcForTest(st store.Store) service.PolicyService {
 	return service.NewPolicyService(nil, st)
 }
+
+// LLMs emit slightly-off shapes: identityRef as an object, ports as strings.
+// The translator must normalize these instead of failing the whole draft.
+func TestPolicyIntent_LenientNormalization(t *testing.T) {
+	completion := `{"spec": {
+		"network": "ws1",
+		"egress": [{
+			"to": [{"identityRef": {"name": "prod-db"}, "ipBlock": {"cidr": "10.0.0.0/8"}}],
+			"ports": [{"port": "5432", "protocol": "tcp"}]
+		}]
+	}, "summary": "s", "warnings": ["w1"]}`
+	svc, st := newIntentService(t, completion)
+	ctx := context.Background()
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1",
+	}))
+	require.NoError(t, st.PeerIdentities().Create(ctx, &models.PeerIdentity{
+		NetworkID: "ws1", Name: "prod-db", PeerRef: "db",
+	}))
+
+	vo, err := svc.Translate(ctx, "ws1", "随便什么描述")
+	require.NoError(t, err, "off-type LLM output must be normalized, not fail")
+	assert.Equal(t, "ws1", vo.Spec.Network)
+	require.Len(t, vo.Spec.Egress, 1)
+	require.Len(t, vo.Spec.Egress[0].To, 1)
+	assert.Equal(t, "prod-db", vo.Spec.Egress[0].To[0].IdentityRef)
+	require.Len(t, vo.Spec.Egress[0].Ports, 1)
+	assert.EqualValues(t, 5432, vo.Spec.Egress[0].Ports[0].Port)
+}
