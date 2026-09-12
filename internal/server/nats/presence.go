@@ -26,14 +26,16 @@ const offlineThreshold = 90 * time.Second
 // NodePresenceStore is a thread-safe in-memory store that tracks the last
 // heartbeat timestamp for each agent node identified by its AppID.
 type NodePresenceStore struct {
-	mu sync.RWMutex
-	m  map[string]time.Time // appId -> lastHeartbeat
+	mu       sync.RWMutex
+	m        map[string]time.Time // appId -> lastHeartbeat
+	versions map[string]string    // appId -> last reported netmap ConfigVersion
 }
 
 // NewNodePresenceStore creates an empty NodePresenceStore.
 func NewNodePresenceStore() *NodePresenceStore {
 	return &NodePresenceStore{
-		m: make(map[string]time.Time),
+		m:        make(map[string]time.Time),
+		versions: make(map[string]string),
 	}
 }
 
@@ -42,6 +44,24 @@ func (s *NodePresenceStore) Update(appId string) {
 	s.mu.Lock()
 	s.m[appId] = time.Now()
 	s.mu.Unlock()
+}
+
+// UpdateWithVersion records a heartbeat and the ConfigVersion the node
+// reports as applied (delivery-tracking for policy convergence).
+func (s *NodePresenceStore) UpdateWithVersion(appId, version string) {
+	s.mu.Lock()
+	s.m[appId] = time.Now()
+	if version != "" {
+		s.versions[appId] = version
+	}
+	s.mu.Unlock()
+}
+
+// GetVersion returns the last netmap ConfigVersion the node reported applied.
+func (s *NodePresenceStore) GetVersion(appId string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.versions[appId]
 }
 
 // GetStatus returns the online status and last-seen time for the given appId.

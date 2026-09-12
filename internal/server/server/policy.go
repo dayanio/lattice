@@ -45,6 +45,20 @@ func (s *Server) handlePreviewPolicy() gin.HandlerFunc {
 	}
 }
 
+// handlePolicyDeliveryStatus reports per-node policy convergence
+// ("已下发 x/y 节点" 数据源).
+func (s *Server) handlePolicyDeliveryStatus() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		wsID, _ := c.Request.Context().Value(infra.WorkspaceKey).(string)
+		vo, err := s.peerController.PolicyDeliveryStatus(c.Request.Context(), wsID)
+		if err != nil {
+			resp.Error(c, err.Error())
+			return
+		}
+		resp.OK(c, vo)
+	}
+}
+
 // handleTranslatePolicy translates a natural-language description into a
 // draft PolicySpec ("描述即策略"). No side effects: the caller still
 // previews and submits through the normal approval gates.

@@ -563,13 +563,18 @@ func (s *Server) GetNetMap(content []byte) ([]byte, error) {
 // the in-memory presence store so ListPeers can report real-time online status.
 func (s *Server) Heartbeat(content []byte) ([]byte, error) {
 	var payload struct {
-		AppID string `json:"appId"`
+		AppID         string `json:"appId"`
+		ConfigVersion string `json:"configVersion"`
 	}
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, err
 	}
 	if payload.AppID != "" {
-		s.presence.Update(payload.AppID)
+		if payload.ConfigVersion != "" {
+			s.presence.UpdateWithVersion(payload.AppID, payload.ConfigVersion)
+		} else {
+			s.presence.Update(payload.AppID)
+		}
 	}
 	return []byte{}, nil
 }
