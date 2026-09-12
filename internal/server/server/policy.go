@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/server/dto"
@@ -88,6 +89,21 @@ func (s *Server) handleImportPolicies() gin.HandlerFunc {
 		vo, err := s.policyController.ImportPolicies(
 			c.Request.Context(), wsID, string(content), dryRun,
 			c.GetString("user_id"), c.GetString("username"))
+		if err != nil {
+			resp.Error(c, err.Error())
+			return
+		}
+		resp.OK(c, vo)
+	}
+}
+
+// handlePolicyFlowStats aggregates observed traffic per workspace
+// (策略命中/流量统计 v1 数据源).
+func (s *Server) handlePolicyFlowStats() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		wsID, _ := c.Request.Context().Value(infra.WorkspaceKey).(string)
+		days, _ := strconv.Atoi(c.DefaultQuery("days", "7"))
+		vo, err := s.peerController.FlowStats(c.Request.Context(), wsID, days)
 		if err != nil {
 			resp.Error(c, err.Error())
 			return
