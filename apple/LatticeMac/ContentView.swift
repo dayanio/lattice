@@ -182,9 +182,15 @@ struct ContentView: View {
                             iconColor: .gray,
                             title: "退出节点",
                             value: "无",
-                            showsChevron: true,
-                            soon: true
-                        )
+                            showsChevron: true
+                        ) {
+                            if inPanel {
+                                UIState.shared.page = .networkSettings
+                                openMain?()
+                            } else {
+                                showingNetworkSettings = true
+                            }
+                        }
                         Divider()
                         ForEach(filteredPeers) { peer in
                             PeerRow(
@@ -224,39 +230,33 @@ struct ContentView: View {
             }
 
             Divider()
-            Button {
+            NavRow(
+                icon: "arrow.up.forward",
+                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
+                title: "共享本地服务",
+                showsChevron: true
+            ) {
                 if inPanel {
                     UIState.shared.page = .share
                     openMain?()
                 } else {
                     showingShare = true
                 }
-            } label: {
-                NavRow(
-                    icon: "arrow.up.forward",
-                    iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
-                    title: "共享本地服务",
-                    showsChevron: true
-                )
             }
-            .buttonStyle(.plain)
             Divider()
-            Button {
+            NavRow(
+                icon: "gearshape",
+                iconColor: .accentColor,
+                title: "网络设置",
+                showsChevron: true
+            ) {
                 if inPanel {
                     UIState.shared.page = .networkSettings
                     openMain?()
                 } else {
                     showingNetworkSettings = true
                 }
-            } label: {
-                NavRow(
-                    icon: "gearshape",
-                    iconColor: .accentColor,
-                    title: "网络设置",
-                    showsChevron: true
-                )
             }
-            .buttonStyle(.plain)
 
             Divider()
             footer
