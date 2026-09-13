@@ -49,8 +49,9 @@
 - **连接质量展示**：把 `EventConnecting/Connected/Disconnected` 和 ICE vs LRP 状态透传到 `onEvent`，UI 上标"直连"或"经中继"
 - **设备操作入口**：管理面已有的 peer 增删接口接到客户端菜单里（重命名 / 下线）
 - **ACL 调试视图**：读 `LatticePolicy` 生效结果，在节点详情里标"能连 / 被拦截"
+- **iOS 接引擎**：`apple/LatticeTunnel/PacketTunnelProvider.swift` 目前是空壳，照抄 macOS 那份 `startTunnel`/`onEvent`/`onTunnelUp` 实现接上同一套 gomobile 引擎（`apple/engine`），数据面和信令零改动，只需单独适配 iOS 侧 UI 和 App Group 配置
 
-涉及：`apple/engine/engine.go`、`apple/LatticeTunnelMac/PacketTunnelProvider.swift`、`api/v1alpha1` `LatticePolicy`
+涉及：`apple/engine/engine.go`、`apple/LatticeTunnelMac/PacketTunnelProvider.swift`、`apple/LatticeTunnel/PacketTunnelProvider.swift`、`api/v1alpha1` `LatticePolicy`
 
 ### 阶段二：日常使用刚需
 
