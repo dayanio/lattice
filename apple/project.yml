@@ -1,0 +1,90 @@
+name: LatticeApple
+options:
+  bundleIdPrefix: io.lattice
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "14.0"
+  xcodeVersion: "15.4"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: JN4AC4DDAU
+    CODE_SIGN_IDENTITY: "Apple Development"
+
+targets:
+  Lattice:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Lattice
+      - path: Shared
+    dependencies:
+      - target: LatticeTunnel
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        CODE_SIGN_ENTITLEMENTS: entitlements/Lattice.entitlements
+        SWIFT_EMIT_LOC_STRINGS: YES
+
+  LatticeMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: LatticeMac
+      - path: Shared
+    dependencies:
+      - target: LatticeTunnelMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: entitlements/LatticeMac.entitlements
+        COMBINE_HIDPI_IMAGES: YES
+
+  LatticeTunnel:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: LatticeTunnel
+      - path: Shared/TunnelCore.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios.tunnel
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: entitlements/LatticeTunnel.entitlements
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+
+  LatticeTunnelMac:
+    type: app-extension
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: LatticeTunnelMac
+      - path: Shared/TunnelCore.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac.tunnel
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_ENTITLEMENTS: entitlements/LatticeTunnelMac.entitlements
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
+
+schemes:
+  Lattice:
+    build:
+      targets:
+        Lattice: all
+        LatticeTunnel: all
+  LatticeMac:
+    build:
+      targets:
+        LatticeMac: all
+        LatticeTunnelMac: all
