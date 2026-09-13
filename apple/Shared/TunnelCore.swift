@@ -27,6 +27,6 @@ struct PeerNode: Identifiable {
     let name: String
     let address: String
     let online: Bool
-    let os: String
+    var os: String = "macOS"
     var lastHandshake: String = "—"
 }

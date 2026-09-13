@@ -41,75 +41,100 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 final class LatticeAPI {
     static let shared = LatticeAPI()
+
     private var baseURL: String {
-        UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://localhost:8080"
+        UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
     }
+
     private var token: String {
         UserDefaults.standard.string(forKey: "lattice.authToken") ?? ""
     }
 
-    private func request(method: String, path: String, body: [String: Any]? = nil) async throws -> Data {
-        guard let url = URL(string: baseURL + path) else {
-            throw URLError(.badURL)
+    func listPeers() async throws -> [PeerNode] {
+        try await resolveWorkspaceIfNeeded()
+        let data = try await request(method: "GET", path: "/api/v1/peers/list?page=1&pageSize=50")
+        let decoded = try JSONDecoder().decode(PeerListResponse.self, from: data)
+        guard let list = decoded.data?.list else { return [] }
+        return list.map { p in
+            PeerNode(name: p.name, address: p.address, online: p.status == "online")
         }
-        var req = URLRequest(url: url, timeoutInterval: 15)
-        req.httpMethod = method
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue(UserDefaults.standard.string(forKey: "lattice.workspaceId") ?? "", forHTTPHeaderField: "X-Workspace-Id")
-        if !token.isEmpty {
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-        if let body = body {
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            throw LatticeAPIError.server(body)
-        }
-        return data
     }
 
-    func login(user: String, pass: String) async throws -> String {
+    func login(user: String, pass: String) async throws {
         guard let url = URL(string: baseURL + "/api/v1/users/login") else { throw URLError(.badURL) }
-        var req = URLRequest(url: url, timeoutInterval: 15)
+        var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["username": user, "password": pass])
         let (data, _) = try await URLSession.shared.data(for: req)
         let decoded = try JSONDecoder().decode(LoginResponse.self, from: data)
-        guard let t = decoded.data?.token else { throw LatticeAPIError.noToken }
+        guard let t = decoded.data?.token, !t.isEmpty else { throw LatticeAPIError.server(decoded.msg ?? "登录失败") }
         UserDefaults.standard.set(t, forKey: "lattice.authToken")
         UserDefaults.standard.set(user, forKey: "lattice.adminUser")
-        return t
+        UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
+        try await resolveWorkspaceIfNeeded()
     }
 
-    func listPeers() async throws -> [PeerNode] {
-        let data = try await request(method: "GET", path: "/api/v1/peers/list?page=1&pageSize=50", body: nil)
-        let decoded = try JSONDecoder().decode(PeerListResponse.self, from: data)
-        guard let list = decoded.data?.list else { return [] }
-        return list.map { p in
-            PeerNode(name: p.name, address: p.address, online: p.status == "online", os: "Linux")
+    var isLoggedIn: Bool {
+        !token.isEmpty
+    }
+
+    var serverURL: String { baseURL }
+
+    private func resolveWorkspaceIfNeeded() async throws {
+        if !workspaceID.isEmpty { return }
+        let data = try await request(method: "GET", path: "/api/v1/workspaces/list?page=1&pageSize=1")
+        let decoded = try JSONDecoder().decode(WorkspaceListResponse.self, from: data)
+        guard let ws = decoded.data?.list?.first?.id else {
+            throw LatticeAPIError.server("未找到可用的工作空间")
         }
+        UserDefaults.standard.set(ws, forKey: "lattice.workspaceId")
+    }
+
+    private var workspaceID: String {
+        UserDefaults.standard.string(forKey: "lattice.workspaceId") ?? ""
+    }
+
+    private func request(method: String, path: String) async throws -> Data {
+        guard let url = URL(string: baseURL + path) else {
+            throw URLError(.badURL)
+        }
+        var req = URLRequest(url: url, timeoutInterval: 10)
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if !workspaceID.isEmpty {
+            req.setValue(workspaceID, forHTTPHeaderField: "X-Workspace-Id")
+        }
+        if !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw LatticeAPIError.server(Self.serverMessage(from: data, fallback: "HTTP \( (response as? HTTPURLResponse)?.statusCode ?? -1)"))
+        }
+        return data
+    }
+
+    private static func serverMessage(from data: Data, fallback: String) -> String {
+        if let decoded = try? JSONDecoder().decode(LoginResponse.self, from: data), let msg = decoded.msg, !msg.isEmpty {
+            return msg
+        }
+        return fallback
     }
 }
 
-// MARK: - Response types
-
-struct LoginResponse: Codable {
-    let code: Int
-    let data: LoginData?
-    let msg: String?
-    struct LoginData: Codable { let token: String? }
-}
+// MARK: - API Response Types
 
 struct PeerListResponse: Codable {
     let code: Int
     let data: PeerListData?
+    let msg: String?
+
     struct PeerListData: Codable {
         let total: Int
         let list: [PeerItem]?
     }
+
     struct PeerItem: Codable {
         let name: String
         let address: String
@@ -118,8 +143,30 @@ struct PeerListResponse: Codable {
     }
 }
 
+struct LoginResponse: Codable {
+    let code: Int
+    let data: LoginData?
+    let msg: String?
+
+    struct LoginData: Codable {
+        let token: String?
+    }
+}
+
+struct WorkspaceListResponse: Codable {
+    let code: Int
+    let data: WorkspaceListData?
+    let msg: String?
+
+    struct WorkspaceListData: Codable {
+        let list: [WorkspaceItem]?
+    }
+
+    struct WorkspaceItem: Codable {
+        let id: String?
+    }
+}
+
 enum LatticeAPIError: Error {
     case server(String)
-    case noToken
-    case noWorkspace
 }
