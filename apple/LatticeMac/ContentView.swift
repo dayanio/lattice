@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import SwiftUI
+import NetworkExtension
 
 // MARK: - ContentView
 
@@ -21,13 +22,28 @@ struct ContentView: View {
     @State private var isLoading = true
     @State private var errorMsg = ""
     @State private var showingSettings = false
+    @State private var showingJoin = false
+    @State private var joined = UserDefaults.standard.bool(forKey: "lattice.joined")
+    @StateObject private var tunnel = TunnelManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
 
-            if isLoading {
+            if !joined {
+                Spacer()
+                VStack(spacing: 10) {
+                    Image(systemName: "personalhotspot")
+                        .font(.system(size: 32))
+                        .foregroundColor(.secondary)
+                    Text("尚未加入 Lattice 网络")
+                        .foregroundColor(.secondary)
+                    Button("加入网络") { showingJoin = true }
+                        .buttonStyle(.borderedProminent)
+                }
+                Spacer()
+            } else if isLoading {
                 Spacer()
                 ProgressView("加载中…")
                 Spacer()
@@ -64,29 +80,85 @@ struct ContentView: View {
             Divider()
             footer
         }
-        .task { await loadPeers() }
+        .task {
+            tunnel.load()
+            await loadPeers()
+        }
         .sheet(isPresented: $showingSettings) {
             SettingsView {
                 showingSettings = false
                 Task { await loadPeers() }
             }
         }
+        .sheet(isPresented: $showingJoin) {
+            JoinView {
+                showingJoin = false
+                joined = true
+                tunnel.load {
+                    tunnel.connect()
+                }
+            }
+        }
+    }
+
+    private var connected: Binding<Bool> {
+        Binding(
+            get: { tunnel.status == .connected },
+            set: { on in
+                if on {
+                    if tunnel.isConfigured {
+                        tunnel.connect()
+                    } else {
+                        showingJoin = true
+                    }
+                } else {
+                    tunnel.disconnect()
+                }
+            }
+        )
     }
 
     private var header: some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(peers.isEmpty ? Color.gray : Color.green)
+                .fill(statusColor)
                 .frame(width: 10, height: 10)
-            Text(peers.isEmpty ? "未连接" : "已连接")
-                .font(.system(.headline, design: .rounded))
+            VStack(alignment: .leading, spacing: 0) {
+                Text(statusText)
+                    .font(.system(.headline, design: .rounded))
+                if let err = tunnel.lastStartError, !err.isEmpty {
+                    Text(err).font(.caption2).foregroundColor(.red)
+                }
+            }
             Spacer()
             Text("Lattice")
                 .font(.system(.caption, design: .rounded))
                 .foregroundColor(.secondary)
+            Toggle("", isOn: connected)
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .labelsHidden()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private var statusColor: Color {
+        switch tunnel.status {
+        case .connected: return .green
+        case .connecting, .reasserting: return .orange
+        case .disconnecting: return .orange
+        default: return .gray
+        }
+    }
+
+    private var statusText: String {
+        switch tunnel.status {
+        case .connected: return "已连接"
+        case .connecting, .reasserting: return "连接中…"
+        case .disconnecting: return "断开中…"
+        default: return "未连接"
+        }
     }
 
     private var footer: some View {
@@ -101,7 +173,7 @@ struct ContentView: View {
                     .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
-            .help("登录设置")
+            .help("登录管理面板")
 
             Button("刷新") { Task { await loadPeers() } }
                 .font(.caption)
@@ -169,7 +241,84 @@ struct PeerRow: View {
     }
 }
 
-// MARK: - Settings (Login)
+// MARK: - Join (network enrollment)
+
+/// First-run join sheet: collects the control-plane URL and enrollment token,
+/// installs the VPN profile, and connects the tunnel.
+struct JoinView: View {
+    var onDone: () -> Void
+
+    @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
+    @State private var token = ""
+    @State private var deviceName = Host.current().localizedName ?? "lattice-mac"
+    @State private var isSaving = false
+    @State private var errorText = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("加入 Lattice 网络")
+                .font(.system(.headline, design: .rounded))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("服务器地址").font(.caption).foregroundColor(.secondary)
+                TextField("http://127.0.0.1:8080", text: $serverURL)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("入网令牌").font(.caption).foregroundColor(.secondary)
+                SecureField("控制台签发的入网令牌", text: $token)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("节点名称").font(.caption).foregroundColor(.secondary)
+                TextField("lattice-mac", text: $deviceName)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            Text("加入后系统会请求授权创建 VPN 配置，本机即可访问网络内的节点。")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+            if !errorText.isEmpty {
+                Text(errorText).font(.caption).foregroundColor(.red)
+            }
+
+            HStack {
+                Spacer()
+                if isSaving {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("加入网络") { saveAndConnect() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(serverURL.isEmpty || token.isEmpty)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+
+    private func saveAndConnect() {
+        isSaving = true
+        errorText = ""
+        let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+        UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
+        TunnelManager.shared.saveJoin(serverURL: trimmed, token: token, name: deviceName) { err in
+            isSaving = false
+            if let err {
+                errorText = "保存失败: \(err)"
+            } else {
+                onDone()
+            }
+        }
+    }
+}
+
+// MARK: - Settings (management-plane login)
 
 struct SettingsView: View {
     var onDone: () -> Void
