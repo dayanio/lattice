@@ -607,6 +607,11 @@ func setDefaults(v *viper.Viper) {
 	//   database.dsn  = ""  → auto-falls back to local SQLite lattice.db (handled by inferDatabaseDriver)
 	v.SetDefault("auth-token", "")
 	v.SetDefault("server-url", "")
+	// A default (even empty) is REQUIRED for the env override to reach
+	// Unmarshal: viper's AutomaticEnv only applies to keys it knows about.
+	// Without this, LATTICE_SIGNALING_URL is silently ignored and the
+	// documented override never happens.
+	v.SetDefault("signaling-url", "")
 
 	v.SetDefault("stun-url", "") // empty: use discovered value from server, or fall back in stunURIs()
 	v.SetDefault("relay-url", ":6266")
