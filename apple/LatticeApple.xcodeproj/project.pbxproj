@@ -79,6 +79,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0E825FF21A8E0CC2D39A63C2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		280D2D1DA245A0FD3DB0E443 /* LatticeTunnelMac.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LatticeTunnelMac.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelCore.swift; sourceTree = "<group>"; };
 		2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/LatticeCore.xcframework; sourceTree = "<group>"; };
@@ -87,6 +88,7 @@
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		8287DD726BF401E4637ECBC7 /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A087BE65958F460FCF0CC468 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
+		A40878B1329E02B2C70EB9E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeMacApp.swift; sourceTree = "<group>"; };
 		CC55D463910D975F56B8342B /* LatticeTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LatticeTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E73ACB07B695A778DE7339C3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -127,6 +129,7 @@
 		24AEE150565E0B755E44B295 /* LatticeTunnel */ = {
 			isa = PBXGroup;
 			children = (
+				A40878B1329E02B2C70EB9E0 /* Info.plist */,
 				FE4CF185A86A9E5B9DCDB935 /* PacketTunnelProvider.swift */,
 			);
 			path = LatticeTunnel;
@@ -162,6 +165,7 @@
 		86455A376C5D8694817AD6F9 /* LatticeTunnelMac */ = {
 			isa = PBXGroup;
 			children = (
+				0E825FF21A8E0CC2D39A63C2 /* Info.plist */,
 				61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */,
 			);
 			path = LatticeTunnelMac;
@@ -478,10 +482,9 @@
 					"$(inherited)",
 					"\"Frameworks\"",
 				);
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LatticeTunnelMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				NSExtension = "[\"NSExtensionPointIdentifier\": \"com.apple.networkextension.packet-tunnel\"]";
 				PRODUCT_BUNDLE_IDENTIFIER = io.lattice.mac.tunnel;
 				SDKROOT = macosx;
 			};
@@ -511,14 +514,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = entitlements/LatticeTunnel.entitlements;
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LatticeTunnel/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				NSExtension = "[\"NSExtensionPointIdentifier\": \"com.apple.networkextension.packet-tunnel\"]";
 				PRODUCT_BUNDLE_IDENTIFIER = io.lattice.ios.tunnel;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -594,14 +596,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = entitlements/LatticeTunnel.entitlements;
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LatticeTunnel/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				NSExtension = "[\"NSExtensionPointIdentifier\": \"com.apple.networkextension.packet-tunnel\"]";
 				PRODUCT_BUNDLE_IDENTIFIER = io.lattice.ios.tunnel;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -638,10 +639,9 @@
 					"$(inherited)",
 					"\"Frameworks\"",
 				);
-				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LatticeTunnelMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				NSExtension = "[\"NSExtensionPointIdentifier\": \"com.apple.networkextension.packet-tunnel\"]";
 				PRODUCT_BUNDLE_IDENTIFIER = io.lattice.mac.tunnel;
 				SDKROOT = macosx;
 			};
