@@ -58,6 +58,7 @@ func RegisterSandboxViaNATS(
 	// Server creates LatticePeer + AgentIdentity and returns JWT in Token field.
 	regPayload, _ := json.Marshal(&dto.PeerDto{
 		AppID:     agentName,
+		Name:      agentName, // standalone registry uses Name as the peer's display identity
 		Token:     enrollmentToken,
 		PublicKey: pubKey,
 		Port:      51820,

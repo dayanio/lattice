@@ -27,6 +27,10 @@ struct PeerNode: Identifiable {
     let name: String
     let address: String
     let online: Bool
+    var displayName: String = ""
+    var disabled: Bool = false
     var os: String = "macOS"
     var lastHandshake: String = "—"
+
+    var shownName: String { displayName.isEmpty ? name : displayName }
 }

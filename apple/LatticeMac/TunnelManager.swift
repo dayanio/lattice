@@ -26,9 +26,13 @@ final class TunnelManager: ObservableObject {
     @Published private(set) var isConfigured = false
     @Published private(set) var status: NEVPNStatus = .invalid
     @Published private(set) var lastStartError: String?
+    /// Per-peer connection quality from the tunnel process
+    /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
+    @Published private(set) var peerStates: [String: String] = [:]
 
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
+    private var statePoller: Timer?
 
     private init() {}
 
@@ -115,6 +119,14 @@ final class TunnelManager: ObservableObject {
 
     private func refreshStatus() {
         status = manager?.connection.status ?? .invalid
+        if status == .connected {
+            startStatePoller()
+        } else {
+            stopStatePoller()
+            if peerStates.isEmpty == false {
+                peerStates = [:]
+            }
+        }
     }
 
     private func observeStatus() {
@@ -127,6 +139,38 @@ final class TunnelManager: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             self?.refreshStatus()
+        }
+    }
+
+    // MARK: - Connection quality (provider message channel)
+
+    private func startStatePoller() {
+        guard statePoller == nil else { return }
+        pollPeerStates()
+        statePoller = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.pollPeerStates()
+        }
+    }
+
+    private func stopStatePoller() {
+        statePoller?.invalidate()
+        statePoller = nil
+    }
+
+    /// Asks the tunnel process for its latest peer-state snapshot over the
+    /// NE provider-message channel (see PacketTunnelProvider.handleAppMessage).
+    private func pollPeerStates() {
+        guard let connection = manager?.connection as? NETunnelProviderSession else { return }
+        do {
+            try connection.sendProviderMessage(Data("peerStates".utf8)) { [weak self] data in
+                guard let data,
+                      let states = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+                DispatchQueue.main.async {
+                    self?.peerStates = states
+                }
+            }
+        } catch {
+            // Session not ready; the next tick retries.
         }
     }
 }

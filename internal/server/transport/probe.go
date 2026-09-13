@@ -77,6 +77,17 @@ type Probe struct {
 	livenessCancel context.CancelFunc
 }
 
+// State returns the peer's current connection lifecycle state
+// (probing / ice-ready / lrp-ready / failed / closed).
+func (p *Probe) State() PeerState {
+	return p.sm.Current()
+}
+
+// RemoteAppID returns the remote peer's AppID.
+func (p *Probe) RemoteAppID() string {
+	return p.remoteId.AppID
+}
+
 func (p *Probe) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet *signal.SignalPacket) error {
 	switch packet.Dialer {
 	case signal.DialerType_ICE:

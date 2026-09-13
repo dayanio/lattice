@@ -22,6 +22,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var engine: LatticeEngineEngine?
     private var pendingStart: ((Error?) -> Void)?
     private var pumping = false
+    /// Latest per-peer connection-quality snapshot, served to the containing
+    /// app via handleAppMessage (the app cannot read engine state directly).
+    private var latestPeerStates = "{}"
+
+    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
+        if String(data: messageData, encoding: .utf8) == "peerStates" {
+            completionHandler?(Data(latestPeerStates.utf8))
+            return
+        }
+        completionHandler?(nil)
+    }
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -131,6 +142,11 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
                 self.pumpPackets()
             }
         }
+    }
+
+    /// Per-peer connection-quality snapshot changed (JSON: name → state).
+    func onPeerStates(_ statesJSON: String!) {
+        latestPeerStates = statesJSON ?? "{}"
     }
 }
 

@@ -64,6 +64,11 @@ type EngineDelegate interface {
 	// OnTunnelUp reports this node's assigned overlay IP once registration
 	// completes. The Swift side then applies NEPacketTunnelNetworkSettings.
 	OnTunnelUp(overlayIP string)
+	// OnPeerStates reports per-peer connection quality as a JSON object
+	// mapping peer name to lifecycle state ("ice-ready" = direct,
+	// "lrp-ready" = relayed, "probing" = still negotiating). Emitted
+	// whenever the snapshot changes while the tunnel is up.
+	OnPeerStates(statesJSON string)
 }
 
 type engineConfig struct {
@@ -242,6 +247,7 @@ func (e *Engine) run(ctx context.Context) {
 
 	go node.StartHeartbeat(ctx)
 	go e.periodicRefresh(ctx, node)
+	go e.pollPeerStates(ctx, node)
 
 	// Deliver decrypted packets to the Swift side.
 	go func() {
@@ -284,6 +290,37 @@ func (e *Engine) periodicRefresh(ctx context.Context, node *latticeagent.Node) {
 			return
 		case <-ticker.C:
 			_ = node.RefreshConfig(ctx)
+		}
+	}
+}
+
+// pollPeerStates watches the probe factory's per-peer connection lifecycle
+// and pushes the snapshot to Swift whenever it changes — this is what lets
+// the UI show 直连 (ice-ready) vs 经中继 (lrp-ready) per peer.
+func (e *Engine) pollPeerStates(ctx context.Context, node *latticeagent.Node) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	var last string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			states := node.ConnectionStates()
+			if len(states) == 0 {
+				continue
+			}
+			blob, err := json.Marshal(states)
+			if err != nil {
+				continue
+			}
+			if string(blob) == last {
+				continue
+			}
+			last = string(blob)
+			if e.delegate != nil {
+				e.delegate.OnPeerStates(last)
+			}
 		}
 	}
 }
