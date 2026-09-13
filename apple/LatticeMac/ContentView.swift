@@ -30,6 +30,8 @@ struct ContentView: View {
     @State private var deleteTarget: PeerNode?
     @State private var opError = ""
     @State private var detailPeer: PeerNode?
+    @State private var showingNetworkSettings = false
+    @State private var showingShare = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,6 +52,14 @@ struct ContentView: View {
                     },
                     onDelete: { deleteTarget = detail }
                 )
+            } else if showingNetworkSettings {
+                NetworkSettingsView {
+                    showingNetworkSettings = false
+                }
+            } else if showingShare {
+                ShareView {
+                    showingShare = false
+                }
             } else {
                 mainPanel
             }
@@ -122,6 +132,15 @@ struct ContentView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
+                        NavRow(
+                            icon: "arrow.left.arrow.right",
+                            iconColor: .gray,
+                            title: "退出节点",
+                            value: "无",
+                            showsChevron: true,
+                            soon: true
+                        )
+                        Divider()
                         ForEach(peers) { peer in
                             PeerRow(
                                 peer: peer,
@@ -139,6 +158,31 @@ struct ContentView: View {
                     }
                 }
             }
+
+            Divider()
+            Button {
+                showingShare = true
+            } label: {
+                NavRow(
+                    icon: "arrow.up.forward",
+                    iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
+                    title: "共享本地服务",
+                    showsChevron: true
+                )
+            }
+            .buttonStyle(.plain)
+            Divider()
+            Button {
+                showingNetworkSettings = true
+            } label: {
+                NavRow(
+                    icon: "gearshape",
+                    iconColor: .accentColor,
+                    title: "网络设置",
+                    showsChevron: true
+                )
+            }
+            .buttonStyle(.plain)
 
             Divider()
             footer
@@ -541,6 +585,22 @@ struct SettingsView: View {
                         .disabled(serverURL.isEmpty || username.isEmpty || password.isEmpty)
                 }
             }
+
+            Divider().padding(.vertical, 2)
+
+            // SSO 按既有决定暂缓（Phase 5）：入口保留但明确标注，不假装可用。
+            HStack(spacing: 7) {
+                Text("使用单点登录（SSO）")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                SoonBadge()
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 7)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.secondary.opacity(0.3))
+            )
         }
         .padding(20)
         .frame(width: 300)

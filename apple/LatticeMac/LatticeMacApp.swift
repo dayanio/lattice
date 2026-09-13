@@ -41,21 +41,29 @@ struct LatticeMacApp: App {
     }
 }
 
-/// The tray glyph: a Tailscale-like dot, green while connected.
+/// The tray glyph: a Tailscale-like hotspot icon, green while connected.
+/// Also opens the onboarding window automatically on first run so the app
+/// is discoverable (a bare menu-bar icon is easy to miss).
 struct MenuBarGlyph: View {
+    @Environment(\.openWindow) private var openWindow
     @StateObject private var tunnel = TunnelManager.shared
 
     var body: some View {
-        Circle()
-            .fill(color)
-            .frame(width: 9, height: 9)
+        Image(systemName: "personalhotspot")
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(color)
+            .onAppear {
+                if !UserDefaults.standard.bool(forKey: "lattice.joined") {
+                    openWindow(id: "main")
+                }
+            }
     }
 
     private var color: Color {
         switch tunnel.status {
         case .connected: return .green
         case .connecting, .reasserting, .disconnecting: return .orange
-        default: return Color.gray
+        default: return .primary
         }
     }
 }

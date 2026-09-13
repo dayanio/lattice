@@ -268,6 +268,23 @@ struct PeerDetailView: View {
     private var actionRows: some View {
         VStack(spacing: 0) {
             Divider()
+            NavRow(
+                icon: "arrow.up.right",
+                iconColor: Color(nsColor: .systemGray),
+                title: "发送文件到此设备",
+                showsChevron: true,
+                soon: true
+            )
+            Divider().padding(.leading, 42)
+            NavRow(
+                icon: "clock",
+                iconColor: .orange,
+                title: "密钥管理",
+                showsChevron: true,
+                soon: true
+            )
+            Divider().padding(.leading, 42)
+
             Button {
                 onRename(peer.name)
             } label: {
