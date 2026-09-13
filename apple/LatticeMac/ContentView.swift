@@ -32,6 +32,7 @@ struct ContentView: View {
     @State private var detailPeer: PeerNode?
     @State private var showingNetworkSettings = false
     @State private var showingShare = false
+    @State private var searchQuery = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -132,6 +133,9 @@ struct ContentView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
+                        if peers.count >= 4 {
+                            PanelSearchField(text: $searchQuery)
+                        }
                         NavRow(
                             icon: "arrow.left.arrow.right",
                             iconColor: .gray,
@@ -141,7 +145,7 @@ struct ContentView: View {
                             soon: true
                         )
                         Divider()
-                        ForEach(peers) { peer in
+                        ForEach(filteredPeers) { peer in
                             PeerRow(
                                 peer: peer,
                                 quality: tunnel.peerStates[peer.name],
@@ -227,28 +231,51 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 10, height: 10)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(statusText)
-                    .font(.system(.headline, design: .rounded))
+        HStack(spacing: 9) {
+            HaloDot(color: statusColor, size: 9)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(statusText)
+                        .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    if let summary = aggregateQuality {
+                        QualityPill(text: summary.text, color: summary.color)
+                    }
+                }
                 if let err = tunnel.lastStartError, !err.isEmpty {
                     Text(err).font(.caption2).foregroundColor(.red)
+                } else if let host = URL(string: tunnel.serverURL ?? ""), let hostHeader = host.host {
+                    Text(hostHeader)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
             }
             Spacer()
-            Text("Lattice")
-                .font(.system(.caption, design: .rounded))
-                .foregroundColor(.secondary)
             Toggle("", isOn: connected)
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 15)
         .padding(.vertical, 12)
+    }
+
+    /// Aggregate quality for the header pill: direct wins over relay.
+    private var aggregateQuality: (text: String, color: Color)? {
+        guard tunnel.status == .connected else { return nil }
+        let states = Set(tunnel.peerStates.values)
+        if states.contains("ice-ready") { return ("直连", .green) }
+        if states.contains("lrp-ready") { return ("经中继", .orange) }
+        return nil
+    }
+
+    private var filteredPeers: [PeerNode] {
+        let q = searchQuery.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return peers }
+        return peers.filter {
+            $0.shownName.localizedCaseInsensitiveContains(q)
+                || $0.name.localizedCaseInsensitiveContains(q)
+                || $0.address.contains(q)
+        }
     }
 
     private var statusColor: Color {
@@ -370,52 +397,71 @@ struct PeerRow: View {
     var onDelete: (() -> Void)? = nil
     var onOpenDetail: (() -> Void)? = nil
     @State private var copied = false
+    @State private var hovered = false
 
     private var qualityLabel: (text: String, color: Color)? {
         switch quality {
         case "ice-ready": return ("直连", .green)
-        case "lrp-ready": return ("中继", .orange)
+        case "lrp-ready": return ("经中继", .orange)
         case "probing", "created": return ("连接中", .secondary)
         case "failed": return ("失败", .red)
         default: return nil
         }
     }
 
+    /// True for this machine's own peer (matched by join name or hostname).
+    private var isSelf: Bool {
+        let joined = UserDefaults.standard.string(forKey: "lattice.nodeName") ?? ""
+        let host = Host.current().localizedName ?? ""
+        return !joined.isEmpty && joined == peer.name
+            || !host.isEmpty && host == peer.name
+    }
+
     var body: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(peer.disabled ? Color.orange : (peer.online ? Color.green : Color.gray.opacity(0.4)))
-                .frame(width: 7, height: 7)
+            HaloDot(color: peer.disabled ? .orange : (peer.online ? .green : Color.secondary.opacity(0.6)))
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
-                    Text(peer.shownName).font(.system(.body, design: .default))
+                    Text(peer.shownName).font(.system(size: 13))
+                    if isSelf {
+                        Text("本机")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.accentColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.12))
+                            .cornerRadius(4)
+                    }
                     if peer.isAgent {
                         Text("AI")
-                            .font(.caption2.weight(.heavy))
+                            .font(.system(size: 10, weight: .heavy))
                             .foregroundColor(Color(red: 0.49, green: 0.48, blue: 1.0))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Color(red: 0.49, green: 0.48, blue: 1.0).opacity(0.16))
                             .cornerRadius(4)
                     }
-                    if let q = qualityLabel {
-                        Text(q.text)
-                            .font(.caption2)
-                            .foregroundColor(q.color)
-                    }
                     if peer.disabled {
                         Text("已下线")
-                            .font(.caption2)
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.orange)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.14))
+                            .cornerRadius(4)
                     }
                 }
                 Text(peer.address)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
             }
 
             Spacer()
+
+            if let q = qualityLabel {
+                QualityPill(text: q.text, color: q.color)
+            }
 
             Button {
                 copyAddress()
@@ -426,10 +472,15 @@ struct PeerRow: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color.primary.opacity(hovered ? 0.05 : 0))
+        )
         .opacity(peer.disabled ? 0.55 : 1)
         .contentShape(Rectangle())
+        .onHover { hovered = $0 }
         .onTapGesture {
             onOpenDetail?()
         }
@@ -475,24 +526,21 @@ struct JoinView: View {
             Text("加入 Lattice 网络")
                 .font(.system(.headline, design: .rounded))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("服务器地址").font(.caption).foregroundColor(.secondary)
+            LabeledField(label: "服务器地址") {
                 TextField("http://127.0.0.1:8080", text: $serverURL)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .font(.system(.caption, design: .monospaced))
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("入网令牌").font(.caption).foregroundColor(.secondary)
+            LabeledField(label: "入网令牌") {
                 SecureField("控制台签发的入网令牌", text: $token)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .font(.system(.caption, design: .monospaced))
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("节点名称").font(.caption).foregroundColor(.secondary)
+            LabeledField(label: "节点名称") {
                 TextField("lattice-mac", text: $deviceName)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
             }
 
             Text("加入后系统会请求授权创建 VPN 配置，本机即可访问网络内的节点。")
@@ -523,6 +571,7 @@ struct JoinView: View {
         errorText = ""
         let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
         UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
+        UserDefaults.standard.set(deviceName, forKey: "lattice.nodeName")
         TunnelManager.shared.saveJoin(serverURL: trimmed, token: token, name: deviceName) { err in
             isSaving = false
             if let err {
@@ -550,23 +599,20 @@ struct SettingsView: View {
             Text("连接到 Lattice")
                 .font(.system(.headline, design: .rounded))
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("服务器地址").font(.caption).foregroundColor(.secondary)
+            LabeledField(label: "服务器地址") {
                 TextField("http://127.0.0.1:8080", text: $serverURL)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
                     .font(.system(.caption, design: .monospaced))
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("用户名").font(.caption).foregroundColor(.secondary)
+            LabeledField(label: "用户名") {
                 TextField("admin", text: $username)
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("密码").font(.caption).foregroundColor(.secondary)
-                SecureField("", text: $password)
-                    .textFieldStyle(.roundedBorder)
+            LabeledField(label: "密码") {
+                SecureField("••••••••", text: $password)
+                    .textFieldStyle(.plain)
             }
 
             if !loginError.isEmpty {
