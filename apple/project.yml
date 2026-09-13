@@ -54,6 +54,7 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         LSUIElement: true
+        NSCameraUsageDescription: Lattice 需要使用摄像头扫描入网二维码
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac

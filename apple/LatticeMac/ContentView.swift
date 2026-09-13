@@ -199,6 +199,9 @@ struct ContentView: View {
             SettingsView {
                 showingSettings = false
                 Task { await loadPeers() }
+            } onJoin: {
+                showingSettings = false
+                showingJoin = true
             }
         }
         .sheet(isPresented: $showingJoin) {
@@ -309,6 +312,16 @@ struct ContentView: View {
                 Text("Lattice standalone").font(.caption2).foregroundColor(.secondary)
             }
             Spacer()
+            Button {
+                showingJoin = true
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("加入网络 / 重新入网")
+
             Button {
                 showingSettings = true
             } label: {
@@ -520,6 +533,7 @@ struct JoinView: View {
     @State private var deviceName = Host.current().localizedName ?? "lattice-mac"
     @State private var isSaving = false
     @State private var errorText = ""
+    @State private var showingScanner = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -551,8 +565,25 @@ struct JoinView: View {
                 Text(errorText).font(.caption).foregroundColor(.red)
             }
 
-            HStack {
+            HStack(spacing: 8) {
+                Button {
+                    showingScanner = true
+                } label: {
+                    Label("扫码入网", systemImage: "qrcode.viewfinder")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    pastePayload()
+                } label: {
+                    Label("粘贴", systemImage: "doc.on.clipboard")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+
                 Spacer()
+
                 if isSaving {
                     ProgressView().controlSize(.small)
                 } else {
@@ -564,6 +595,37 @@ struct JoinView: View {
         }
         .padding(20)
         .frame(width: 320)
+        .sheet(isPresented: $showingScanner) {
+            JoinScannerView { payload in
+                showingScanner = false
+                applyPayload(payload)
+            } onCancel: {
+                showingScanner = false
+            }
+        }
+    }
+
+    /// Fills server/token from a scanned or pasted lattice://join payload.
+    private func applyPayload(_ payload: JoinPayload) {
+        if let server = payload.serverURL, !server.isEmpty {
+            serverURL = server
+        }
+        if let t = payload.token, !t.isEmpty {
+            token = t
+        }
+        errorText = ""
+    }
+
+    private func pastePayload() {
+        guard let raw = NSPasteboard.general.string(forType: .string) else {
+            errorText = "剪贴板为空"
+            return
+        }
+        guard let payload = JoinPayload(raw) else {
+            errorText = "剪贴板内容不是有效的入网信息"
+            return
+        }
+        applyPayload(payload)
     }
 
     private func saveAndConnect() {
@@ -587,6 +649,7 @@ struct JoinView: View {
 
 struct SettingsView: View {
     var onDone: () -> Void
+    var onJoin: (() -> Void)? = nil
 
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
     @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
@@ -632,6 +695,14 @@ struct SettingsView: View {
                 }
             }
 
+            Button {
+                onJoin?()
+            } label: {
+                Label("加入新网络 / 重新入网", systemImage: "plus.circle")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+
             Divider().padding(.vertical, 2)
 
             // SSO 按既有决定暂缓（Phase 5）：入口保留但明确标注，不假装可用。
@@ -665,5 +736,55 @@ struct SettingsView: View {
         } catch {
             loginError = "登录失败: \(error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Join QR scanner sheet
+
+/// Camera sheet: scans a lattice://join QR code. Also shows the expected
+/// payload format so a person can type it from another screen if no camera
+/// is available.
+struct JoinScannerView: View {
+    var onCode: (JoinPayload) -> Void
+    var onCancel: () -> Void
+
+    @State private var errorText = ""
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("扫描入网二维码")
+                .font(.system(.headline, design: .rounded))
+                .padding(.top, 14)
+
+            CameraScannerView(
+                onCode: { code in
+                    if let payload = JoinPayload(code) {
+                        onCode(payload)
+                    } else {
+                        errorText = "二维码内容无法识别：\(code)"
+                    }
+                },
+                onError: { errorText = $0 }
+            )
+            .frame(width: 280, height: 280)
+            .cornerRadius(12)
+            .clipped()
+
+            Text("二维码内容格式：lattice://join?server=…&token=…")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+            if !errorText.isEmpty {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .padding(.horizontal, 14)
+            }
+
+            Button("取消") { onCancel() }
+                .buttonStyle(.bordered)
+                .padding(.bottom, 14)
+        }
+        .frame(width: 320)
     }
 }
