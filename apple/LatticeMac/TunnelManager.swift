@@ -118,7 +118,9 @@ final class TunnelManager: ObservableObject {
     }
 
     private func observeStatus() {
-        guard observer == nil else { return }
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
+        }
         observer = NotificationCenter.default.addObserver(
             forName: .NEVPNStatusDidChange,
             object: manager?.connection,

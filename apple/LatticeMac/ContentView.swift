@@ -94,6 +94,7 @@ struct ContentView: View {
             JoinView {
                 showingJoin = false
                 joined = true
+                UserDefaults.standard.set(true, forKey: "lattice.joined")
                 tunnel.load {
                     tunnel.connect()
                 }

@@ -52,11 +52,25 @@ final class LatticeAPI {
 
     func listPeers() async throws -> [PeerNode] {
         try await resolveWorkspaceIfNeeded()
+        do {
+            return try await fetchPeers()
+        } catch {
+            // The cached workspace id may point at a workspace the server no
+            // longer knows about (e.g. backend data was reset). Re-resolve
+            // once instead of failing forever on a stale id.
+            UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
+            try await resolveWorkspaceIfNeeded()
+            return try await fetchPeers()
+        }
+    }
+
+    private func fetchPeers() async throws -> [PeerNode] {
         let data = try await request(method: "GET", path: "/api/v1/peers/list?page=1&pageSize=50")
         let decoded = try JSONDecoder().decode(PeerListResponse.self, from: data)
         guard let list = decoded.data?.list else { return [] }
         return list.map { p in
-            PeerNode(name: p.name, address: p.address, online: p.status == "online")
+            let displayName = (p.name?.isEmpty == false) ? p.name! : (p.appId ?? p.address)
+            return PeerNode(name: displayName, address: p.address, online: p.status == "online")
         }
     }
 
@@ -136,7 +150,8 @@ struct PeerListResponse: Codable {
     }
 
     struct PeerItem: Codable {
-        let name: String
+        let name: String?
+        let appId: String?
         let address: String
         let status: String
         let lastSeen: String?
