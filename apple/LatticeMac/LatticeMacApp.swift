@@ -14,6 +14,22 @@
 
 import SwiftUI
 
+/// Cross-window UI requests. The menu-bar panel cannot host text input
+/// (the panel is not a key window — clicking outside dismisses it), so any
+/// flow that needs typing is routed to the real main window via this state.
+final class UIState: ObservableObject {
+    static let shared = UIState()
+    @Published var showJoin = false
+    @Published var showSettings = false
+    @Published var detailPeerName: String?
+    @Published var page: Page?
+
+    enum Page: String {
+        case networkSettings
+        case share
+    }
+}
+
 // MARK: - App Entry
 
 /// Menu-bar-resident client (see the UI mockup doc §02): the tray icon opens
@@ -68,22 +84,27 @@ struct MenuBarGlyph: View {
     }
 }
 
-/// Popover content: the shared main panel plus tray-only footer actions.
+/// Popover content: the shared main panel in panel mode (read-mostly —
+/// every flow that needs typing routes to the main window).
 struct MenuBarPanel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
-            ContentView()
-                .frame(width: 340)
-                .frame(minHeight: 380, maxHeight: 560)
+            ContentView(inPanel: true) {
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            .frame(width: 340)
+            .frame(minHeight: 380, maxHeight: 560)
             Divider()
             HStack {
                 Button {
+                    UIState.shared.showJoin = true
                     openWindow(id: "main")
                     NSApp.activate(ignoringOtherApps: true)
                 } label: {
-                    Text("打开主窗口").font(.caption)
+                    Text("加入网络…").font(.caption)
                 }
                 .buttonStyle(.plain)
                 Spacer()
