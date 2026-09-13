@@ -1,10 +1,12 @@
 # LRP QUIC Transport Design
 
 > **命名说明**: 代码中已从 WRRP (Lattice Relay & Routing Protocol) 重命名为 LRP (Lattice Relay Protocol)。本文档保留原始设计内容，仅修正标题和关键术语。代码文件使用 `lrp_` 前缀（如 `lrp_server.go`、`lrp_client_quic.go`）。
+>
+> **对外名称**: 面向用户的文档/产品文案中，这条 relay 通道对外称为 **TRIP**（Tunneled Relay over IP Protocol）。这只是对外说法的变化——代码、CLI flag、内部设计文档一律继续使用 `LRP`/`lrp_` 前缀，不做重命名。
 
 ## 1. Background
 
-LRP (Lattice Relay Protocol, formerly WRRP) is the relay channel used when two peers cannot establish a direct ICE path (e.g. symmetric NAT on both sides). The original implementation tunnels WireGuard packets over a persistent HTTP-upgraded TCP connection.
+LRP（对外名 **TRIP**，Tunneled Relay over IP Protocol，历史上曾用名 WRRP）is the relay channel used when two peers cannot establish a direct ICE path (e.g. symmetric NAT on both sides). The original implementation tunnels WireGuard packets over a persistent HTTP-upgraded TCP connection.
 
 ### Problems with TCP relay
 
