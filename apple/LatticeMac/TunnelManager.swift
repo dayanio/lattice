@@ -48,11 +48,30 @@ final class TunnelManager: ObservableObject {
     }
 
     /// Creates or updates the VPN profile with join parameters, then enables it.
+    /// Any previous Lattice profile is removed first: macOS pins the provider's
+    /// code requirement at profile-creation time, so a stale profile would
+    /// reject a rebuilt (correctly signed) extension forever.
     /// - Parameters:
     ///   - serverURL: management server base URL, e.g. http://172.20.10.4:8080
     ///   - token: enrollment token issued by the control plane
     ///   - name: stable node name (used as the peer identity)
     func saveJoin(serverURL: String, token: String, name: String, completion: ((String?) -> Void)? = nil) {
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            let stale = (managers ?? []).filter {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.tunnelBundleID
+            }
+            let group = DispatchGroup()
+            for manager in stale {
+                group.enter()
+                manager.removeFromPreferences { _ in group.leave() }
+            }
+            group.notify(queue: .main) {
+                self.createProfile(serverURL: serverURL, token: token, name: name, completion: completion)
+            }
+        }
+    }
+
+    private func createProfile(serverURL: String, token: String, name: String, completion: ((String?) -> Void)? = nil) {
         let proto = NETunnelProviderProtocol()
         proto.providerBundleIdentifier = Self.tunnelBundleID
         proto.serverAddress = serverURL
@@ -62,7 +81,7 @@ final class TunnelManager: ObservableObject {
             "name": name,
         ]
 
-        let mgr = manager ?? NETunnelProviderManager()
+        let mgr = NETunnelProviderManager()
         mgr.protocolConfiguration = proto
         mgr.localizedDescription = Self.profileName
         mgr.isEnabled = true
