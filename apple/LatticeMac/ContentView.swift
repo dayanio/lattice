@@ -40,6 +40,7 @@ struct ContentView: View {
     @State private var showingNetworkSettings = false
     @State private var showingShare = false
     @State private var searchQuery = ""
+    @ObservedObject private var ui = UIState.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -94,6 +95,39 @@ struct ContentView: View {
             Button("取消", role: .cancel) { deleteTarget = nil }
         } message: {
             Text("该节点将被移出网络，需重新入网才能恢复。")
+        }
+    }
+
+    /// Consumes pending cross-window requests (from the menu-bar panel).
+    /// Called from onAppear/onChange only — never mid-view-update.
+    private func syncUIStateRequests() {
+        guard !inPanel else { return }
+        if ui.showJoin {
+            ui.showJoin = false
+            showingJoin = true
+        }
+        if ui.showSettings {
+            ui.showSettings = false
+            showingSettings = true
+        }
+        if let name = ui.detailPeerName {
+            ui.detailPeerName = nil
+            if let target = peers.first(where: { $0.name == name }) {
+                detailPeer = target
+            } else {
+                // Peers not loaded yet in a freshly opened window: load, then show.
+                Task {
+                    await loadPeers()
+                    detailPeer = peers.first { $0.name == name }
+                }
+            }
+        }
+        if let page = ui.page {
+            ui.page = nil
+            switch page {
+            case .networkSettings: showingNetworkSettings = true
+            case .share: showingShare = true
+            }
         }
     }
 
@@ -240,30 +274,13 @@ struct ContentView: View {
                 showingJoin = true
             }
         }
-        .onReceive(UIState.shared.$showJoin) { if !inPanel, $0 { showingJoin = true } }
-        .onReceive(UIState.shared.$showSettings) { if !inPanel, $0 { showingSettings = true } }
-        .onReceive(UIState.shared.$detailPeerName) { name in
-            guard !inPanel, let name else { return }
-            UIState.shared.detailPeerName = nil
-            if peers.first(where: { $0.name == name }) != nil {
-                detailPeer = peers.first { $0.name == name }
-            } else {
-                // Peers not loaded yet in a freshly opened window: load, then show.
-                Task {
-                    await loadPeers()
-                    detailPeer = peers.first { $0.name == name }
-                }
-            }
-        }
-        .onReceive(UIState.shared.$page) { page in
-            guard !inPanel, page != nil else { return }
-            switch page {
-            case .networkSettings: showingNetworkSettings = true
-            case .share: showingShare = true
-            case nil: break
-            }
-            UIState.shared.page = nil
-        }
+        .onAppear { syncUIStateRequests() }
+        // onChange fires after the update — safe to mutate state here
+        // (onReceive could land mid-update and crash SwiftUI).
+        .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
+        .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
+        .onChange(of: ui.page) { _ in syncUIStateRequests() }
         .sheet(isPresented: $showingJoin) {
             JoinView {
                 showingJoin = false

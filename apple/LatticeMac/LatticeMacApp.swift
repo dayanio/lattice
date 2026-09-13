@@ -69,8 +69,12 @@ struct MenuBarGlyph: View {
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(color)
             .onAppear {
-                if !UserDefaults.standard.bool(forKey: "lattice.joined") {
-                    openWindow(id: "main")
+                // Deferred: mutating the window scene during view update
+                // trips "Modifying state during view update".
+                DispatchQueue.main.async {
+                    if !UserDefaults.standard.bool(forKey: "lattice.joined") {
+                        openWindow(id: "main")
+                    }
                 }
             }
     }
