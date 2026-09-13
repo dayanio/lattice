@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0EA5E5CBB4326784931378F2 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41AB017E0727000CB2743DF8 /* TunnelManager.swift */; };
+		0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D651343557480E291D4C242C /* QRScanner.swift */; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		1EB51D02EC978D6692E1ADD9 /* LatticeTunnelMac.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 280D2D1DA245A0FD3DB0E443 /* LatticeTunnelMac.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		2B1375F9CCA6405BA20B101F /* DesignComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08A030E138B74289B8E27C9 /* DesignComponents.swift */; };
@@ -113,6 +114,7 @@
 		C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeMacApp.swift; sourceTree = "<group>"; };
 		CC55D463910D975F56B8342B /* LatticeTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LatticeTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		D08A030E138B74289B8E27C9 /* DesignComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignComponents.swift; sourceTree = "<group>"; };
+		D651343557480E291D4C242C /* QRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScanner.swift; sourceTree = "<group>"; };
 		E73ACB07B695A778DE7339C3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EA6CAD40A966A23C8C9272E9 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F13B3A4F2C310EAA9B9C1E7F /* LatticeMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LatticeMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -221,6 +223,7 @@
 				C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */,
 				B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */,
 				FA822E36FCF84A5FB4C48F09 /* PeerDetailView.swift */,
+				D651343557480E291D4C242C /* QRScanner.swift */,
 				41AB017E0727000CB2743DF8 /* TunnelManager.swift */,
 			);
 			path = LatticeMac;
@@ -399,6 +402,7 @@
 				6A2DC249F454BC91FB65FC4A /* LatticeMacApp.swift in Sources */,
 				A8FEB6A60B7D5B4254818DCA /* NetworkPages.swift in Sources */,
 				60BD6805501BB1BEE557786E /* PeerDetailView.swift in Sources */,
+				0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */,
 				C5D855A3DA02C11765207DDE /* TunnelCore.swift in Sources */,
 				0EA5E5CBB4326784931378F2 /* TunnelManager.swift in Sources */,
 			);
