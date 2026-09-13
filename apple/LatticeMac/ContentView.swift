@@ -14,40 +14,13 @@
 
 import SwiftUI
 
-// MARK: - Model
-
-struct PeerNode: Identifiable {
-    let id = UUID()
-    let name: String
-    let address: String
-    let online: Bool
-}
-
-// MARK: - API Response
-
-struct PeerListResponse: Codable {
-    let code: Int
-    let data: PeerListData?
-    struct PeerListData: Codable {
-        let total: Int
-        let list: [PeerItem]?
-    }
-    struct PeerItem: Codable {
-        let name: String
-        let address: String
-        let status: String
-    }
-}
-
 // MARK: - ContentView
 
 struct ContentView: View {
     @State private var peers: [PeerNode] = []
     @State private var isLoading = true
     @State private var errorMsg = ""
-    @State private var copiedIP = ""
-
-    private let baseURL = "http://127.0.0.1:8080"
+    @State private var showingSettings = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -91,9 +64,13 @@ struct ContentView: View {
             Divider()
             footer
         }
-        .frame(width: 320)
-        .frame(minHeight: 300, maxHeight: 480)
         .task { await loadPeers() }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView {
+                showingSettings = false
+                Task { await loadPeers() }
+            }
+        }
     }
 
     private var header: some View {
@@ -116,6 +93,16 @@ struct ContentView: View {
         HStack {
             Text("Lattice standalone").font(.caption2).foregroundColor(.secondary)
             Spacer()
+            Button {
+                showingSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("登录设置")
+
             Button("刷新") { Task { await loadPeers() } }
                 .font(.caption)
                 .buttonStyle(.plain)
@@ -129,17 +116,7 @@ struct ContentView: View {
         errorMsg = ""
         defer { isLoading = false }
         do {
-            guard let url = URL(string: baseURL + "/api/v1/peers/list?page=1&pageSize=50") else {
-                throw URLError(.badURL)
-            }
-            var req = URLRequest(url: url, timeoutInterval: 10)
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let (data, _) = try await URLSession.shared.data(for: req)
-            let decoded = try JSONDecoder().decode(PeerListResponse.self, from: data)
-            guard let list = decoded.data?.list else { return }
-            peers = list.map { p in
-                PeerNode(name: p.name, address: p.address, online: p.status == "online")
-            }
+            peers = try await LatticeAPI.shared.listPeers()
         } catch {
             errorMsg = "加载失败: \(error.localizedDescription)"
         }
@@ -168,10 +145,7 @@ struct PeerRow: View {
             Spacer()
 
             Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(peer.address, forType: .string)
-                copied = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                copyAddress()
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.caption2)
@@ -183,12 +157,86 @@ struct PeerRow: View {
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .onTapGesture {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(peer.address, forType: .string)
-            copied = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+            copyAddress()
         }
     }
 
-    @State private var copied = false
+    private func copyAddress() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(peer.address, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+    }
+}
+
+// MARK: - Settings (Login)
+
+struct SettingsView: View {
+    var onDone: () -> Void
+
+    @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
+    @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
+    @State private var password = ""
+    @State private var isLoggingIn = false
+    @State private var loginError = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("连接到 Lattice")
+                .font(.system(.headline, design: .rounded))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("服务器地址").font(.caption).foregroundColor(.secondary)
+                TextField("http://127.0.0.1:8080", text: $serverURL)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("用户名").font(.caption).foregroundColor(.secondary)
+                TextField("admin", text: $username)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("密码").font(.caption).foregroundColor(.secondary)
+                SecureField("", text: $password)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            if !loginError.isEmpty {
+                Text(loginError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+
+            HStack {
+                Spacer()
+                if isLoggingIn {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("登录") { Task { await login() } }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(serverURL.isEmpty || username.isEmpty || password.isEmpty)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 300)
+    }
+
+    private func login() async {
+        isLoggingIn = true
+        loginError = ""
+        defer { isLoggingIn = false }
+        let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+        UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
+        UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
+        do {
+            try await LatticeAPI.shared.login(user: username, pass: password)
+            onDone()
+        } catch {
+            loginError = "登录失败: \(error.localizedDescription)"
+        }
+    }
 }
