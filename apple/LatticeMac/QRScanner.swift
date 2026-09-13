@@ -42,18 +42,23 @@ struct CameraScannerView: NSViewRepresentable {
 
         func attach(to view: NSView, onCode: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
             self.onCode = onCode
+            // makeNSView runs inside view update — SwiftUI state writes must
+            // never happen synchronously here, so every callback defers.
+            let safeOnError: (String) -> Void = { message in
+                DispatchQueue.main.async { onError(message) }
+            }
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .authorized:
-                configure(view: view, onError: onError)
+                configure(view: view, onError: safeOnError)
             case .notDetermined:
                 AVCaptureDevice.requestAccess(for: .video) { granted in
                     DispatchQueue.main.async {
-                        granted ? self.configure(view: view, onError: onError)
-                                : onError("相机权限被拒绝，请在系统设置中允许 Lattice 使用摄像头")
+                        granted ? self.configure(view: view, onError: safeOnError)
+                                : safeOnError("相机权限被拒绝，请在系统设置中允许 Lattice 使用摄像头")
                     }
                 }
             default:
-                onError("相机权限未开启，请在系统设置 → 隐私与安全性 → 摄像头中允许 Lattice")
+                safeOnError("相机权限未开启，请在系统设置 → 隐私与安全性 → 摄像头中允许 Lattice")
             }
         }
 
@@ -99,7 +104,9 @@ struct CameraScannerView: NSViewRepresentable {
                   object.type == .qr,
                   let value = object.stringValue, !value.isEmpty else { return }
             delivered = true
-            onCode?(value)
+            DispatchQueue.main.async { [onCode] in
+                onCode?(value)
+            }
         }
 
         func stop() {
