@@ -29,8 +29,57 @@ struct ContentView: View {
     @State private var renameText = ""
     @State private var deleteTarget: PeerNode?
     @State private var opError = ""
+    @State private var detailPeer: PeerNode?
 
     var body: some View {
+        VStack(spacing: 0) {
+            if let detail = detailPeer {
+                PeerDetailView(
+                    peer: detail,
+                    quality: tunnel.peerStates[detail.name],
+                    onBack: { detailPeer = nil },
+                    onRename: { name in
+                        renameText = peers.first { $0.name == name }?.displayName ?? ""
+                        renameTarget = detailPeer
+                    },
+                    onToggleDisabled: {
+                        Task {
+                            await toggleDisabled(detail)
+                            detailPeer = peers.first { $0.name == detail.name }
+                        }
+                    },
+                    onDelete: { deleteTarget = detail }
+                )
+            } else {
+                mainPanel
+            }
+        }
+        .alert("重命名节点", isPresented: Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )) {
+            TextField("显示名称", text: $renameText)
+            Button("保存") { Task { await renamePeer() } }
+            Button("取消", role: .cancel) { renameTarget = nil }
+        } message: {
+            Text("只改显示名称，不影响节点的网络身份。")
+        }
+        .confirmationDialog(
+            "删除节点 \(deleteTarget?.shownName ?? "")？",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) { Task { await deletePeer() } }
+            Button("取消", role: .cancel) { deleteTarget = nil }
+        } message: {
+            Text("该节点将被移出网络，需重新入网才能恢复。")
+        }
+    }
+
+    private var mainPanel: some View {
         VStack(spacing: 0) {
             header
             Divider()
@@ -82,7 +131,8 @@ struct ContentView: View {
                                     renameTarget = peer
                                 },
                                 onToggleDisabled: { Task { await toggleDisabled(peer) } },
-                                onDelete: { deleteTarget = peer }
+                                onDelete: { deleteTarget = peer },
+                                onOpenDetail: { detailPeer = peer }
                             )
                             Divider().padding(.leading, 44)
                         }
@@ -96,29 +146,6 @@ struct ContentView: View {
         .task {
             tunnel.load()
             await loadPeers()
-        }
-        .alert("重命名节点", isPresented: Binding(
-            get: { renameTarget != nil },
-            set: { if !$0 { renameTarget = nil } }
-        )) {
-            TextField("显示名称", text: $renameText)
-            Button("保存") { Task { await renamePeer() } }
-            Button("取消", role: .cancel) { renameTarget = nil }
-        } message: {
-            Text("只改显示名称，不影响节点的网络身份。")
-        }
-        .confirmationDialog(
-            "删除节点 \(deleteTarget?.shownName ?? "")？",
-            isPresented: Binding(
-                get: { deleteTarget != nil },
-                set: { if !$0 { deleteTarget = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("删除", role: .destructive) { Task { await deletePeer() } }
-            Button("取消", role: .cancel) { deleteTarget = nil }
-        } message: {
-            Text("该节点将被移出网络，需重新入网才能恢复。")
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView {
@@ -234,7 +261,21 @@ struct ContentView: View {
         errorMsg = ""
         defer { isLoading = false }
         do {
-            peers = try await LatticeAPI.shared.listPeers()
+            var loaded = try await LatticeAPI.shared.listPeers()
+            // Badge AI agents: an AgentIdentity referencing the peer makes it
+            // an agent node, not a human device (UI mockup §04).
+            if let identities = try? await LatticeAPI.shared.listAgentIdentities() {
+                for i in identities.indices {
+                    let identity = identities[i]
+                    let ref = identity.peerRef ?? identity.name ?? ""
+                    guard !ref.isEmpty else { continue }
+                    if let idx = loaded.firstIndex(where: { $0.name == ref || $0.appID == ref }) {
+                        loaded[idx].isAgent = true
+                        loaded[idx].sandbox = identity.sandbox
+                    }
+                }
+            }
+            peers = loaded
         } catch {
             errorMsg = "加载失败: \(error.localizedDescription)"
         }
@@ -283,6 +324,7 @@ struct PeerRow: View {
     var onRename: ((String) -> Void)? = nil
     var onToggleDisabled: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
+    var onOpenDetail: (() -> Void)? = nil
     @State private var copied = false
 
     private var qualityLabel: (text: String, color: Color)? {
@@ -304,6 +346,15 @@ struct PeerRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
                     Text(peer.shownName).font(.system(.body, design: .default))
+                    if peer.isAgent {
+                        Text("AI")
+                            .font(.caption2.weight(.heavy))
+                            .foregroundColor(Color(red: 0.49, green: 0.48, blue: 1.0))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color(red: 0.49, green: 0.48, blue: 1.0).opacity(0.16))
+                            .cornerRadius(4)
+                    }
                     if let q = qualityLabel {
                         Text(q.text)
                             .font(.caption2)
@@ -336,9 +387,10 @@ struct PeerRow: View {
         .opacity(peer.disabled ? 0.55 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
-            copyAddress()
+            onOpenDetail?()
         }
         .contextMenu {
+            Button("查看 ACL") { onOpenDetail?() }
             Button("复制 IP 地址") { copyAddress() }
             if let onRename {
                 Button("重命名…") { onRename(peer.name) }

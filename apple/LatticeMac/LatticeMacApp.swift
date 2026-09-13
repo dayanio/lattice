@@ -16,18 +16,79 @@ import SwiftUI
 
 // MARK: - App Entry
 
+/// Menu-bar-resident client (see the UI mockup doc §02): the tray icon opens
+/// the main panel as a popover window; the dock icon is hidden (LSUIElement)
+/// and a regular window is available from the panel footer.
 @main
 struct LatticeMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        WindowGroup {
+        MenuBarExtra {
+            MenuBarPanel()
+        } label: {
+            MenuBarGlyph()
+        }
+        .menuBarExtraStyle(.window)
+
+        Window("Lattice", id: "main") {
             ContentView()
-                .frame(width: 340)
-                .frame(minHeight: 400, maxHeight: 560)
+                .frame(width: 360)
+                .frame(minHeight: 420, maxHeight: 640)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
+    }
+}
+
+/// The tray glyph: a Tailscale-like dot, green while connected.
+struct MenuBarGlyph: View {
+    @StateObject private var tunnel = TunnelManager.shared
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 9, height: 9)
+    }
+
+    private var color: Color {
+        switch tunnel.status {
+        case .connected: return .green
+        case .connecting, .reasserting, .disconnecting: return .orange
+        default: return Color.gray
+        }
+    }
+}
+
+/// Popover content: the shared main panel plus tray-only footer actions.
+struct MenuBarPanel: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ContentView()
+                .frame(width: 340)
+                .frame(minHeight: 380, maxHeight: 560)
+            Divider()
+            HStack {
+                Button {
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
+                    Text("打开主窗口").font(.caption)
+                }
+                .buttonStyle(.plain)
+                Spacer()
+                Button {
+                    NSApp.terminate(nil)
+                } label: {
+                    Text("退出 Lattice").font(.caption)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+        }
     }
 }
 
@@ -75,7 +136,10 @@ final class LatticeAPI {
                 address: p.address,
                 online: p.status == "online",
                 displayName: p.displayName ?? "",
-                disabled: p.disabled ?? false
+                disabled: p.disabled ?? false,
+                appID: p.appId ?? "",
+                labels: p.labels,
+                lastSeen: p.lastSeen ?? ""
             )
         }
     }
@@ -93,6 +157,44 @@ final class LatticeAPI {
 
     func deletePeer(_ name: String) async throws {
         try await request(method: "DELETE", path: "/api/v1/peers/\(encodePath(name))")
+    }
+
+    // MARK: Policies (ACL view)
+
+    func listPolicies() async throws -> [LatticePolicy] {
+        let data = try await request(method: "GET", path: "/api/v1/policies/list")
+        let decoded = try JSONDecoder().decode(PolicyListResponse.self, from: data)
+        return decoded.data?.list ?? []
+    }
+
+    // MARK: Intent AI (natural-language policy)
+
+    func planIntent(_ text: String) async throws -> IntentPlanView {
+        let data = try await request(
+            method: "POST",
+            path: "/api/v1/ai/intent/plan",
+            body: ["workspaceId": workspaceID, "intent": text, "dryRun": true]
+        )
+        guard let plan = try JSONDecoder().decode(IntentPlanResponse.self, from: data).data else {
+            throw LatticeAPIError.server("AI 未返回策略方案")
+        }
+        return plan
+    }
+
+    func applyIntent(planID: String) async throws {
+        try await request(
+            method: "POST",
+            path: "/api/v1/ai/intent/apply",
+            body: ["planId": planID]
+        )
+    }
+
+    // MARK: Agent identities (AI badge)
+
+    func listAgentIdentities() async throws -> [AgentIdentityVO] {
+        let data = try await request(method: "GET", path: "/api/v1/agent-identities")
+        let decoded = try JSONDecoder().decode(AgentIdentityListResponse.self, from: data)
+        return decoded.data ?? []
     }
 
     private func encodePath(_ value: String) -> String {
@@ -185,6 +287,7 @@ struct PeerListResponse: Codable {
         let lastSeen: String?
         let displayName: String?
         let disabled: Bool?
+        let labels: [String: String]?
     }
 }
 
@@ -214,4 +317,136 @@ struct WorkspaceListResponse: Codable {
 
 enum LatticeAPIError: Error {
     case server(String)
+}
+
+// MARK: - Policies / Intent / Agent Identity Types
+
+struct PolicyListResponse: Codable {
+    let code: Int
+    let data: PolicyListData?
+    let msg: String?
+
+    struct PolicyListData: Codable {
+        let list: [LatticePolicy]?
+    }
+}
+
+struct LatticePolicy: Codable, Identifiable {
+    let name: String
+    let action: String
+    let status: String?
+    let policyTypes: [String]?
+    let peerSelector: [String: String]?
+    let ingress: [PolicyRuleSet]?
+    let egress: [PolicyRuleSet]?
+
+    var id: String { name }
+}
+
+struct PolicyRuleSet: Codable {
+    let from: [PolicyPeer]?
+    let to: [PolicyPeer]?
+}
+
+struct PolicyPeer: Codable {
+    let ipBlock: IPBlock?
+}
+
+struct IPBlock: Codable {
+    let cidr: String
+}
+
+/// aclEntries describes a policy's effect on one peer for the ACL debug view.
+struct ACLEntry: Identifiable {
+    let policy: String
+    let allow: Bool
+    let direction: String // "入站" / "出站" / "双向"
+    let matched: Bool     // false = selector/network doesn't reference this peer
+
+    var id: String { policy + direction }
+}
+
+extension LatticePolicy {
+    /// Builds the ACL entries a policy produces for the given peer.
+    /// Empty peer selectors match every peer in the network (same semantics
+    /// the netmap compiler applies); CIDR blocks match by overlay address.
+    func aclEntries(peer: PeerNode) -> [ACLEntry] {
+        let selectorMatches = (peerSelector ?? [:]).isEmpty || {
+            guard let labels = peer.labels else { return false }
+            return (peerSelector ?? [:]).allSatisfy { key, value in labels[key] == value }
+        }()
+
+        var entries: [ACLEntry] = []
+        func cidr(_ cidr: String, contains ip: String) -> Bool {
+            guard let addr = IPv4Address(ip), let net = IPv4Address(cidr.split(separator: "/").first.map(String.init) ?? "") else { return false }
+            let prefix = Int(cidr.split(separator: "/").last ?? "32") ?? 32
+            guard prefix >= 0 && prefix <= 32 else { return false }
+            let mask: UInt32 = prefix == 0 ? 0 : ~UInt32(0) << (32 - UInt32(prefix))
+            return (addr.value & mask) == (net.value & mask)
+        }
+
+        func ruleIPs(_ peers: [PolicyPeer]?) -> [String] {
+            (peers ?? []).compactMap { $0.ipBlock?.cidr }
+        }
+
+        let ingressCIDRs = ruleIPs(ingress?.flatMap { $0.from ?? [] })
+        let egressCIDRs = ruleIPs(egress?.flatMap { $0.to ?? [] })
+        let allow = action.lowercased() == "allow"
+
+        if ingressCIDRs.isEmpty && egressCIDRs.isEmpty {
+            entries.append(ACLEntry(
+                policy: name, allow: allow,
+                direction: (policyTypes?.count ?? 0) == 1 ? (policyTypes?.first == "Ingress" ? "入站" : "出站") : "双向",
+                matched: selectorMatches
+            ))
+            return entries
+        }
+        if ingressCIDRs.contains(where: { cidr($0, contains: peer.address) }) {
+            entries.append(ACLEntry(policy: name, allow: allow, direction: "入站", matched: true))
+        }
+        if egressCIDRs.contains(where: { cidr($0, contains: peer.address) }) {
+            entries.append(ACLEntry(policy: name, allow: allow, direction: "出站", matched: true))
+        }
+        return entries
+    }
+}
+
+/// Minimal IPv4 parse for CIDR containment checks.
+struct IPv4Address {
+    let value: UInt32
+    init?(_ string: String) {
+        var parts = string.split(separator: ".").compactMap { UInt32($0) }
+        guard parts.count == 4 else { return nil }
+        value = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
+    }
+}
+
+struct IntentPlanResponse: Codable {
+    let code: Int
+    let data: IntentPlanView?
+    let msg: String?
+}
+
+struct IntentPlanView: Codable {
+    let id: String
+    let summary: String?
+    let riskLevel: String?
+    let changes: [IntentChange]?
+}
+
+struct IntentChange: Codable {
+    let action: String?
+    let name: String?
+}
+
+struct AgentIdentityListResponse: Codable {
+    let code: Int
+    let data: [AgentIdentityVO]?
+    let msg: String?
+}
+
+struct AgentIdentityVO: Codable {
+    let name: String?
+    let peerRef: String?
+    let sandbox: String?
 }
