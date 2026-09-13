@@ -8,10 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		0EA5E5CBB4326784931378F2 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41AB017E0727000CB2743DF8 /* TunnelManager.swift */; };
-		170283F8B1A0164D7DE37626 /* LatticeCore.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		1EB51D02EC978D6692E1ADD9 /* LatticeTunnelMac.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 280D2D1DA245A0FD3DB0E443 /* LatticeTunnelMac.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		30F905C457A8DB52CBEFC102 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E62B50BAE0776E6BE22EEA6 /* TunnelManager.swift */; };
 		48B2B6E27C1C013AEE18D905 /* LatticeTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CC55D463910D975F56B8342B /* LatticeTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		4E329B34A339DC67506C3423 /* LatticeCore.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		518B29B45861F274510B47CC /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE4CF185A86A9E5B9DCDB935 /* PacketTunnelProvider.swift */; };
 		5460D39AA904935F95C98BAB /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		5539E3D47E1D8B70496BE9F6 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */; };
@@ -19,10 +20,13 @@
 		6834D56CEF449832FDD7C285 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA6CAD40A966A23C8C9272E9 /* ContentView.swift */; };
 		6A2DC249F454BC91FB65FC4A /* LatticeMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */; };
 		70634B99C412A1430F456CB2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */; };
+		7B013D63F49DB80AF2D745ED /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 		B3C7A14C0465C3DF7DDEF3E2 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
-		C25A7AA96AE65A754C6A89BA /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 		C5D855A3DA02C11765207DDE /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
-		DB121E862C7D821121CCD3F8 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
+		CB573F157F641243D23A8271 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
+		E9FBD46E90777EBAFE9E1D3F /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
+		F2BACF87E8225658BC92E545 /* LatticeCore.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		F51064384E99E2A556DF23E5 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -54,6 +58,17 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		678BE1D8FA86F98F715B7ACE /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				F2BACF87E8225658BC92E545 /* LatticeCore.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		AF4933C2FFED306C5C6E4B2B /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -71,7 +86,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				170283F8B1A0164D7DE37626 /* LatticeCore.xcframework in Embed Frameworks */,
+				4E329B34A339DC67506C3423 /* LatticeCore.xcframework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -79,12 +94,14 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/MacOS/LatticeCore.xcframework; sourceTree = "<group>"; };
 		0E825FF21A8E0CC2D39A63C2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		280D2D1DA245A0FD3DB0E443 /* LatticeTunnelMac.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LatticeTunnelMac.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelCore.swift; sourceTree = "<group>"; };
-		2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/LatticeCore.xcframework; sourceTree = "<group>"; };
+		2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/iOS/LatticeCore.xcframework; sourceTree = "<group>"; };
 		3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		41AB017E0727000CB2743DF8 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
+		4E62B50BAE0776E6BE22EEA6 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		8287DD726BF401E4637ECBC7 /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A087BE65958F460FCF0CC468 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
@@ -102,7 +119,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DB121E862C7D821121CCD3F8 /* LatticeCore.xcframework in Frameworks */,
+				E9FBD46E90777EBAFE9E1D3F /* LatticeCore.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -110,7 +127,23 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C25A7AA96AE65A754C6A89BA /* LatticeCore.xcframework in Frameworks */,
+				CB573F157F641243D23A8271 /* LatticeCore.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A4FB8CB50A9CBB926EE49D5C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F51064384E99E2A556DF23E5 /* LatticeCore.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E0BFADCECA31C1061DB4CBE1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7B013D63F49DB80AF2D745ED /* LatticeCore.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -122,6 +155,7 @@
 			children = (
 				EA6CAD40A966A23C8C9272E9 /* ContentView.swift */,
 				A087BE65958F460FCF0CC468 /* LatticeApp.swift */,
+				4E62B50BAE0776E6BE22EEA6 /* TunnelManager.swift */,
 			);
 			path = Lattice;
 			sourceTree = "<group>";
@@ -139,6 +173,7 @@
 			isa = PBXGroup;
 			children = (
 				2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */,
+				0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -203,7 +238,9 @@
 			buildConfigurationList = 91B7C44A10C284870AC0C83D /* Build configuration list for PBXNativeTarget "Lattice" */;
 			buildPhases = (
 				213515E5C1C93340C00A5C53 /* Sources */,
+				E0BFADCECA31C1061DB4CBE1 /* Frameworks */,
 				AF4933C2FFED306C5C6E4B2B /* Embed Foundation Extensions */,
+				678BE1D8FA86F98F715B7ACE /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -261,6 +298,7 @@
 			buildConfigurationList = 9C75941AC406C3618AE85003 /* Build configuration list for PBXNativeTarget "LatticeTunnel" */;
 			buildPhases = (
 				0225CDE037F22BF5B8A601E6 /* Sources */,
+				A4FB8CB50A9CBB926EE49D5C /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -284,6 +322,7 @@
 				TargetAttributes = {
 					03562A8F9AF734BAB0D1C196 = {
 						DevelopmentTeam = JN4AC4DDAU;
+						ProvisioningStyle = Automatic;
 					};
 					52A2935BB434C8F1C3B88838 = {
 						DevelopmentTeam = JN4AC4DDAU;
@@ -295,6 +334,7 @@
 					};
 					FAD3419F2B485EEDC87C3337 = {
 						DevelopmentTeam = JN4AC4DDAU;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -337,6 +377,7 @@
 				6834D56CEF449832FDD7C285 /* ContentView.swift in Sources */,
 				58B765388DE135282E31A3E0 /* LatticeApp.swift in Sources */,
 				18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */,
+				30F905C457A8DB52CBEFC102 /* TunnelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -443,7 +484,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"Frameworks\"",
+					"\"Frameworks/MacOS\"",
 				);
 				INFOPLIST_FILE = LatticeMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -462,6 +503,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = entitlements/Lattice.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks/iOS\"",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -484,7 +530,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"Frameworks\"",
+					"\"Frameworks/MacOS\"",
 				);
 				INFOPLIST_FILE = LatticeTunnelMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks";
@@ -500,6 +546,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = entitlements/Lattice.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks/iOS\"",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -518,6 +569,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = entitlements/LatticeTunnel.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks/iOS\"",
+				);
 				INFOPLIST_FILE = LatticeTunnel/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -600,6 +656,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = entitlements/LatticeTunnel.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks/iOS\"",
+				);
 				INFOPLIST_FILE = LatticeTunnel/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -622,7 +683,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"Frameworks\"",
+					"\"Frameworks/MacOS\"",
 				);
 				INFOPLIST_FILE = LatticeMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -643,7 +704,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
-					"\"Frameworks\"",
+					"\"Frameworks/MacOS\"",
 				);
 				INFOPLIST_FILE = LatticeTunnelMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks";

@@ -16,78 +16,70 @@ import SwiftUI
 import NetworkExtension
 
 struct ContentView: View {
-    @State private var vpnStatus: NEVPNStatus = .invalid
-    @State private var serverURL = ""
+    @StateObject private var tunnel = TunnelManager.shared
+    @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
     @State private var joinToken = ""
-    @State private var showingEnroll = false
-
-    @State private var tunnelManager: NETunnelProviderManager?
+    @State private var deviceName = UIDevice.current.name
+    @State private var isSaving = false
+    @State private var errorText = ""
 
     var body: some View {
         NavigationStack {
             List {
                 Section("连接") {
-                    if vpnStatus == .connected {
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                            Text("已连接").font(.headline)
-                        }
-                    } else {
-                        Button("连接到 Lattice") {
-                            startTunnel()
-                        }
+                    HStack {
+                        Text(tunnel.statusText)
+                            .foregroundColor(tunnel.status == .connected ? .green : .primary)
+                        Spacer()
+                        Toggle("", isOn: tunnel.connectedBinding)
+                            .labelsHidden()
+                    }
+                    if !tunnel.lastStartError.isEmpty {
+                        Text(tunnel.lastStartError)
+                            .font(.caption)
+                            .foregroundColor(.red)
                     }
                 }
 
-                Section("入网") {
-                    TextField("服务器 URL", text: $serverURL)
-                        .textInputAutocapitalization(.never)
+                Section("入网配置") {
+                    TextField("服务器 URL (http://…)", text: $serverURL)
+                        .keyboardType(.URL)
                         .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
                     SecureField("入网令牌", text: $joinToken)
-                    Button("保存并启用") {
-                        saveAndStart()
+                    TextField("节点名称", text: $deviceName)
+                    if !errorText.isEmpty {
+                        Text(errorText).font(.caption).foregroundColor(.red)
                     }
-                    .disabled(serverURL.isEmpty || joinToken.isEmpty)
+                    Button {
+                        saveAndConnect()
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                        } else {
+                            Text("保存并连接")
+                        }
+                    }
+                    .disabled(serverURL.isEmpty || joinToken.isEmpty || isSaving)
                 }
             }
             .navigationTitle("Lattice")
-            .onAppear { loadTunnelStatus() }
+            .onAppear { tunnel.load() }
         }
     }
 
-    private func loadTunnelStatus() {
-        NETunnelProviderManager.loadAllFromPreferences { managers, error in
-            DispatchQueue.main.async {
-                if let m = managers?.first {
-                    self.tunnelManager = m as? NETunnelProviderManager
-                    self.vpnStatus = self.tunnelManager?.connection.status ?? .invalid
-                }
-            }
-        }
-    }
-
-    private func startTunnel() {
-        guard let tm = tunnelManager else { return }
-        try? tm.connection.startVPNTunnel()
-    }
-
-    private func saveAndStart() {
-        let providerProtocol = NETunnelProviderProtocol()
-        providerProtocol.providerBundleIdentifier = "io.lattice.ios.tunnel"
-        providerProtocol.serverAddress = serverURL
-        providerProtocol.providerConfiguration = [
-            "serverURL": serverURL,
-            "token": joinToken,
-        ]
-
-        guard let tm = tunnelManager else { return }
-        tm.protocolConfiguration = providerProtocol
-        tm.isEnabled = true
-        tm.saveToPreferences { error in
-            DispatchQueue.main.async {
-                if error == nil {
-                    try? tm.connection.startVPNTunnel()
-                }
+    private func saveAndConnect() {
+        isSaving = true
+        errorText = ""
+        let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+        UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
+        TunnelManager.shared.saveJoin(serverURL: trimmed, token: joinToken, name: deviceName) { err in
+            isSaving = false
+            if let err {
+                errorText = err
+            } else {
+                joinToken = ""
+                tunnel.connect()
             }
         }
     }

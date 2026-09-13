@@ -23,6 +23,8 @@ targets:
       - path: Shared
     dependencies:
       - target: LatticeTunnel
+      - framework: Frameworks/iOS/LatticeCore.xcframework
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios
@@ -30,6 +32,7 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         CODE_SIGN_ENTITLEMENTS: entitlements/Lattice.entitlements
         SWIFT_EMIT_LOC_STRINGS: YES
+        CODE_SIGN_STYLE: Automatic
 
   LatticeMac:
     type: application
@@ -40,7 +43,7 @@ targets:
       - path: Shared
     dependencies:
       - target: LatticeTunnelMac
-      - framework: Frameworks/LatticeCore.xcframework
+      - framework: Frameworks/MacOS/LatticeCore.xcframework
         embed: true
     info:
       path: LatticeMac/Info.plist
@@ -61,6 +64,9 @@ targets:
     sources:
       - path: LatticeTunnel
       - path: Shared/TunnelCore.swift
+    dependencies:
+      - framework: Frameworks/iOS/LatticeCore.xcframework
+        embed: false
     info:
       path: LatticeTunnel/Info.plist
       properties:
@@ -71,6 +77,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios.tunnel
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeTunnel.entitlements
+        CODE_SIGN_STYLE: Automatic
 
   LatticeTunnelMac:
     type: app-extension
@@ -80,7 +87,7 @@ targets:
       - path: LatticeTunnelMac
       - path: Shared/TunnelCore.swift
     dependencies:
-      - framework: Frameworks/LatticeCore.xcframework
+      - framework: Frameworks/MacOS/LatticeCore.xcframework
         embed: false
     info:
       path: LatticeTunnelMac/Info.plist
