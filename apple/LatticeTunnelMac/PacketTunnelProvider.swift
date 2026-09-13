@@ -109,6 +109,14 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
 
     func onEvent(_ event: String!) {
         NSLog("[Lattice] engine event: \(event ?? "")")
+        guard let event, event.hasPrefix("error: "), let pendingStart else { return }
+        let message = String(event.dropFirst("error: ".count))
+        self.pendingStart = nil
+        pendingStart(NSError(
+            domain: "io.lattice.tunnel",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        ))
     }
 
     /// Registration finished and an overlay IP was assigned: install the
