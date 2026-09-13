@@ -1,10 +1,23 @@
 # Lattice 客户端 vs Tailscale：功能差距与路线图
 
 **日期**：2026-09-13
-**状态**：Draft
+**状态**：Active（阶段一落地中，见文末评审与进度）
 **范围**：`apple/`（macOS 客户端）+ 对应后端接口
 **背景**：当天把 macOS 客户端从"加入不了网络"调通到能看见在线节点，借这次审计顺带盘一下现状、跟 Tailscale 的差距，以及一份不推倒重来、顺着现有架构往上叠的路线图
 **关联文档**：[Apple 客户端设计](./2026-09-13-apple-clients-design.md)
+
+---
+
+## 〇、评审记录（2026-09-13 晚，实现后修订）
+
+按当天实际实现过程（提交 c99e44ad…d6178696）对本篇做核对，修正四处：
+
+1. **"设备管理 ✅ 纯客户端工作"不成立，已补后端**：`UpdatePeer/DisablePeer/EnablePeer/DeletePeer` 原先只走 K8s client，standalone 下全部不可用。已为四者加上 `t_peer` 注册表分支（disabled 节点 netmap 构建器本就跳过，语义零新增），提交 ec6b12f3。
+2. **"连接质量 ✅ 纯客户端工作"降级为已完成的引擎工作**：ICE/LRP 状态机在 `transport` 包里，Go 引擎原先完全没有对外暴露面。实际做的是 `ProbeFactory.PeerConnectionStates()` → `Node.ConnectionStates()` → 引擎轮询 → `EngineDelegate.OnPeerStates` → NE provider message 通道 → App UI 徽标（直连/中继）。跨了引擎、传输层、扩展、App 四层，不是纯客户端。
+3. **"iOS ✅ 复用同一套引擎"补了两个隐藏前提**：(a) VictoriaMetrics 无 `GOOS=ios` 构建，引擎经 `transport`/`run.go` 的遥测边把依赖拖进来了——已加 `internal/metrics` 门面（iOS 为 no-op）并把 telemetry 管线抽到 `startTelemetry`（iOS stub）；(b) iOS NE 有 ~50MB 内存预算，当前引擎导入整棵 agent 根包（410 个依赖），上线真机前必须测量 RSS，超标则触发既定的"可移植核心拆分"。
+4. **入网闭环曾卡五层，均已修复后才谈得上"调通"**：NSExtension 字典未进 Info.plist（f9b3aaff）→ 缺 NSExtensionPrincipalClass（8179a2d1）→ networkextension 受限授权缺描述文件（19275628）→ 签名授权不是描述文件子集的 app-groups（06bdfd59）→ VPN 配置创建时钉死代码要求、坏签名时代创建的配置永远拒绝新扩展（f4554cb5，join 时重建配置）。Mac 节点 10.96.0.4 已注册，闭环成立。
+
+另：引擎注册现在回填 Name（此前 Mac 节点在列表里 name 为空），MagicDNS 的可行性在"差距表"里是 🔴、路线图却按可做列出的自相矛盾，按实现路径定为 🟡（workspace 内解析 = NE dnsSettings matchDomains + 引擎内置小型解析器，不涉及公网 DNS 子系统）。
 
 ---
 
@@ -48,10 +61,10 @@
 
 今天调通的连接状态机（ICE/LRP、错误事件）已经在引擎里跑，只是没人看得见——这是投入产出比最高的一批。
 
-- **连接质量展示**：把 `EventConnecting/Connected/Disconnected` 和 ICE vs LRP 状态透传到 `onEvent`，UI 上标"直连"或"经中继"
-- **设备操作入口**：管理面已有的 peer 增删接口接到客户端菜单里（重命名 / 下线）
-- **ACL 调试视图**：读 `LatticePolicy` 生效结果，在节点详情里标"能连 / 被拦截"
-- **iOS 接引擎**：`apple/LatticeTunnel/PacketTunnelProvider.swift` 目前是空壳，照抄 macOS 那份 `startTunnel`/`onEvent`/`onTunnelUp` 实现接上同一套 gomobile 引擎（`apple/engine`），数据面和信令零改动，只需单独适配 iOS 侧 UI 和 App Group 配置
+- **连接质量展示** ✅ 已完成（ec6b12f3）：`ProbeFactory.PeerConnectionStates()` 快照经引擎 `OnPeerStates` 与 NE provider message 通道到 UI，节点行显示"直连/中继/连接中/失败"
+- **设备操作入口** ✅ 已完成（ec6b12f3）：standalone 四个 peer 写操作补上 DB 分支；Mac 客户端节点右键菜单支持重命名 / 下线 / 上线 / 删除
+- **ACL 调试视图**：读 `LatticePolicy` 生效结果，在节点详情里标"能连 / 被拦截"（P5/P6 的流统计已提供按策略命中计数，差每连接级判定）
+- **iOS 接引擎** ✅ 已完成（d6178696）：`LatticeTunnel/PacketTunnelProvider` 实装同一 gomobile 引擎，iOS xcframework 入库；真机验证待做（模拟器跑不了 NE），且需先测内存预算
 
 涉及：`apple/engine/engine.go`、`apple/LatticeTunnelMac/PacketTunnelProvider.swift`、`apple/LatticeTunnel/PacketTunnelProvider.swift`、`api/v1alpha1` `LatticePolicy`
 
