@@ -54,6 +54,12 @@ struct LatticeMacApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
+
+        Window("Lattice AI 助手", id: "ai") {
+            ChatWindow()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentMinSize)
     }
 }
 
@@ -95,10 +101,17 @@ struct MenuBarPanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ContentView(inPanel: true) {
-                openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
-            }
+            ContentView(
+                inPanel: true,
+                openMain: {
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                },
+                openAI: {
+                    openWindow(id: "ai")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            )
             .frame(width: 340)
             .frame(minHeight: 380, maxHeight: 560)
             Divider()
@@ -234,6 +247,66 @@ final class LatticeAPI {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
+    // MARK: AI chat (SSE stream; the control plane executes MCP tools)
+
+    /// Streams one chat turn from POST /api/v1/ai/chat. Events are delivered
+    /// on the main queue. The control plane runs the LLM with MCP tools, so
+    /// the assistant can actually operate the network — the client only
+    /// renders the stream.
+    func streamChat(
+        message: String,
+        history: [ChatAPIMessage],
+        onEvent: @escaping (ChatEvent) -> Void
+    ) async throws {
+        guard let url = URL(string: baseURL + "/api/v1/ai/chat") else { throw URLError(.badURL) }
+        var req = URLRequest(url: url, timeoutInterval: 180)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if !workspaceID.isEmpty {
+            req.setValue(workspaceID, forHTTPHeaderField: "X-Workspace-Id")
+        }
+        if !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let body: [String: Any] = [
+            "message": message,
+            "workspaceId": workspaceID,
+            "history": history.map { ["role": $0.role, "content": $0.content] },
+        ]
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            var data = Data()
+            for try await b in bytes { data.append(b) }
+            throw LatticeAPIError.server(Self.serverMessage(from: data, fallback: "HTTP \(http.statusCode)"))
+        }
+
+        for try await line in bytes.lines {
+            guard line.hasPrefix("data:") else { continue }
+            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard let payloadData = payload.data(using: .utf8),
+                  let event = try? JSONDecoder().decode(ChatStreamEvent.self, from: payloadData) else { continue }
+
+            let chatEvent: ChatEvent
+            switch event.type {
+            case "token":
+                chatEvent = .token(event.content ?? "")
+            case "tool_use":
+                chatEvent = .toolUse(event.tool ?? "tool")
+            case "error":
+                chatEvent = .error(event.error ?? "未知错误")
+            case "done":
+                chatEvent = .done
+            default:
+                continue
+            }
+            let captured = chatEvent
+            await MainActor.run { onEvent(captured) }
+        }
+    }
+
     func login(user: String, pass: String) async throws {
         guard let url = URL(string: baseURL + "/api/v1/users/login") else { throw URLError(.badURL) }
         var req = URLRequest(url: url, timeoutInterval: 10)
@@ -351,6 +424,27 @@ struct WorkspaceListResponse: Codable {
 
 enum LatticeAPIError: Error {
     case server(String)
+}
+
+// MARK: - AI Chat Types
+
+struct ChatAPIMessage: Codable {
+    let role: String
+    let content: String
+}
+
+struct ChatStreamEvent: Codable {
+    let type: String?
+    let content: String?
+    let tool: String?
+    let error: String?
+}
+
+enum ChatEvent {
+    case token(String)
+    case toolUse(String)
+    case error(String)
+    case done
 }
 
 // MARK: - Policies / Intent / Agent Identity Types
