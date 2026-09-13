@@ -244,6 +244,7 @@ final class LatticeAPI {
         UserDefaults.standard.string(forKey: "lattice.workspaceId") ?? ""
     }
 
+    @discardableResult
     private func request(method: String, path: String, body: [String: Any]? = nil) async throws -> Data {
         guard let url = URL(string: baseURL + path) else {
             throw URLError(.badURL)
