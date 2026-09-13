@@ -40,10 +40,16 @@ targets:
       - path: Shared
     dependencies:
       - target: LatticeTunnelMac
+      - framework: Frameworks/LatticeCore.xcframework
+        embed: true
+    info:
+      path: LatticeMac/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac
-        GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeMac.entitlements
         COMBINE_HIDPI_IMAGES: YES
 
@@ -69,8 +75,12 @@ targets:
     sources:
       - path: LatticeTunnelMac
       - path: Shared/TunnelCore.swift
+    dependencies:
+      - framework: Frameworks/LatticeCore.xcframework
+        embed: false
     settings:
       base:
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac.tunnel
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeTunnelMac.entitlements
