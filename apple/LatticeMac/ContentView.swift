@@ -18,6 +18,13 @@ import NetworkExtension
 // MARK: - ContentView
 
 struct ContentView: View {
+    /// Panel mode (menu-bar popover): read-mostly. Text input and
+    /// presentations route to the main window — the popover is not a key
+    /// window, so TextFields lose focus and click-outs dismiss it.
+    var inPanel: Bool = false
+    /// Opens the main window (used only in panel mode).
+    var openMain: (() -> Void)? = nil
+
     @State private var peers: [PeerNode] = []
     @State private var isLoading = true
     @State private var errorMsg = ""
@@ -133,7 +140,7 @@ struct ContentView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        if peers.count >= 4 {
+                        if !inPanel, peers.count >= 4 {
                             PanelSearchField(text: $searchQuery)
                         }
                         NavRow(
@@ -150,12 +157,31 @@ struct ContentView: View {
                                 peer: peer,
                                 quality: tunnel.peerStates[peer.name],
                                 onRename: { name in
-                                    renameText = peers.first { $0.name == name }?.displayName ?? ""
-                                    renameTarget = peer
+                                    if inPanel {
+                                        UIState.shared.detailPeerName = peer.name
+                                        openMain?()
+                                    } else {
+                                        renameText = peers.first { $0.name == name }?.displayName ?? ""
+                                        renameTarget = peer
+                                    }
                                 },
                                 onToggleDisabled: { Task { await toggleDisabled(peer) } },
-                                onDelete: { deleteTarget = peer },
-                                onOpenDetail: { detailPeer = peer }
+                                onDelete: {
+                                    if inPanel {
+                                        UIState.shared.detailPeerName = peer.name
+                                        openMain?()
+                                    } else {
+                                        deleteTarget = peer
+                                    }
+                                },
+                                onOpenDetail: {
+                                    if inPanel {
+                                        UIState.shared.detailPeerName = peer.name
+                                        openMain?()
+                                    } else {
+                                        detailPeer = peer
+                                    }
+                                }
                             )
                             Divider().padding(.leading, 44)
                         }
@@ -165,7 +191,12 @@ struct ContentView: View {
 
             Divider()
             Button {
-                showingShare = true
+                if inPanel {
+                    UIState.shared.page = .share
+                    openMain?()
+                } else {
+                    showingShare = true
+                }
             } label: {
                 NavRow(
                     icon: "arrow.up.forward",
@@ -177,7 +208,12 @@ struct ContentView: View {
             .buttonStyle(.plain)
             Divider()
             Button {
-                showingNetworkSettings = true
+                if inPanel {
+                    UIState.shared.page = .networkSettings
+                    openMain?()
+                } else {
+                    showingNetworkSettings = true
+                }
             } label: {
                 NavRow(
                     icon: "gearshape",
@@ -203,6 +239,30 @@ struct ContentView: View {
                 showingSettings = false
                 showingJoin = true
             }
+        }
+        .onReceive(UIState.shared.$showJoin) { if !inPanel, $0 { showingJoin = true } }
+        .onReceive(UIState.shared.$showSettings) { if !inPanel, $0 { showingSettings = true } }
+        .onReceive(UIState.shared.$detailPeerName) { name in
+            guard !inPanel, let name else { return }
+            UIState.shared.detailPeerName = nil
+            if peers.first(where: { $0.name == name }) != nil {
+                detailPeer = peers.first { $0.name == name }
+            } else {
+                // Peers not loaded yet in a freshly opened window: load, then show.
+                Task {
+                    await loadPeers()
+                    detailPeer = peers.first { $0.name == name }
+                }
+            }
+        }
+        .onReceive(UIState.shared.$page) { page in
+            guard !inPanel, page != nil else { return }
+            switch page {
+            case .networkSettings: showingNetworkSettings = true
+            case .share: showingShare = true
+            case nil: break
+            }
+            UIState.shared.page = nil
         }
         .sheet(isPresented: $showingJoin) {
             JoinView {
@@ -313,7 +373,12 @@ struct ContentView: View {
             }
             Spacer()
             Button {
-                showingJoin = true
+                if inPanel {
+                    UIState.shared.showJoin = true
+                    openMain?()
+                } else {
+                    showingJoin = true
+                }
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.caption)
@@ -323,7 +388,12 @@ struct ContentView: View {
             .help("加入网络 / 重新入网")
 
             Button {
-                showingSettings = true
+                if inPanel {
+                    UIState.shared.showSettings = true
+                    openMain?()
+                } else {
+                    showingSettings = true
+                }
             } label: {
                 Image(systemName: "gearshape")
                     .font(.caption)
