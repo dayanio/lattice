@@ -24,6 +24,8 @@ struct ContentView: View {
     var inPanel: Bool = false
     /// Opens the main window (used only in panel mode).
     var openMain: (() -> Void)? = nil
+    /// Opens the AI assistant window (used only in panel mode).
+    var openAI: (() -> Void)? = nil
 
     @State private var peers: [PeerNode] = []
     @State private var isLoading = true
@@ -41,6 +43,7 @@ struct ContentView: View {
     @State private var showingShare = false
     @State private var searchQuery = ""
     @ObservedObject private var ui = UIState.shared
+    @Environment(\.openWindow) private var openAIWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -172,94 +175,10 @@ struct ContentView: View {
                 }
                 Spacer()
             } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        if !inPanel, peers.count >= 4 {
-                            PanelSearchField(text: $searchQuery)
-                        }
-                        NavRow(
-                            icon: "arrow.left.arrow.right",
-                            iconColor: .gray,
-                            title: "退出节点",
-                            value: "无",
-                            showsChevron: true
-                        ) {
-                            if inPanel {
-                                UIState.shared.page = .networkSettings
-                                openMain?()
-                            } else {
-                                showingNetworkSettings = true
-                            }
-                        }
-                        Divider()
-                        ForEach(filteredPeers) { peer in
-                            PeerRow(
-                                peer: peer,
-                                quality: tunnel.peerStates[peer.name],
-                                onRename: { name in
-                                    if inPanel {
-                                        UIState.shared.detailPeerName = peer.name
-                                        openMain?()
-                                    } else {
-                                        renameText = peers.first { $0.name == name }?.displayName ?? ""
-                                        renameTarget = peer
-                                    }
-                                },
-                                onToggleDisabled: { Task { await toggleDisabled(peer) } },
-                                onDelete: {
-                                    if inPanel {
-                                        UIState.shared.detailPeerName = peer.name
-                                        openMain?()
-                                    } else {
-                                        deleteTarget = peer
-                                    }
-                                },
-                                onOpenDetail: {
-                                    if inPanel {
-                                        UIState.shared.detailPeerName = peer.name
-                                        openMain?()
-                                    } else {
-                                        detailPeer = peer
-                                    }
-                                }
-                            )
-                            Divider().padding(.leading, 44)
-                        }
-                    }
-                }
+                deviceList
             }
 
-            Divider()
-            NavRow(
-                icon: "arrow.up.forward",
-                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
-                title: "共享本地服务",
-                showsChevron: true
-            ) {
-                if inPanel {
-                    UIState.shared.page = .share
-                    openMain?()
-                } else {
-                    showingShare = true
-                }
-            }
-            Divider()
-            NavRow(
-                icon: "gearshape",
-                iconColor: .accentColor,
-                title: "网络设置",
-                showsChevron: true
-            ) {
-                if inPanel {
-                    UIState.shared.page = .networkSettings
-                    openMain?()
-                } else {
-                    showingNetworkSettings = true
-                }
-            }
-
-            Divider()
-            footer
+            bottomNav
         }
         .task {
             tunnel.load()
@@ -290,6 +209,114 @@ struct ContentView: View {
                     tunnel.connect()
                 }
             }
+        }
+    }
+
+    private var deviceList: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                if !inPanel, peers.count >= 4 {
+                    PanelSearchField(text: $searchQuery)
+                }
+                NavRow(
+                    icon: "arrow.left.arrow.right",
+                    iconColor: .gray,
+                    title: "退出节点",
+                    value: "无",
+                    showsChevron: true
+                ) {
+                    if inPanel {
+                        UIState.shared.page = .networkSettings
+                        openMain?()
+                    } else {
+                        showingNetworkSettings = true
+                    }
+                }
+                Divider()
+                ForEach(filteredPeers) { peer in
+                    peerRow(peer)
+                    Divider().padding(.leading, 44)
+                }
+            }
+        }
+    }
+
+    private func peerRow(_ peer: PeerNode) -> some View {
+        PeerRow(
+            peer: peer,
+            quality: tunnel.peerStates[peer.name],
+            onRename: { name in
+                if inPanel {
+                    UIState.shared.detailPeerName = peer.name
+                    openMain?()
+                } else {
+                    renameText = peers.first { $0.name == name }?.displayName ?? ""
+                    renameTarget = peer
+                }
+            },
+            onToggleDisabled: { Task { await toggleDisabled(peer) } },
+            onDelete: {
+                if inPanel {
+                    UIState.shared.detailPeerName = peer.name
+                    openMain?()
+                } else {
+                    deleteTarget = peer
+                }
+            },
+            onOpenDetail: {
+                if inPanel {
+                    UIState.shared.detailPeerName = peer.name
+                    openMain?()
+                } else {
+                    detailPeer = peer
+                }
+            }
+        )
+    }
+
+    /// Bottom quick-nav stack: AI assistant, sharing, network settings, footer.
+    private var bottomNav: some View {
+        VStack(spacing: 0) {
+            Divider()
+            NavRow(
+                icon: "sparkles",
+                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
+                title: "AI 助手",
+                showsChevron: true
+            ) {
+                openAIWindow(id: "ai")
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            Divider()
+            NavRow(
+                icon: "arrow.up.forward",
+                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
+                title: "共享本地服务",
+                showsChevron: true
+            ) {
+                if inPanel {
+                    UIState.shared.page = .share
+                    openMain?()
+                } else {
+                    showingShare = true
+                }
+            }
+            Divider()
+            NavRow(
+                icon: "gearshape",
+                iconColor: .accentColor,
+                title: "网络设置",
+                showsChevron: true
+            ) {
+                if inPanel {
+                    UIState.shared.page = .networkSettings
+                    openMain?()
+                } else {
+                    showingNetworkSettings = true
+                }
+            }
+            Divider()
+            footer
         }
     }
 
