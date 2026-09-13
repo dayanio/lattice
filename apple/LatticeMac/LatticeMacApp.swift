@@ -69,9 +69,34 @@ final class LatticeAPI {
         let decoded = try JSONDecoder().decode(PeerListResponse.self, from: data)
         guard let list = decoded.data?.list else { return [] }
         return list.map { p in
-            let displayName = (p.name?.isEmpty == false) ? p.name! : (p.appId ?? p.address)
-            return PeerNode(name: displayName, address: p.address, online: p.status == "online")
+            let name = (p.name?.isEmpty == false) ? p.name! : (p.appId ?? p.address)
+            return PeerNode(
+                name: name,
+                address: p.address,
+                online: p.status == "online",
+                displayName: p.displayName ?? "",
+                disabled: p.disabled ?? false
+            )
         }
+    }
+
+    /// Renames a peer (display name only — the peer's WG identity never changes).
+    func renamePeer(_ name: String, displayName: String) async throws {
+        try await request(method: "PUT", path: "/api/v1/peers/update",
+                          body: ["name": name, "displayName": displayName])
+    }
+
+    func setPeerDisabled(_ name: String, _ disabled: Bool) async throws {
+        let action = disabled ? "disable" : "enable"
+        try await request(method: "PUT", path: "/api/v1/peers/\(encodePath(name))/\(action)")
+    }
+
+    func deletePeer(_ name: String) async throws {
+        try await request(method: "DELETE", path: "/api/v1/peers/\(encodePath(name))")
+    }
+
+    private func encodePath(_ value: String) -> String {
+        value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
     func login(user: String, pass: String) async throws {
@@ -109,13 +134,16 @@ final class LatticeAPI {
         UserDefaults.standard.string(forKey: "lattice.workspaceId") ?? ""
     }
 
-    private func request(method: String, path: String) async throws -> Data {
+    private func request(method: String, path: String, body: [String: Any]? = nil) async throws -> Data {
         guard let url = URL(string: baseURL + path) else {
             throw URLError(.badURL)
         }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let body {
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
         if !workspaceID.isEmpty {
             req.setValue(workspaceID, forHTTPHeaderField: "X-Workspace-Id")
         }
@@ -155,6 +183,8 @@ struct PeerListResponse: Codable {
         let address: String
         let status: String
         let lastSeen: String?
+        let displayName: String?
+        let disabled: Bool?
     }
 }
 

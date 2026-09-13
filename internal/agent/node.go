@@ -650,6 +650,17 @@ func (c *Node) GetPeerManager() *infra.PeerManager {
 	return c.manager.peerManager
 }
 
+// ConnectionStates snapshots per-peer connection lifecycle state from the
+// probe factory, keyed by remote AppID. "ice-ready" means a direct P2P
+// path, "lrp-ready" means traffic is being relayed. Used by embedded
+// engine clients (Apple Network Extension) to show connection quality.
+func (c *Node) ConnectionStates() map[string]string {
+	if c.probeFactory == nil {
+		return nil
+	}
+	return c.probeFactory.PeerConnectionStates()
+}
+
 // GetNetMap fetches the current network map from the control plane using the
 // provided token. Used by callers (e.g. the sandbox) that need to set
 // GetNetworkMap from outside the agent package.

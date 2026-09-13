@@ -25,6 +25,10 @@ struct ContentView: View {
     @State private var showingJoin = false
     @State private var joined = UserDefaults.standard.bool(forKey: "lattice.joined")
     @StateObject private var tunnel = TunnelManager.shared
+    @State private var renameTarget: PeerNode?
+    @State private var renameText = ""
+    @State private var deleteTarget: PeerNode?
+    @State private var opError = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -70,7 +74,16 @@ struct ContentView: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(peers) { peer in
-                            PeerRow(peer: peer)
+                            PeerRow(
+                                peer: peer,
+                                quality: tunnel.peerStates[peer.name],
+                                onRename: { name in
+                                    renameText = peers.first { $0.name == name }?.displayName ?? ""
+                                    renameTarget = peer
+                                },
+                                onToggleDisabled: { Task { await toggleDisabled(peer) } },
+                                onDelete: { deleteTarget = peer }
+                            )
                             Divider().padding(.leading, 44)
                         }
                     }
@@ -83,6 +96,29 @@ struct ContentView: View {
         .task {
             tunnel.load()
             await loadPeers()
+        }
+        .alert("重命名节点", isPresented: Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )) {
+            TextField("显示名称", text: $renameText)
+            Button("保存") { Task { await renamePeer() } }
+            Button("取消", role: .cancel) { renameTarget = nil }
+        } message: {
+            Text("只改显示名称，不影响节点的网络身份。")
+        }
+        .confirmationDialog(
+            "删除节点 \(deleteTarget?.shownName ?? "")？",
+            isPresented: Binding(
+                get: { deleteTarget != nil },
+                set: { if !$0 { deleteTarget = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("删除", role: .destructive) { Task { await deletePeer() } }
+            Button("取消", role: .cancel) { deleteTarget = nil }
+        } message: {
+            Text("该节点将被移出网络，需重新入网才能恢复。")
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView {
@@ -164,7 +200,16 @@ struct ContentView: View {
 
     private var footer: some View {
         HStack {
-            Text("Lattice standalone").font(.caption2).foregroundColor(.secondary)
+            if !opError.isEmpty {
+                Text(opError)
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                    .lineLimit(1)
+                    .help(opError)
+                    .onTapGesture { opError = "" }
+            } else {
+                Text("Lattice standalone").font(.caption2).foregroundColor(.secondary)
+            }
             Spacer()
             Button {
                 showingSettings = true
@@ -194,22 +239,82 @@ struct ContentView: View {
             errorMsg = "加载失败: \(error.localizedDescription)"
         }
     }
+
+    private func renamePeer() async {
+        guard let target = renameTarget else { return }
+        renameTarget = nil
+        do {
+            try await LatticeAPI.shared.renamePeer(target.name, displayName: renameText)
+            await loadPeers()
+        } catch {
+            opError = "重命名失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func toggleDisabled(_ peer: PeerNode) async {
+        do {
+            try await LatticeAPI.shared.setPeerDisabled(peer.name, !peer.disabled)
+            await loadPeers()
+        } catch {
+            opError = "操作失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func deletePeer() async {
+        guard let target = deleteTarget else { return }
+        deleteTarget = nil
+        do {
+            try await LatticeAPI.shared.deletePeer(target.name)
+            await loadPeers()
+        } catch {
+            opError = "删除失败: \(error.localizedDescription)"
+        }
+    }
 }
 
 // MARK: - Peer Row
 
 struct PeerRow: View {
     let peer: PeerNode
+    /// Connection quality from this machine's tunnel engine
+    /// ("ice-ready" = direct, "lrp-ready" = relayed). Nil when the local
+    /// tunnel is down or this peer isn't in the engine's netmap.
+    var quality: String? = nil
+    var onRename: ((String) -> Void)? = nil
+    var onToggleDisabled: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
     @State private var copied = false
+
+    private var qualityLabel: (text: String, color: Color)? {
+        switch quality {
+        case "ice-ready": return ("直连", .green)
+        case "lrp-ready": return ("中继", .orange)
+        case "probing", "created": return ("连接中", .secondary)
+        case "failed": return ("失败", .red)
+        default: return nil
+        }
+    }
 
     var body: some View {
         HStack(spacing: 10) {
             Circle()
-                .fill(peer.online ? Color.green : Color.gray.opacity(0.4))
+                .fill(peer.disabled ? Color.orange : (peer.online ? Color.green : Color.gray.opacity(0.4)))
                 .frame(width: 7, height: 7)
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(peer.name).font(.system(.body, design: .default))
+                HStack(spacing: 5) {
+                    Text(peer.shownName).font(.system(.body, design: .default))
+                    if let q = qualityLabel {
+                        Text(q.text)
+                            .font(.caption2)
+                            .foregroundColor(q.color)
+                    }
+                    if peer.disabled {
+                        Text("已下线")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                }
                 Text(peer.address)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundColor(.secondary)
@@ -228,9 +333,23 @@ struct PeerRow: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
+        .opacity(peer.disabled ? 0.55 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
             copyAddress()
+        }
+        .contextMenu {
+            Button("复制 IP 地址") { copyAddress() }
+            if let onRename {
+                Button("重命名…") { onRename(peer.name) }
+            }
+            if let onToggleDisabled {
+                Button(peer.disabled ? "上线" : "下线") { onToggleDisabled() }
+            }
+            Divider()
+            if let onDelete {
+                Button("删除节点", role: .destructive) { onDelete() }
+            }
         }
     }
 
