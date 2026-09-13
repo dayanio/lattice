@@ -25,7 +25,6 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/wireguard"
 	"github.com/alatticeio/lattice/internal/dns"
-	"github.com/alatticeio/lattice/internal/telemetry"
 	"net"
 	"os"
 	"path/filepath"
@@ -112,28 +111,7 @@ func Start(ctx context.Context, flags *config.Config) error {
 
 	logger.Debug("Interface name", "name", c.Name)
 
-	if flags.EnableMetric && flags.Telemetry.VMEndpoint != "" {
-		tc := telemetry.Config{
-			VMEndpoint: flags.Telemetry.VMEndpoint,
-			Interval:   time.Duration(flags.Telemetry.IntervalSeconds) * time.Second,
-		}
-		collector, err := telemetry.New(tc, c.GetPeerManager(), logger)
-		if err != nil {
-			logger.Warn("telemetry init failed, skipping", "err", err)
-		} else {
-			// Resolve NetworkID after workspace config is applied; fall back to AppId namespace.
-			networkID := ""
-			if c.current != nil {
-				networkID = c.current.NetworkId
-			}
-			collector.SetIdentity(telemetry.Identity{
-				PeerID:    flags.AppId,
-				NetworkID: networkID,
-				Interface: c.GetDeviceName(),
-			})
-			g.Go(func() error { return collector.Run(gCtx) })
-		}
-	}
+	startTelemetry(gCtx, g, c, flags, logger)
 
 	fileUAPI, err := ipc.UAPIOpen(c.Name)
 	if err != nil {

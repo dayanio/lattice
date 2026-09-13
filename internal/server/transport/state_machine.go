@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"sync"
 
-	victoriametrics "github.com/VictoriaMetrics/metrics"
+	"github.com/alatticeio/lattice/internal/metrics"
 )
 
 // PeerState represents the lifecycle stage of a peer connection.
@@ -35,9 +35,10 @@ const (
 
 func (s PeerState) String() string { return string(s) }
 
-// State machine transition counter — exposed via VictoriaMetrics global set.
+// State machine transition counter — exposed via VictoriaMetrics global set
+// (no-op on GOOS=ios, where VictoriaMetrics has no implementation).
 // Metric: lattice_transport_state_changes_total{from="probing",to="ice-ready"}
-var stateChangeCounter = victoriametrics.NewCounter(`lattice_transport_state_changes_total`)
+var stateChangeCounter = metrics.NewCounter(`lattice_transport_state_changes_total`)
 
 // allowedTransitions defines the legal state transitions.
 var allowedTransitions = map[PeerState][]PeerState{
