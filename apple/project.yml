@@ -51,6 +51,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeMac.entitlements
+        CODE_SIGN_STYLE: Automatic
         COMBINE_HIDPI_IMAGES: YES
 
   LatticeTunnel:
@@ -92,6 +93,7 @@ targets:
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac.tunnel
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeTunnelMac.entitlements
+        CODE_SIGN_STYLE: Automatic
 
 schemes:
   Lattice:
