@@ -51,7 +51,15 @@ var (
 
 // discoverNATSURLOnly is a convenience wrapper that returns only the NATS URL.
 // Used by sandbox_register.go which does not need the STUN address.
+//
+// An explicit override (LATTICE_SIGNALING_URL / config signaling-url) wins
+// over server discovery: the advertised URL may not be reachable from every
+// network the agent sits on (e.g. containers reaching a control plane on the
+// host via host.docker.internal, while the host itself uses loopback).
 func discoverNATSURLOnly(ctx context.Context, serverURL string) (string, error) {
+	if override := config.Conf.GetSignalingURL(); override != "" {
+		return override, nil
+	}
 	d, err := discover(ctx, serverURL)
 	if err != nil {
 		return "", err
