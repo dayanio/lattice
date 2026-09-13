@@ -60,13 +60,15 @@ targets:
     sources:
       - path: LatticeTunnel
       - path: Shared/TunnelCore.swift
+    info:
+      path: LatticeTunnel/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios.tunnel
-        GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeTunnel.entitlements
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
 
   LatticeTunnelMac:
     type: app-extension
@@ -78,14 +80,16 @@ targets:
     dependencies:
       - framework: Frameworks/LatticeCore.xcframework
         embed: false
+    info:
+      path: LatticeTunnelMac/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
     settings:
       base:
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/Frameworks"
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.mac.tunnel
-        GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeTunnelMac.entitlements
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
 
 schemes:
   Lattice:
