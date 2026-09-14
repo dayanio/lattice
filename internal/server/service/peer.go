@@ -64,6 +64,9 @@ type PeerService interface {
 	DisablePeer(ctx context.Context, namespace, name string) error
 	EnablePeer(ctx context.Context, namespace, name string) error
 	DeletePeer(ctx context.Context, namespace, name string) error
+	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
+	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
+	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
 }
 
 type peerService struct {
@@ -599,6 +602,83 @@ func (p *peerService) setPeerDisabledStandalone(ctx context.Context, name string
 	}
 	peer.Disabled = disabled
 	return p.store.Peers().Update(ctx, peer)
+}
+
+// SetAdvertisedRoutes declares (or clears, if routes is empty) the CIDRs
+// this peer offers to route for other peers. Standalone only for now —
+// K8s mode routes through LatticeNetworkPeering instead (out of scope,
+// see docs/superpowers/specs/2026-09-14-exit-node-subnet-route-design.md).
+func (p *peerService) SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error {
+	if p.netmapBuilder == nil {
+		return stderrors.New("advertised routes are not supported in K8s mode yet")
+	}
+	peer, err := p.standalonePeerByName(ctx, name)
+	if err != nil {
+		return err
+	}
+	if len(routes) == 0 {
+		peer.AdvertisedRoutes = ""
+	} else {
+		blob, err := json.Marshal(routes)
+		if err != nil {
+			return fmt.Errorf("marshal advertised routes: %w", err)
+		}
+		peer.AdvertisedRoutes = string(blob)
+	}
+	return p.store.Peers().Update(ctx, peer)
+}
+
+// SetRouteSelection opts consumerName in (selected=true) or out
+// (selected=false) of providerName's advertised routes. A peer cannot
+// select itself.
+func (p *peerService) SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error {
+	if p.netmapBuilder == nil {
+		return stderrors.New("route selection is not supported in K8s mode yet")
+	}
+	if consumerName == providerName {
+		return stderrors.New("a peer cannot select its own advertised routes")
+	}
+	consumer, err := p.standalonePeerByName(ctx, consumerName)
+	if err != nil {
+		return err
+	}
+	provider, err := p.standalonePeerByName(ctx, providerName)
+	if err != nil {
+		return err
+	}
+	if !selected {
+		return p.store.RouteSelections().Delete(ctx, consumer.WorkspaceID, consumer.ID, provider.ID)
+	}
+	return p.store.RouteSelections().Create(ctx, &models.PeerRouteSelection{
+		WorkspaceID:    consumer.WorkspaceID,
+		ConsumerPeerID: consumer.ID,
+		ProviderPeerID: provider.ID,
+	})
+}
+
+// ListRouteSelections returns the names (not IDs) of providers
+// consumerName has currently opted into.
+func (p *peerService) ListRouteSelections(ctx context.Context, consumerName string) ([]string, error) {
+	if p.netmapBuilder == nil {
+		return nil, stderrors.New("route selection is not supported in K8s mode yet")
+	}
+	consumer, err := p.standalonePeerByName(ctx, consumerName)
+	if err != nil {
+		return nil, err
+	}
+	providerIDs, err := p.store.RouteSelections().ListProviderIDsForConsumer(ctx, consumer.WorkspaceID, consumer.ID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(providerIDs))
+	for _, id := range providerIDs {
+		provider, err := p.store.Peers().GetByID(ctx, id)
+		if err != nil {
+			continue // provider was deleted since selecting; skip rather than fail the whole list
+		}
+		names = append(names, provider.Name)
+	}
+	return names, nil
 }
 
 func (p *peerService) Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
