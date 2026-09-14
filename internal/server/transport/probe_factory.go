@@ -239,6 +239,17 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 			peerKnownDone.Store(false)
 			return
 		}
+		// Static endpoint from the registry: when the operator pins a peer's
+		// endpoint (e.g. a container whose NAT topology defeats ICE), wire it
+		// into WireGuard immediately instead of waiting for a probe that can
+		// never complete.
+		if peer.Endpoint != "" {
+			if err := configurator.SetEndpoint(remoteId.PublicKey.String(), peer.Endpoint, 0); err != nil {
+				p.log.Warn("onPeerKnown: static SetEndpoint failed", "remoteId", remoteId.AppID, "err", err)
+			} else {
+				p.log.Info("static endpoint configured", "remoteId", remoteId.AppID, "endpoint", peer.Endpoint)
+			}
+		}
 		iface := ""
 		if pr := p.getProvisioner(); pr != nil {
 			iface = pr.GetIfaceName()

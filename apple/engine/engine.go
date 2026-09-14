@@ -27,8 +27,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	latticeagent "github.com/alatticeio/lattice/internal/agent"
 	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
@@ -228,10 +232,33 @@ func (e *Engine) run(ctx context.Context) {
 	t := newPacketTUN("lattice", e.cfg.MTU)
 	e.setTUN(t)
 
+	// Diagnostic: dup2 fds 1+2 into a sandbox-writable file — slog captures
+	// os.Stdout at init and wireguard-go holds the original stderr fd, so
+	// reassigning the os.Stderr variable alone captures nothing.
+	// The sandboxed appex cannot write the shared TMPDIR or the real home —
+	// its writable home is CFFIXED_USER_HOME (the container Data directory on
+	// the macOS sandbox).
+	home := os.Getenv("CFFIXED_USER_HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home != "" {
+		cacheDir := filepath.Join(home, "Library", "Caches")
+		_ = os.MkdirAll(cacheDir, 0755)
+		if f, ferr := os.OpenFile(
+			filepath.Join(cacheDir, "lattice-ne.log"),
+			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644,
+		); ferr == nil {
+			_ = unix.Dup2(int(f.Fd()), 1)
+			_ = unix.Dup2(int(f.Fd()), 2)
+		}
+	}
+	agentlog.SetLevel("debug")
+
 	node, err := latticeagent.NewNode(ctx, &latticeagent.NodeConfig{
 		Logger:             agentlog.GetLogger("lattice-ne"),
 		Port:               0,
-		ShowLog:            false,
+		ShowLog:            true,
 		Flags:              agentconfig.Conf,
 		CustomTUN:          t,
 		CustomName:         "lattice",
