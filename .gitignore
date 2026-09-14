@@ -27,3 +27,9 @@ cmd/licensegen/
 node_modules/
 .lattice/
 
+
+# logs & local demo environment
+*.log
+.standalone-cfg/
+bin/
+lattice.db*
