@@ -33,6 +33,8 @@ struct PeerNode: Identifiable {
     var lastHandshake: String = "—"
     var appID: String = ""
     var labels: [String: String]? = nil
+    /// CIDRs this peer offers to route for others (Exit Node = ["0.0.0.0/0"]).
+    var advertisedRoutes: [String] = []
     var lastSeen: String = ""
     /// True when an AgentIdentity references this peer — AI agents are
     /// first-class network citizens and get a badge (UI mockup §04).
