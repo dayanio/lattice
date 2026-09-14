@@ -47,6 +47,9 @@ type PeerController interface {
 	DisablePeer(ctx context.Context, namespace, name string) error
 	EnablePeer(ctx context.Context, namespace, name string) error
 	DeletePeer(ctx context.Context, namespace, name string) error
+	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
+	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
+	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
 }
 
 func NewPeerController(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier) PeerController {
@@ -113,6 +116,18 @@ func (p *peerController) EnablePeer(ctx context.Context, namespace, name string)
 
 func (p *peerController) DeletePeer(ctx context.Context, namespace, name string) error {
 	return p.peerService.DeletePeer(ctx, namespace, name)
+}
+
+func (p *peerController) SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error {
+	return p.peerService.SetAdvertisedRoutes(ctx, name, routes)
+}
+
+func (p *peerController) SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error {
+	return p.peerService.SetRouteSelection(ctx, consumerName, providerName, selected)
+}
+
+func (p *peerController) ListRouteSelections(ctx context.Context, consumerName string) ([]string, error) {
+	return p.peerService.ListRouteSelections(ctx, consumerName)
 }
 
 func (p *peerController) Register(ctx context.Context, request []byte) ([]byte, error) {
