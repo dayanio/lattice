@@ -340,7 +340,7 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 	}
 	if client == nil && st != nil {
 		// Standalone mode: build netmaps from the DB peer registry.
-		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities())
+		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
 	}
 	return svc
 }
