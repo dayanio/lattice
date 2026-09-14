@@ -41,6 +41,7 @@ type Store interface {
 	FlowEvents() FlowEventRepository
 	PeerIdentities() PeerIdentityRepository
 	Peers() PeerRepository
+	RouteSelections() PeerRouteSelectionRepository
 	EnrollmentTokens() EnrollmentTokenRepository
 	PolicyVersions() PolicyVersionRepository
 	AgentIdentities() AgentIdentityRepository
@@ -297,6 +298,19 @@ type PeerRepository interface {
 	Delete(ctx context.Context, id string) error
 	// CountAll counts every registered peer (license node-limit checks).
 	CountAll(ctx context.Context) (int64, error)
+}
+
+// PeerRouteSelectionRepository manages t_peer_route_selection: which peer
+// (consumer) has opted to accept another peer's (provider) advertised routes.
+type PeerRouteSelectionRepository interface {
+	Create(ctx context.Context, m *models.PeerRouteSelection) error
+	// Delete removes the (consumer, provider) selection row, if present.
+	// Not finding one is not an error — deselecting an unselected provider
+	// is a no-op.
+	Delete(ctx context.Context, workspaceID, consumerPeerID, providerPeerID string) error
+	// ListProviderIDsForConsumer returns the provider peer IDs consumerPeerID
+	// has opted into, for expanding AllowedIPs in that consumer's netmap.
+	ListProviderIDsForConsumer(ctx context.Context, workspaceID, consumerPeerID string) ([]string, error)
 }
 
 // EnrollmentTokenRepository manages the standalone device enrollment
