@@ -140,14 +140,15 @@ func (p *peerService) UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (*vo
 }
 
 type peerItem struct {
-	name        string
-	displayName string
-	appId       string
-	publicKey   string
-	namespace   string
-	address     *string
-	labels      map[string]string
-	disabled    bool
+	name             string
+	displayName      string
+	appId            string
+	publicKey        string
+	namespace        string
+	address          *string
+	labels           map[string]string
+	advertisedRoutes []string
+	disabled         bool
 }
 
 func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error) {
@@ -215,15 +216,18 @@ func (p *peerService) listPeersStandalone(ctx context.Context, pageParam *dto.Pa
 		address := r.Address
 		var labels map[string]string
 		_ = json.Unmarshal([]byte(r.Labels), &labels)
+		var advertisedRoutes []string
+		_ = json.Unmarshal([]byte(r.AdvertisedRoutes), &advertisedRoutes)
 		allPeers = append(allPeers, peerItem{
-			name:        r.Name,
-			displayName: r.Description,
-			appId:       r.AppID,
-			publicKey:   r.PublicKey,
-			namespace:   workspace.Namespace,
-			address:     &address,
-			labels:      labels,
-			disabled:    r.Disabled,
+			name:             r.Name,
+			displayName:      r.Description,
+			appId:            r.AppID,
+			publicKey:        r.PublicKey,
+			namespace:        workspace.Namespace,
+			address:          &address,
+			labels:           labels,
+			advertisedRoutes: advertisedRoutes,
+			disabled:         r.Disabled,
 		})
 	}
 
@@ -270,6 +274,7 @@ func (p *peerService) renderPeerPage(ctx context.Context, workspace *models.Work
 			PublicKey:            n.publicKey,
 			Address:              n.address,
 			Labels:               n.labels,
+			AdvertisedRoutes:     n.advertisedRoutes,
 			WorkspaceDisplayName: workspace.DisplayName,
 			Disabled:             n.disabled,
 		}
