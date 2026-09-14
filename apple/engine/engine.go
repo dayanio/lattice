@@ -47,10 +47,10 @@ const DefaultMTU = 1280
 
 // Engine events reported to the Swift side via EngineDelegate.OnEvent.
 const (
-	EventConnecting    = "connecting"
-	EventConnected     = "connected"
-	EventDisconnected  = "disconnected"
-	eventErrorPrefix   = "error: "
+	EventConnecting   = "connecting"
+	EventConnected    = "connected"
+	EventDisconnected = "disconnected"
+	eventErrorPrefix  = "error: "
 )
 
 // EngineDelegate is implemented on the Swift side; gomobile generates the
@@ -69,6 +69,13 @@ type EngineDelegate interface {
 	// "lrp-ready" = relayed, "probing" = still negotiating). Emitted
 	// whenever the snapshot changes while the tunnel is up.
 	OnPeerStates(statesJSON string)
+	// OnRoutesChanged reports the current set of extra CIDRs (beyond the
+	// base overlay /24) this node should route into the tunnel, as a JSON
+	// array of strings, e.g. ["192.168.1.0/24"] or ["0.0.0.0/0"] for an
+	// Exit Node. Emitted once when the tunnel comes up and again whenever
+	// the set changes (a route was selected/deselected, or a selected
+	// provider changed/cleared what it advertises).
+	OnRoutesChanged(routesJSON string)
 }
 
 type engineConfig struct {
@@ -222,13 +229,13 @@ func (e *Engine) run(ctx context.Context) {
 	e.setTUN(t)
 
 	node, err := latticeagent.NewNode(ctx, &latticeagent.NodeConfig{
-		Logger:      agentlog.GetLogger("lattice-ne"),
-		Port:        0,
-		ShowLog:     false,
-		Flags:       agentconfig.Conf,
-		CustomTUN:   t,
-		CustomName:  "lattice",
-		CurrentPeer: peer,
+		Logger:             agentlog.GetLogger("lattice-ne"),
+		Port:               0,
+		ShowLog:            false,
+		Flags:              agentconfig.Conf,
+		CustomTUN:          t,
+		CustomName:         "lattice",
+		CurrentPeer:        peer,
 		ProvisionerFactory: newNEProvisionerFactory(localIP, "lattice"),
 	})
 	if err != nil {
@@ -248,6 +255,7 @@ func (e *Engine) run(ctx context.Context) {
 	go node.StartHeartbeat(ctx)
 	go e.periodicRefresh(ctx, node)
 	go e.pollPeerStates(ctx, node)
+	go e.pollRoutes(ctx, node)
 
 	// Deliver decrypted packets to the Swift side.
 	go func() {
@@ -270,6 +278,10 @@ func (e *Engine) run(ctx context.Context) {
 			}
 		}
 	}()
+
+	if blob, err := json.Marshal(computeExtraRoutes(node.GetPeerManager().GetAll())); err == nil {
+		e.emitRoutesChanged(string(blob))
+	}
 
 	e.emit(EventConnected)
 	e.emitTunnelUp(localIP)
@@ -325,6 +337,31 @@ func (e *Engine) pollPeerStates(ctx context.Context, node *latticeagent.Node) {
 	}
 }
 
+// pollRoutes watches the peer manager's AllowedIPs and pushes the extra-
+// routes snapshot to Swift whenever it changes (a route selection changed,
+// or RefreshConfig picked up a provider updating/clearing what it offers).
+func (e *Engine) pollRoutes(ctx context.Context, node *latticeagent.Node) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	var last string
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			blob, err := json.Marshal(computeExtraRoutes(node.GetPeerManager().GetAll()))
+			if err != nil {
+				continue
+			}
+			if string(blob) == last {
+				continue
+			}
+			last = string(blob)
+			e.emitRoutesChanged(last)
+		}
+	}
+}
+
 func (e *Engine) emit(event string) {
 	if e.delegate != nil {
 		e.delegate.OnEvent(event)
@@ -340,5 +377,11 @@ func (e *Engine) emitError(err error) {
 func (e *Engine) emitTunnelUp(ip string) {
 	if e.delegate != nil {
 		e.delegate.OnTunnelUp(ip)
+	}
+}
+
+func (e *Engine) emitRoutesChanged(routesJSON string) {
+	if e.delegate != nil {
+		e.delegate.OnRoutesChanged(routesJSON)
 	}
 }
