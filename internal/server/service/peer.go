@@ -340,7 +340,7 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 	}
 	if client == nil && st != nil {
 		// Standalone mode: build netmaps from the DB peer registry.
-		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities())
+		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
 	}
 	return svc
 }
@@ -400,13 +400,13 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		if allocErr != nil {
 			return nil, allocErr
 		}
-	peer = &models.Peer{
-		WorkspaceID: tok.WorkspaceID,
-		Name:        cmp.Or(dto.Name, dto.AppID), // agents may register without a display name
-		AppID:       dto.AppID,
-		Token:       dto.Token, // K8s semantics: the agent polls GetNetMap with its enrollment token
-		Address:     address,
-	}
+		peer = &models.Peer{
+			WorkspaceID: tok.WorkspaceID,
+			Name:        cmp.Or(dto.Name, dto.AppID), // agents may register without a display name
+			AppID:       dto.AppID,
+			Token:       dto.Token, // K8s semantics: the agent polls GetNetMap with its enrollment token
+			Address:     address,
+		}
 	}
 	// The control plane owns the WireGuard keypair (same as the K8s path):
 	// generate on first enrollment, reuse on re-registration.
