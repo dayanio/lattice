@@ -581,6 +581,9 @@ func (p *peerService) updatePeerStandalone(ctx context.Context, peerDto *dto.Pee
 			peer.Labels = string(blob)
 		}
 	}
+	// Endpoint is operator-pinned (static peer address, e.g. a published
+	// container port). Empty clears it back to dynamic discovery.
+	peer.Endpoint = peerDto.Endpoint
 	if err := p.store.Peers().Update(ctx, peer); err != nil {
 		return nil, err
 	}
