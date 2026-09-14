@@ -20,6 +20,8 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"fmt"
+	"net"
+
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/store"
@@ -611,6 +613,11 @@ func (p *peerService) setPeerDisabledStandalone(ctx context.Context, name string
 func (p *peerService) SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error {
 	if p.netmapBuilder == nil {
 		return stderrors.New("advertised routes are not supported in K8s mode yet")
+	}
+	for _, r := range routes {
+		if _, _, err := net.ParseCIDR(r); err != nil {
+			return fmt.Errorf("invalid CIDR %q: %w", r, err)
+		}
 	}
 	peer, err := p.standalonePeerByName(ctx, name)
 	if err != nil {

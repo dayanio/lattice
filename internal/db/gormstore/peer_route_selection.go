@@ -20,6 +20,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/store"
 	"github.com/alatticeio/lattice/internal/server/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type peerRouteSelectionRepo struct {
@@ -31,11 +32,11 @@ func newPeerRouteSelectionRepo(db *gorm.DB) *peerRouteSelectionRepo {
 }
 
 func (r *peerRouteSelectionRepo) Create(ctx context.Context, m *models.PeerRouteSelection) error {
-	return r.db.WithContext(ctx).Create(m).Error
+	return r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(m).Error
 }
 
 func (r *peerRouteSelectionRepo) Delete(ctx context.Context, workspaceID, consumerPeerID, providerPeerID string) error {
-	return r.db.WithContext(ctx).
+	return r.db.WithContext(ctx).Unscoped().
 		Where("workspace_id = ? AND consumer_peer_id = ? AND provider_peer_id = ?", workspaceID, consumerPeerID, providerPeerID).
 		Delete(&models.PeerRouteSelection{}).Error
 }

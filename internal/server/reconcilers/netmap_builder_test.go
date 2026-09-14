@@ -283,3 +283,80 @@ func TestNetmapBuilder_SelectedProviderClearingRoutesFallsBackToSlash32(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, "10.96.0.4/32", allowedIPsFor(msg2, "gw"))
 }
+
+// TestNetmapBuilder_SkipsMalformedAdvertisedRoute is defense-in-depth for
+// rows written before CIDR validation existed on SetAdvertisedRoutes (or
+// written directly to the DB by some other path): a malformed entry must be
+// dropped rather than propagated into AllowedIPs, while a valid entry in the
+// same declaration still expands normally.
+func TestNetmapBuilder_SkipsMalformedAdvertisedRoute(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "consumer1"}, WorkspaceID: "ws1", Name: "mac",
+		AppID: "mac-app", Token: "tk-mac", Address: "10.96.0.2", PublicKey: "kmac",
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "provider1"}, WorkspaceID: "ws1", Name: "gw",
+		AppID: "gw-app", Token: "tk-gw", Address: "10.96.0.4", PublicKey: "kgw",
+		AdvertisedRoutes: `["192.168.1.0/24","not-a-cidr"]`,
+	}))
+	require.NoError(t, st.RouteSelections().Create(ctx, &models.PeerRouteSelection{
+		Model: models.Model{ID: "sel1"}, WorkspaceID: "ws1",
+		ConsumerPeerID: "consumer1", ProviderPeerID: "provider1",
+	}))
+
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	macPeer, err := st.Peers().GetByID(ctx, "consumer1")
+	require.NoError(t, err)
+	msg, err := builder.BuildForPeer(ctx, macPeer)
+	require.NoError(t, err)
+
+	var gwForMac *infra.Peer
+	for _, p := range msg.Network.Peers {
+		if p.Name == "gw" {
+			gwForMac = p
+		}
+	}
+	require.NotNil(t, gwForMac)
+	assert.Equal(t, "10.96.0.4/32,192.168.1.0/24", gwForMac.AllowedIPs,
+		"only the valid CIDR must be expanded; the malformed entry is dropped")
+}
+
+// TestNetmapBuilder_FullyMalformedAdvertisedRouteFallsBackToSlash32 covers
+// the case where every declared route is malformed: the result must match
+// the plain-/32 behavior already exercised for an empty declaration.
+func TestNetmapBuilder_FullyMalformedAdvertisedRouteFallsBackToSlash32(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "consumer1"}, WorkspaceID: "ws1", Name: "mac",
+		AppID: "mac-app", Token: "tk-mac", Address: "10.96.0.2", PublicKey: "kmac",
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "provider1"}, WorkspaceID: "ws1", Name: "gw",
+		AppID: "gw-app", Token: "tk-gw", Address: "10.96.0.4", PublicKey: "kgw",
+		AdvertisedRoutes: `["not-a-cidr"]`,
+	}))
+	require.NoError(t, st.RouteSelections().Create(ctx, &models.PeerRouteSelection{
+		Model: models.Model{ID: "sel1"}, WorkspaceID: "ws1",
+		ConsumerPeerID: "consumer1", ProviderPeerID: "provider1",
+	}))
+
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	macPeer, err := st.Peers().GetByID(ctx, "consumer1")
+	require.NoError(t, err)
+	msg, err := builder.BuildForPeer(ctx, macPeer)
+	require.NoError(t, err)
+
+	var gwForMac *infra.Peer
+	for _, p := range msg.Network.Peers {
+		if p.Name == "gw" {
+			gwForMac = p
+		}
+	}
+	require.NotNil(t, gwForMac)
+	assert.Equal(t, "10.96.0.4/32", gwForMac.AllowedIPs)
+}

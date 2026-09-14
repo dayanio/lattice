@@ -85,24 +85,71 @@ func testContext(method, name string, body any) (*gin.Context, *httptest.Respons
 	return c, w
 }
 
+// respBody mirrors pkg/utils/resp.Response's JSON shape. Every handler in
+// this codebase writes HTTP 200 regardless of outcome (see resp.Error) — the
+// real result is the body's "code" field, so tests must decode and assert
+// on that, not on w.Code.
+type respBody struct {
+	Code int             `json:"code"`
+	Msg  string          `json:"msg"`
+	Data json.RawMessage `json:"data"`
+}
+
+func decodeResp(t *testing.T, w *httptest.ResponseRecorder) respBody {
+	t.Helper()
+	var body respBody
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	return body
+}
+
 func TestRouteSelectionHandlers_DeclareSelectList(t *testing.T) {
 	s := newRouteSelectionTestServer(t)
 
 	c, w := testContext(http.MethodPost, "gw", map[string]any{"routes": []string{"192.168.1.0/24"}})
 	s.setAdvertisedRoutes(c)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusOK, decodeResp(t, w).Code)
 
 	c, w = testContext(http.MethodPost, "mac", map[string]any{"provider": "gw", "selected": true})
 	s.setRouteSelection(c)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusOK, decodeResp(t, w).Code)
 
 	c, w = testContext(http.MethodGet, "mac", nil)
 	s.listRouteSelections(c)
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusOK, decodeResp(t, w).Code)
 
 	var body struct {
 		Data []string `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, []string{"gw"}, body.Data)
+}
+
+// TestRouteSelectionHandlers_InvalidJSON posts an unparseable body and
+// confirms it hits the ShouldBindJSON error path (resp.BadRequest), which
+// is only visible in the body's "code" field since w.Code is always 200.
+func TestRouteSelectionHandlers_InvalidJSON(t *testing.T) {
+	s := newRouteSelectionTestServer(t)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader([]byte("not json")))
+	req = req.WithContext(context.WithValue(req.Context(), infra.WorkspaceKey, "ws1"))
+	c.Request = req
+	c.Params = gin.Params{{Key: "name", Value: "gw"}}
+
+	s.setAdvertisedRoutes(c)
+	assert.NotEqual(t, http.StatusOK, decodeResp(t, w).Code)
+}
+
+// TestRouteSelectionHandlers_NonexistentPeer posts against a peer name that
+// doesn't exist in the seeded store and confirms it hits
+// standalonePeerByName's not-found error (resp.Error), again only visible
+// in the body's "code" field.
+func TestRouteSelectionHandlers_NonexistentPeer(t *testing.T) {
+	s := newRouteSelectionTestServer(t)
+
+	c, w := testContext(http.MethodPost, "no-such-peer", map[string]any{"routes": []string{"192.168.1.0/24"}})
+	s.setAdvertisedRoutes(c)
+	assert.NotEqual(t, http.StatusOK, decodeResp(t, w).Code)
 }

@@ -53,3 +53,60 @@ func TestPeerService_AdvertisedRoutesAndSelection(t *testing.T) {
 	err = svc.SetRouteSelection(wsCtx, "mac", "mac", true)
 	require.Error(t, err)
 }
+
+// TestPeerService_ReselectAfterDeselect reproduces the select -> deselect ->
+// select-again bug at the PeerService layer, which is what real HTTP
+// handlers call through. Before the fix, the second SetRouteSelection(...,
+// true) failed with a UNIQUE constraint error because Delete only
+// soft-deleted the row.
+func TestPeerService_ReselectAfterDeselect(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{Name: "gw", AppID: "gw-app", Token: "enr-test-token"})
+	require.NoError(t, err)
+	_, err = svc.Register(ctx, &dto.PeerDto{Name: "mac", AppID: "mac-app", Token: "enr-test-token"})
+	require.NoError(t, err)
+
+	wsCtx := context.WithValue(ctx, infra.WorkspaceKey, "ws1")
+	require.NoError(t, svc.SetAdvertisedRoutes(wsCtx, "gw", []string{"192.168.1.0/24"}))
+
+	require.NoError(t, svc.SetRouteSelection(wsCtx, "mac", "gw", true))
+	selected, err := svc.ListRouteSelections(wsCtx, "mac")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gw"}, selected)
+
+	require.NoError(t, svc.SetRouteSelection(wsCtx, "mac", "gw", false))
+	selected, err = svc.ListRouteSelections(wsCtx, "mac")
+	require.NoError(t, err)
+	assert.Empty(t, selected)
+
+	// Re-select the same provider after deselecting — must succeed.
+	require.NoError(t, svc.SetRouteSelection(wsCtx, "mac", "gw", true))
+	selected, err = svc.ListRouteSelections(wsCtx, "mac")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gw"}, selected, "must show selected again after re-selecting")
+
+	// Selecting the already-selected pair again must not error or duplicate.
+	require.NoError(t, svc.SetRouteSelection(wsCtx, "mac", "gw", true))
+	selected, err = svc.ListRouteSelections(wsCtx, "mac")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"gw"}, selected)
+}
+
+// TestPeerService_SetAdvertisedRoutes_RejectsInvalidCIDR ensures a malformed
+// route string is rejected before it can be comma-joined into another
+// peer's AllowedIPs and applied to a real WireGuard interface.
+func TestPeerService_SetAdvertisedRoutes_RejectsInvalidCIDR(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{Name: "gw", AppID: "gw-app", Token: "enr-test-token"})
+	require.NoError(t, err)
+
+	wsCtx := context.WithValue(ctx, infra.WorkspaceKey, "ws1")
+	err = svc.SetAdvertisedRoutes(wsCtx, "gw", []string{"not-a-cidr"})
+	require.Error(t, err)
+}

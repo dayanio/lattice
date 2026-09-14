@@ -194,7 +194,13 @@ func parseAdvertisedRoutes(raw string) []string {
 	if err := json.Unmarshal([]byte(raw), &routes); err != nil {
 		return nil
 	}
-	return routes
+	valid := routes[:0]
+	for _, r := range routes {
+		if _, _, err := net.ParseCIDR(r); err == nil {
+			valid = append(valid, r)
+		}
+	}
+	return valid
 }
 
 // dbToInfraPeer converts the registry record into its wire form.
