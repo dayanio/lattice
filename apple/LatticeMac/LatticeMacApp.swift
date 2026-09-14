@@ -59,6 +59,7 @@ struct LatticeMacApp: App {
             ChatWindow()
         }
         .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 900, height: 660)
         .windowResizability(.contentMinSize)
     }
 }
