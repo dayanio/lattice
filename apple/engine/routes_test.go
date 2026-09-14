@@ -55,6 +55,16 @@ func TestComputeExtraRoutes_DedupesAcrossPeers(t *testing.T) {
 	}
 }
 
+func TestComputeExtraRoutes_KeepsNonPeerSlash32(t *testing.T) {
+	peers := []*infra.Peer{
+		{Name: "gw", Address: addr("10.96.0.4"), AllowedIPs: "10.96.0.4/32,8.8.8.8/32"},
+	}
+	got := computeExtraRoutes(peers)
+	if len(got) != 1 || got[0] != "8.8.8.8/32" {
+		t.Fatalf("computeExtraRoutes() = %v, want [8.8.8.8/32]", got)
+	}
+}
+
 func TestComputeExtraRoutes_EmptyInput(t *testing.T) {
 	got := computeExtraRoutes(nil)
 	if len(got) != 0 {

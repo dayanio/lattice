@@ -136,12 +136,15 @@ struct NetworkSettingsView: View {
     }
 
     private func selectExitNode(_ name: String?) async {
+        let oldExitNodes = selectedProviders.filter { provider in
+            candidates.first(where: { c in c.name == provider })?.advertisedRoutes.contains("0.0.0.0/0") == true
+        }
         do {
-            for provider in selectedProviders where candidates.first(where: { $0.name == provider })?.advertisedRoutes.contains("0.0.0.0/0") == true {
-                try await LatticeAPI.shared.setRouteSelection(consumer: selfName, provider: provider, selected: false)
-            }
             if let name {
                 try await LatticeAPI.shared.setRouteSelection(consumer: selfName, provider: name, selected: true)
+            }
+            for provider in oldExitNodes where provider != name {
+                try await LatticeAPI.shared.setRouteSelection(consumer: selfName, provider: provider, selected: false)
             }
             showingPicker = false
             await load()
