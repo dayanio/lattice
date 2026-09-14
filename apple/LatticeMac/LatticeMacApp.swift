@@ -186,6 +186,7 @@ final class LatticeAPI {
                 disabled: p.disabled ?? false,
                 appID: p.appId ?? "",
                 labels: p.labels,
+                advertisedRoutes: p.advertisedRoutes ?? [],
                 lastSeen: p.lastSeen ?? ""
             )
         }
@@ -204,6 +205,26 @@ final class LatticeAPI {
 
     func deletePeer(_ name: String) async throws {
         try await request(method: "DELETE", path: "/api/v1/peers/\(encodePath(name))")
+    }
+
+    /// Declares (or clears, if `routes` is empty) the CIDRs `name` offers to
+    /// route for other peers in the workspace.
+    func setAdvertisedRoutes(_ name: String, routes: [String]) async throws {
+        try await request(method: "POST", path: "/api/v1/peers/\(encodePath(name))/advertised-routes",
+                          body: ["routes": routes])
+    }
+
+    /// `consumer` opts in (selected: true) or out of `provider`'s advertised routes.
+    func setRouteSelection(consumer: String, provider: String, selected: Bool) async throws {
+        try await request(method: "POST", path: "/api/v1/peers/\(encodePath(consumer))/route-selection",
+                          body: ["provider": provider, "selected": selected])
+    }
+
+    /// Provider names `consumer` currently has selected.
+    func listRouteSelections(_ consumer: String) async throws -> [String] {
+        let data = try await request(method: "GET", path: "/api/v1/peers/\(encodePath(consumer))/route-selection")
+        struct Response: Codable { let data: [String]? }
+        return try JSONDecoder().decode(Response.self, from: data).data ?? []
     }
 
     // MARK: Policies (ACL view)
@@ -396,6 +417,7 @@ struct PeerListResponse: Codable {
         let displayName: String?
         let disabled: Bool?
         let labels: [String: String]?
+        let advertisedRoutes: [String]?
     }
 }
 
