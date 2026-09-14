@@ -34,9 +34,16 @@ func computeExtraRoutes(peers []*infra.Peer) []string {
 		if p == nil || p.AllowedIPs == "" {
 			continue
 		}
+		peerAddr := ""
+		if p.Address != nil {
+			peerAddr = *p.Address
+		}
 		for _, cidr := range strings.Split(p.AllowedIPs, ",") {
 			cidr = strings.TrimSpace(cidr)
-			if cidr == "" || strings.HasSuffix(cidr, "/32") {
+			if cidr == "" {
+				continue
+			}
+			if cidr == peerAddr+"/32" {
 				continue
 			}
 			seen[cidr] = struct{}{}
