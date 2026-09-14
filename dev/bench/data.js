@@ -1,6 +1,6 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1788765116194,
-  "repoUrl": "https://github.com/alatticeio/lattice",
+  "lastUpdate": 1789371950237,
+  "repoUrl": "https://github.com/dayanio/lattice",
   "entries": {
     "Integration Benchmarks": [
       {
@@ -7972,6 +7972,280 @@ window.BENCHMARK_DATA = {
             "value": 6,
             "unit": "allocs/op",
             "extra": "15940 times\n4 procs"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "winstonfly",
+            "username": "winstonfly",
+            "email": "lauxinchi@gmail.com"
+          },
+          "committer": {
+            "name": "GitHub",
+            "username": "web-flow",
+            "email": "noreply@github.com"
+          },
+          "id": "abe3b6704d2bf2856297b75cce4444f89cd316e6",
+          "message": "feat(mcp): add MCPServer + AgentPolicy CRDs, refactor sandbox to kernel TUN routing (#28)\n\nSigned-off-by: winstonfly <lauxinchi@gmail.com>",
+          "timestamp": "2026-05-30T02:42:25Z",
+          "url": "https://github.com/dayanio/lattice/commit/abe3b6704d2bf2856297b75cce4444f89cd316e6"
+        },
+        "date": 1789371946206,
+        "tool": "go",
+        "benches": [
+          {
+            "name": "BenchmarkICEDialLocal",
+            "value": 1106068,
+            "unit": "ns/op\t         0 handshake_ms/op\t  262238 B/op\t    3360 allocs/op",
+            "extra": "1026 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - ns/op",
+            "value": 1106068,
+            "unit": "ns/op",
+            "extra": "1026 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - handshake_ms/op",
+            "value": 0,
+            "unit": "handshake_ms/op",
+            "extra": "1026 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - B/op",
+            "value": 262238,
+            "unit": "B/op",
+            "extra": "1026 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - allocs/op",
+            "value": 3360,
+            "unit": "allocs/op",
+            "extra": "1026 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal",
+            "value": 1121735,
+            "unit": "ns/op\t         1.000 handshake_ms/op\t  262565 B/op\t    3366 allocs/op",
+            "extra": "1062 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - ns/op",
+            "value": 1121735,
+            "unit": "ns/op",
+            "extra": "1062 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - handshake_ms/op",
+            "value": 1,
+            "unit": "handshake_ms/op",
+            "extra": "1062 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - B/op",
+            "value": 262565,
+            "unit": "B/op",
+            "extra": "1062 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - allocs/op",
+            "value": 3366,
+            "unit": "allocs/op",
+            "extra": "1062 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal",
+            "value": 1112853,
+            "unit": "ns/op\t         1.000 handshake_ms/op\t  261853 B/op\t    3355 allocs/op",
+            "extra": "1089 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - ns/op",
+            "value": 1112853,
+            "unit": "ns/op",
+            "extra": "1089 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - handshake_ms/op",
+            "value": 1,
+            "unit": "handshake_ms/op",
+            "extra": "1089 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - B/op",
+            "value": 261853,
+            "unit": "B/op",
+            "extra": "1089 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkICEDialLocal - allocs/op",
+            "value": 3355,
+            "unit": "allocs/op",
+            "extra": "1089 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial",
+            "value": 45451,
+            "unit": "ns/op\t     393 B/op\t       6 allocs/op",
+            "extra": "25698 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - ns/op",
+            "value": 45451,
+            "unit": "ns/op",
+            "extra": "25698 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - B/op",
+            "value": 393,
+            "unit": "B/op",
+            "extra": "25698 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "25698 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial",
+            "value": 44686,
+            "unit": "ns/op\t     392 B/op\t       6 allocs/op",
+            "extra": "27044 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - ns/op",
+            "value": 44686,
+            "unit": "ns/op",
+            "extra": "27044 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - B/op",
+            "value": 392,
+            "unit": "B/op",
+            "extra": "27044 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "27044 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial",
+            "value": 44610,
+            "unit": "ns/op\t     393 B/op\t       6 allocs/op",
+            "extra": "23482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - ns/op",
+            "value": 44610,
+            "unit": "ns/op",
+            "extra": "23482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - B/op",
+            "value": 393,
+            "unit": "B/op",
+            "extra": "23482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkNATSDial - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "23482 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap",
+            "value": 44126,
+            "unit": "ns/op\t   8.20 MB/s\t     697 B/op\t       6 allocs/op",
+            "extra": "27302 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - ns/op",
+            "value": 44126,
+            "unit": "ns/op",
+            "extra": "27302 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - MB/s",
+            "value": 8.2,
+            "unit": "MB/s",
+            "extra": "27302 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - B/op",
+            "value": 697,
+            "unit": "B/op",
+            "extra": "27302 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "27302 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap",
+            "value": 47171,
+            "unit": "ns/op\t   7.67 MB/s\t     697 B/op\t       6 allocs/op",
+            "extra": "25560 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - ns/op",
+            "value": 47171,
+            "unit": "ns/op",
+            "extra": "25560 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - MB/s",
+            "value": 7.67,
+            "unit": "MB/s",
+            "extra": "25560 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - B/op",
+            "value": 697,
+            "unit": "B/op",
+            "extra": "25560 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "25560 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap",
+            "value": 45371,
+            "unit": "ns/op\t   7.98 MB/s\t     697 B/op\t       6 allocs/op",
+            "extra": "26516 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - ns/op",
+            "value": 45371,
+            "unit": "ns/op",
+            "extra": "26516 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - MB/s",
+            "value": 7.98,
+            "unit": "MB/s",
+            "extra": "26516 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - B/op",
+            "value": 697,
+            "unit": "B/op",
+            "extra": "26516 times\n4 procs"
+          },
+          {
+            "name": "BenchmarkSandboxBootstrap - allocs/op",
+            "value": 6,
+            "unit": "allocs/op",
+            "extra": "26516 times\n4 procs"
           }
         ]
       }
