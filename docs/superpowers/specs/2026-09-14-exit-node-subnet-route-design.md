@@ -1,9 +1,22 @@
 # Exit Node / 子网路由设计（standalone 模式）
 
 **日期**：2026-09-14
-**状态**：Draft
-**范围**：`internal/server`（standalone 控制面）+ `apple/`（macOS 客户端）
+**状态**：Active（后端已实现并通过整体 review，见文末评审记录；macOS 客户端部分仍是设计）
+**范围**：`internal/server`（standalone 控制面，已实现）+ `apple/`（macOS 客户端，未实现）
 **关联文档**：[对标 Tailscale 的功能差距与路线图](./2026-09-13-apple-client-vs-tailscale-gap-roadmap.md)（阶段二）、[UI mockup](./2026-09-13-apple-client-ui-mockups.md)（§02 网络设置）
+
+## 〇、评审记录（2026-09-14，后端落地后修订）
+
+按 6-task 实现计划（`docs/superpowers/plans/2026-09-14-exit-node-subnet-route-backend.md`）落地后，最终整体 review 发现并修正了本文档三处遗漏：
+
+1. **§5.2 漏了一个接口**：实际上线的是三个 API，不是两个——多了 `GET /api/v1/peers/{name}/route-selection`（消费方查自己当前选了谁），否则客户端选择器没法回显当前状态。已在下方补上。
+2. **软删除与唯一索引冲突**：`PeerRouteSelection` 继承了 `Model` 的软删除，但唯一索引没排除 `deleted_at`，导致"取消选择后再次选择同一个 provider"永久失败（`UNIQUE constraint`）。这张表本质是纯粹的关联表，不需要软删除语义，已改成硬删除（`Unscoped()`）并让 `Create` 幂等（`OnConflict DoNothing`）。
+3. **`AdvertisedRoutes` 缺 CIDR 校验**：任意字符串原先都能声明成功，再拼进**别人**的 `AllowedIPs`，一个字符错误就能让选中它的另一台设备的 WireGuard 配置应用失败。已在 `SetAdvertisedRoutes` 里加 `net.ParseCIDR` 校验，`parseAdvertisedRoutes` 侧也加了防御性过滤。
+
+另有两处不算实现偏离、但值得记录成待办：
+
+- **Provider 侧的转发/NAT 完全没设计**：本设计从头到尾只覆盖了消费方（macOS 客户端）怎么装路由，没有任何一处提到 provider 节点自己需要开 `ip_forward` 和出口 NAT 才能真的把流量转发出去——现有 agent 的 masquerade 规则方向是"进 overlay"，不是"出 overlay"。也就是说**光有这次的后端改动，Exit Node 端到端还是不通的**，provider 侧转发是明确的后续工作，做 macOS 客户端那部分（阶段三，见 §六）时要一起补上，不要误以为后端合了就能用。
+- **两个写接口的权限级别**：`advertised-routes`/`route-selection` 目前和同组的 `updatePeer`/`disablePeer` 一样挂在 `RoleViewer` 下，即只读成员也能改别人设备的路由选择——这是沿用了这组接口既有的权限模型，不是这次新引入的问题，但选择路由会实际改变别的设备的流量路径，比改个显示名影响大，值不值得单独提到更高权限级别是个产品/安全策略决定，留给后续讨论，不在这次改动范围内。
 
 ## 一、背景
 
@@ -71,7 +84,7 @@ func (PeerRouteSelection) TableName() string { return "t_peer_route_selection" }
 
 一次查询即可（`SELECT provider_peer_id FROM t_peer_route_selection WHERE workspace_id=? AND consumer_peer_id=?`），不会在循环里对每个 row 单独查库。
 
-### 5.2 新增两个 API（`internal/server/service/peer.go`）
+### 5.2 新增三个 API（`internal/server/service/peer.go`）
 
 ```
 POST /api/v1/peers/{name}/advertised-routes
@@ -79,9 +92,12 @@ POST /api/v1/peers/{name}/advertised-routes
 
 POST /api/v1/peers/{name}/route-selection
   body: { "provider": "node-b", "selected": true }
+
+GET  /api/v1/peers/{name}/route-selection
+  → { "data": ["node-b", ...] }            # {name} 这个消费方当前选中的 provider 名字列表
 ```
 
-第一个只能由 peer 自己（或其归属用户）调用，写 `AdvertisedRoutes`；第二个由消费方调用，写/删 `t_peer_route_selection` 一行。两者都应该在写入后让该 peer 的 `ConfigVersion` 失效，触发下一次心跳/轮询拿到新 netmap——复用现有的 `versionFor` 机制，不需要新的推送通道。
+第一个只能由 peer 自己（或其归属用户）调用，写 `AdvertisedRoutes`；第二个由消费方调用，写/删 `t_peer_route_selection` 一行；第三个是纯读，给客户端的选择器回显当前选中状态用（没有它，UI 每次打开都不知道之前选过谁）。写操作都应该在写入后让该 peer 的 `ConfigVersion` 失效，触发下一次心跳/轮询拿到新 netmap——复用现有的 `versionFor` 机制，不需要新的推送通道。
 
 ## 六、macOS 客户端行为
 
