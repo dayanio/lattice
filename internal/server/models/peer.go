@@ -35,7 +35,13 @@ type Peer struct {
 	Hostname    string     `gorm:"size:200" json:"hostname,omitempty"`
 	Platform    string     `gorm:"size:50" json:"platform,omitempty"`
 	Labels      string     `gorm:"type:text" json:"labels,omitempty"` // JSON map
-	Disabled    bool       `gorm:"default:false;index" json:"disabled"`
+	// AdvertisedRoutes is a JSON array of CIDRs this peer offers to route
+	// for other peers, e.g. ["0.0.0.0/0"] for exit-node, ["192.168.1.0/24"]
+	// for a subnet route. Empty/absent means this peer offers nothing.
+	// Consumers only get this expanded into their own AllowedIPs after
+	// opting in via PeerRouteSelection — see netmap_builder.go.
+	AdvertisedRoutes string     `gorm:"type:text" json:"advertised_routes,omitempty"`
+	Disabled         bool       `gorm:"default:false;index" json:"disabled"`
 	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
 	Description string     `gorm:"size:500" json:"description,omitempty"`
 }
