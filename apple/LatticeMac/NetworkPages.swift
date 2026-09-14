@@ -180,7 +180,6 @@ struct NetworkSettingsView: View {
             HStack(spacing: 6) {
                 Text("网络设置")
                     .font(.system(.headline, design: .rounded))
-                SoonBadge()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -223,7 +222,6 @@ struct NetworkSettingsView: View {
         HStack {
             Text("Mac Demo")
             Spacer()
-            Text("以上能力随阶段二 roadmap 落地")
         }
         .font(.caption2)
         .foregroundColor(.secondary)
