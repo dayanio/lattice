@@ -29,12 +29,12 @@ type Peer struct {
 	PublicKey   string `gorm:"size:100" json:"public_key,omitempty"`
 	// PrivateKey is server-generated (wgtypes key, hex) and only ever
 	// leaves the registry inside the owning peer's own netmap message.
-	PrivateKey  string     `gorm:"size:100" json:"-"`
-	Address     string     `gorm:"size:64;index" json:"address,omitempty"` // overlay IP
-	Endpoint    string     `gorm:"size:200" json:"endpoint,omitempty"`
-	Hostname    string     `gorm:"size:200" json:"hostname,omitempty"`
-	Platform    string     `gorm:"size:50" json:"platform,omitempty"`
-	Labels      string     `gorm:"type:text" json:"labels,omitempty"` // JSON map
+	PrivateKey string `gorm:"size:100" json:"-"`
+	Address    string `gorm:"size:64;index" json:"address,omitempty"` // overlay IP
+	Endpoint   string `gorm:"size:200" json:"endpoint,omitempty"`
+	Hostname   string `gorm:"size:200" json:"hostname,omitempty"`
+	Platform   string `gorm:"size:50" json:"platform,omitempty"`
+	Labels     string `gorm:"type:text" json:"labels,omitempty"` // JSON map
 	// AdvertisedRoutes is a JSON array of CIDRs this peer offers to route
 	// for other peers, e.g. ["0.0.0.0/0"] for exit-node, ["192.168.1.0/24"]
 	// for a subnet route. Empty/absent means this peer offers nothing.
@@ -42,8 +42,8 @@ type Peer struct {
 	// opting in via PeerRouteSelection — see netmap_builder.go.
 	AdvertisedRoutes string     `gorm:"type:text" json:"advertised_routes,omitempty"`
 	Disabled         bool       `gorm:"default:false;index" json:"disabled"`
-	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
-	Description string     `gorm:"size:500" json:"description,omitempty"`
+	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
+	Description      string     `gorm:"size:500" json:"description,omitempty"`
 }
 
 func (Peer) TableName() string { return "t_peer" }
