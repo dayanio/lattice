@@ -14,27 +14,129 @@
 
 import SwiftUI
 
-/// LLM assistant window. Conversations stream from the control plane's
-/// /api/v1/ai/chat endpoint, where the model drives MCP tools against the
-/// live network — this view renders tokens and tool activity only.
+/// LLM assistant window, Codex/Claude style: conversation-history sidebar on
+/// the left, streaming thread + composer on the right. Conversations stream
+/// from the control plane's /api/v1/ai/chat endpoint, where the model drives
+/// MCP tools against the live network.
 struct ChatWindow: View {
     @StateObject private var chat = ChatViewModel()
 
     var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            thread
+        }
+        .frame(minWidth: 780, idealWidth: 900, minHeight: 540, idealHeight: 660)
+        .onAppear { chat.loadStore() }
+    }
+
+    // MARK: Sidebar
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                chat.newSession()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.pencil")
+                    Text("新对话").font(.system(.body, design: .rounded).weight(.medium))
+                    Spacer()
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(Color.primary.opacity(0.06))
+                .cornerRadius(8)
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+
+            Text("历史对话")
+                .font(.caption2.weight(.bold))
+                .textCase(.uppercase)
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 4)
+
+            if chat.sessions.isEmpty {
+                Text("暂无历史对话")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 6)
+            }
+
+            ScrollView {
+                VStack(spacing: 1) {
+                    ForEach(chat.sessions) { session in
+                        sessionRow(session)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            Divider()
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .foregroundColor(Color(red: 0.49, green: 0.48, blue: 1.0))
+                Text("AI 可操作真实网络")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+        }
+        .frame(width: 232)
+        .background(Color.primary.opacity(0.035))
+    }
+
+    private func sessionRow(_ session: ChatSession) -> some View {
+        let selected = chat.currentID == session.id
+        return Button {
+            chat.select(session.id)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.title)
+                    .font(.system(size: 12.5, weight: selected ? .semibold : .regular))
+                    .lineLimit(1)
+                Text(relativeTime(session.updatedAt))
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(selected ? Color.accentColor.opacity(0.14) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("删除对话", role: .destructive) {
+                chat.delete(session.id)
+            }
+        }
+        .padding(.horizontal, 8)
+    }
+
+    // MARK: Thread
+
+    private var thread: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .foregroundColor(Color(red: 0.49, green: 0.48, blue: 1.0))
-                Text("Lattice AI 助手")
+                Text(chat.currentTitle)
                     .font(.system(.headline, design: .rounded))
+                    .lineLimit(1)
                 Spacer()
-                Button {
-                    chat.reset()
-                } label: {
-                    Text("新对话").font(.caption)
+                if chat.isStreaming {
+                    Text("正在思考…").font(.caption).foregroundColor(.secondary)
                 }
-                .buttonStyle(.plain)
-                .disabled(chat.isStreaming)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -44,34 +146,14 @@ struct ChatWindow: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         if chat.messages.isEmpty {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("用自然语言操作你的网络")
-                                    .font(.system(.headline, design: .rounded))
-                                Text("AI 助手可以查看设备、读写策略、执行诊断。试一试：")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                ForEach(chat.quickPrompts, id: \.self) { prompt in
-                                    Button {
-                                        chat.send(prompt)
-                                    } label: {
-                                        Text(prompt)
-                                            .font(.caption)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .background(Color.accentColor.opacity(0.1))
-                                            .cornerRadius(8)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(16)
+                            emptyState
                         }
                         ForEach(chat.messages) { message in
                             ChatBubble(message: message)
                                 .id(message.id)
                         }
                     }
-                    .padding(12)
+                    .padding(14)
                 }
                 .onChange(of: chat.lastMessageID) { id in
                     if let id {
@@ -80,40 +162,88 @@ struct ChatWindow: View {
                 }
             }
 
-            Divider()
-
-            HStack(spacing: 8) {
-                TextField("描述你想做的操作…", text: $chat.input, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...4)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(Color.primary.opacity(0.06))
-                    .cornerRadius(10)
-                    .onSubmit { chat.send(chat.input) }
-
-                Button {
-                    chat.send(chat.input)
-                } label: {
-                    if chat.isStreaming {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "paperplane.fill")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(chat.isStreaming || chat.input.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            .padding(12)
+            composer
         }
-        .frame(width: 480)
-        .frame(minHeight: 500, maxHeight: 760)
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("用自然语言操作你的网络")
+                .font(.system(.headline, design: .rounded))
+            Text("AI 助手可以查看设备、读写策略、执行诊断。试一试：")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            ForEach(chat.quickPrompts, id: \.self) { prompt in
+                Button {
+                    chat.send(prompt)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sparkle")
+                        Text(prompt)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.primary.opacity(0.06))
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Composer in the Claude/Codex style: an elevated rounded container with
+    /// the field inside and a circular send button docked bottom-right.
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            TextField("描述你想做的操作…", text: $chat.input, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...6)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 8)
+
+            Button {
+                chat.send(chat.input)
+            } label: {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        Circle().fill(
+                            chat.canSend ? Color.primary : Color.secondary.opacity(0.4)
+                        )
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!chat.canSend)
+            .padding(5)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .strokeBorder(Color.primary.opacity(0.14))
+        )
+        .shadow(color: Color.black.opacity(0.07), radius: 10, y: 3)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private func relativeTime(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
 // MARK: - Message rendering
 
-struct ChatDisplayMessage: Identifiable, Equatable {
+struct ChatDisplayMessage: Identifiable, Equatable, Codable {
     var id = UUID()
     /// "user" | "assistant" | "tool" | "error"
     let role: String
@@ -125,7 +255,7 @@ struct ChatBubble: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
-            if message.role == "user" { Spacer(minLength: 48) }
+            if message.role == "user" { Spacer(minLength: 64) }
             VStack(alignment: .leading, spacing: 4) {
                 if message.role == "tool" {
                     HStack(spacing: 5) {
@@ -143,14 +273,14 @@ struct ChatBubble: View {
                     Text(bubbleText)
                         .font(.system(.caption))
                         .textSelection(.enabled)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
                         .foregroundColor(message.role == "user" ? .white : .primary)
                         .background(bubbleColor)
-                        .cornerRadius(12)
+                        .cornerRadius(14)
                 }
             }
-            if message.role != "user" { Spacer(minLength: 48) }
+            if message.role != "user" { Spacer(minLength: 64) }
         }
     }
 
@@ -168,106 +298,5 @@ struct ChatBubble: View {
             return rendered
         }
         return AttributedString(message.text)
-    }
-}
-
-// MARK: - View model
-
-@MainActor
-final class ChatViewModel: ObservableObject {
-    @Published var messages: [ChatDisplayMessage] = []
-    @Published var input = ""
-    @Published var isStreaming = false
-    @Published var lastMessageID: UUID?
-
-    let quickPrompts = [
-        "列出网络里的所有设备",
-        "检查当前网络有哪些安全风险",
-        "总结现在生效的访问策略",
-    ]
-
-    private var history: [ChatAPIMessage] = []
-
-    func reset() {
-        messages = []
-        history = []
-        input = ""
-    }
-
-    func send(_ raw: String) {
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isStreaming else { return }
-        input = ""
-
-        messages.append(ChatDisplayMessage(role: "user", text: text))
-        let assistantID = appendAssistantBubble()
-        isStreaming = true
-        lastMessageID = assistantID
-
-        Task {
-            defer { isStreaming = false }
-            do {
-                try await LatticeAPI.shared.streamChat(
-                    message: text,
-                    history: history
-                ) { [weak self] event in
-                    self?.handle(event)
-                }
-            } catch {
-                replaceEmptyAssistant(with: ("error", "连接失败: \(error.localizedDescription)"))
-            }
-            recordHistory(userText: text, assistantID: assistantID)
-            lastMessageID = messages.last?.id
-        }
-    }
-
-    private func appendAssistantBubble() -> UUID {
-        let bubble = ChatDisplayMessage(role: "assistant", text: "")
-        messages.append(bubble)
-        return bubble.id
-    }
-
-    private func handle(_ event: ChatEvent) {
-        switch event {
-        case .token(let content):
-            if let idx = messages.lastIndex(where: { $0.role == "assistant" }) {
-                messages[idx].text += content
-                lastMessageID = messages[idx].id
-            }
-        case .toolUse(let tool):
-            let chip = ChatDisplayMessage(role: "tool", text: tool)
-            if let idx = messages.lastIndex(where: { $0.role == "assistant" }) {
-                messages.insert(chip, at: idx)
-            } else {
-                messages.append(chip)
-            }
-            lastMessageID = chip.id
-        case .error(let message):
-            replaceEmptyAssistant(with: ("error", message))
-        case .done:
-            break
-        }
-    }
-
-    /// Fills the trailing empty assistant bubble, or appends, with an error.
-    private func replaceEmptyAssistant(with message: (role: String, text: String)) {
-        if let idx = messages.lastIndex(where: { $0.role == "assistant" && $0.text.isEmpty }) {
-            messages[idx] = ChatDisplayMessage(id: messages[idx].id, role: message.role, text: message.text)
-        } else {
-            messages.append(ChatDisplayMessage(role: message.role, text: message.text))
-        }
-        lastMessageID = messages.last?.id
-    }
-
-    /// Keeps the trailing turns for conversational context.
-    private func recordHistory(userText: String, assistantID: UUID) {
-        let assistantText = messages.first(where: { $0.id == assistantID })?.text ?? ""
-        history.append(ChatAPIMessage(role: "user", content: userText))
-        if !assistantText.isEmpty {
-            history.append(ChatAPIMessage(role: "assistant", content: String(assistantText.suffix(2000))))
-        }
-        if history.count > 20 {
-            history = Array(history.suffix(20))
-        }
     }
 }
