@@ -76,7 +76,6 @@ struct ContentView: View {
                 mainPanel
             }
         }
-        .background(LatticeTheme.background)
         .alert("重命名节点", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -341,7 +340,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 9) {
-            PulseStatusDot(color: statusColor, size: 10)
+            HaloDot(color: statusColor, size: 9)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     Text(statusText)
@@ -372,8 +371,8 @@ struct ContentView: View {
     private var aggregateQuality: (text: String, color: Color)? {
         guard tunnel.status == .connected else { return nil }
         let states = Set(tunnel.peerStates.values)
-        if states.contains("ice-ready") { return ("直连", LatticeTheme.online) }
-        if states.contains("lrp-ready") { return ("经中继", LatticeTheme.relay) }
+        if states.contains("ice-ready") { return ("直连", LatticePalette.online) }
+        if states.contains("lrp-ready") { return ("经中继", LatticePalette.relay) }
         return nil
     }
 
@@ -389,9 +388,9 @@ struct ContentView: View {
 
     private var statusColor: Color {
         switch tunnel.status {
-        case .connected: return LatticeTheme.online
-        case .connecting, .reasserting, .disconnecting: return LatticeTheme.relay
-        default: return LatticeTheme.textDim
+        case .connected: return LatticePalette.online
+        case .connecting, .reasserting, .disconnecting: return LatticePalette.relay
+        default: return .secondary
         }
     }
 
@@ -536,10 +535,10 @@ struct PeerRow: View {
 
     private var qualityLabel: (text: String, color: Color)? {
         switch quality {
-        case "ice-ready": return ("直连", LatticeTheme.online)
-        case "lrp-ready": return ("经中继", LatticeTheme.relay)
-        case "probing", "created": return ("连接中", LatticeTheme.textDim)
-        case "failed": return ("失败", LatticeTheme.blocked)
+        case "ice-ready": return ("直连", .green)
+        case "lrp-ready": return ("经中继", .orange)
+        case "probing", "created": return ("连接中", .secondary)
+        case "failed": return ("失败", .red)
         default: return nil
         }
     }
@@ -554,29 +553,42 @@ struct PeerRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            PulseStatusDot(
-                color: peer.disabled ? LatticeTheme.relay : (peer.online ? LatticeTheme.online : LatticeTheme.textDim),
-                size: 8
-            )
+            HaloDot(color: peer.disabled ? .orange : (peer.online ? .green : Color.secondary.opacity(0.6)))
 
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 5) {
-                    Text(peer.shownName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(LatticeTheme.textBright)
+                    Text(peer.shownName).font(.system(size: 13))
                     if isSelf {
-                        TagBadge(text: "本机", color: LatticeTheme.gradEnd)
+                        Text("本机")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.accentColor)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.accentColor.opacity(0.12))
+                            .cornerRadius(4)
                     }
                     if peer.isAgent {
-                        TagBadge(text: "AI", color: LatticePalette.ai)
+                        Text("AI")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundColor(Color(red: 0.49, green: 0.48, blue: 1.0))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color(red: 0.49, green: 0.48, blue: 1.0).opacity(0.16))
+                            .cornerRadius(4)
                     }
                     if peer.disabled {
-                        TagBadge(text: "已下线", color: LatticeTheme.relay)
+                        Text("已下线")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.orange)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.14))
+                            .cornerRadius(4)
                     }
                 }
                 Text(peer.address)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(LatticeTheme.textDim)
+                    .foregroundColor(.secondary)
             }
 
             Spacer()
@@ -590,17 +602,14 @@ struct PeerRow: View {
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.caption2)
-                    .foregroundColor(copied ? LatticeTheme.online : LatticeTheme.textDim)
+                    .foregroundColor(copied ? .green : .secondary)
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 15)
         .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(hovered ? LatticeTheme.cardHover : Color.clear)
-        )
-        .opacity(peer.disabled ? 0.6 : 1)
+        .rowHover(hovered)
+        .opacity(peer.disabled ? 0.55 : 1)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
         .onTapGesture {

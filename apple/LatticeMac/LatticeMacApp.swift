@@ -42,7 +42,6 @@ struct LatticeMacApp: App {
     var body: some Scene {
         MenuBarExtra {
             MenuBarPanel()
-                .preferredColorScheme(.dark)
         } label: {
             MenuBarGlyph()
         }
@@ -52,14 +51,12 @@ struct LatticeMacApp: App {
             ContentView()
                 .frame(width: 360)
                 .frame(minHeight: 420, maxHeight: 640)
-                .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
 
         Window("Lattice AI 助手", id: "ai") {
             ChatWindow()
-                .preferredColorScheme(.dark)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 900, height: 660)
@@ -77,12 +74,7 @@ struct MenuBarGlyph: View {
     var body: some View {
         Image(systemName: "personalhotspot")
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(
-                color == .secondary
-                    ? AnyShapeStyle(Color.secondary)
-                    : AnyShapeStyle(LinearGradient(colors: [LatticeTheme.gradStart, LatticeTheme.gradEnd],
-                                                   startPoint: .topLeading, endPoint: .bottomTrailing))
-            )
+            .foregroundStyle(color)
             .onAppear {
                 // Deferred: mutating the window scene during view update
                 // trips "Modifying state during view update".
