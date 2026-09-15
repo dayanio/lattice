@@ -47,10 +47,10 @@ const DefaultMTU = 1280
 
 // Engine events reported to the Swift side via EngineDelegate.OnEvent.
 const (
-	EventConnecting    = "connecting"
-	EventConnected     = "connected"
-	EventDisconnected  = "disconnected"
-	eventErrorPrefix   = "error: "
+	EventConnecting   = "connecting"
+	EventConnected    = "connected"
+	EventDisconnected = "disconnected"
+	eventErrorPrefix  = "error: "
 )
 
 // EngineDelegate is implemented on the Swift side; gomobile generates the
@@ -222,13 +222,13 @@ func (e *Engine) run(ctx context.Context) {
 	e.setTUN(t)
 
 	node, err := latticeagent.NewNode(ctx, &latticeagent.NodeConfig{
-		Logger:      agentlog.GetLogger("lattice-ne"),
-		Port:        0,
-		ShowLog:     false,
-		Flags:       agentconfig.Conf,
-		CustomTUN:   t,
-		CustomName:  "lattice",
-		CurrentPeer: peer,
+		Logger:             agentlog.GetLogger("lattice-ne"),
+		Port:               0,
+		ShowLog:            false,
+		Flags:              agentconfig.Conf,
+		CustomTUN:          t,
+		CustomName:         "lattice",
+		CurrentPeer:        peer,
 		ProvisionerFactory: newNEProvisionerFactory(localIP, "lattice"),
 	})
 	if err != nil {

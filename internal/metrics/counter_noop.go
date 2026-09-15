@@ -18,7 +18,7 @@ package metrics
 
 type noopCounter struct{}
 
-func (noopCounter) Inc()            {}
+func (noopCounter) Inc()    {}
 func (noopCounter) Add(int) {}
 
 func newCounter(string) Counter { return noopCounter{} }

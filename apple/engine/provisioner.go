@@ -62,13 +62,13 @@ func (p *neProvisioner) RemoveAllPeers() {
 	p.device.RemoveAllPeers()
 }
 
-func (p *neProvisioner) GetAddress() string    { return p.localIP }
-func (p *neProvisioner) GetIfaceName() string  { return p.ifaceName }
-func (p *neProvisioner) ApplyRoute(_, _, _ string) error { return nil }
-func (p *neProvisioner) ApplyIP(_, _, _ string) error    { return nil }
-func (p *neProvisioner) Name() string          { return "ne" }
+func (p *neProvisioner) GetAddress() string                    { return p.localIP }
+func (p *neProvisioner) GetIfaceName() string                  { return p.ifaceName }
+func (p *neProvisioner) ApplyRoute(_, _, _ string) error       { return nil }
+func (p *neProvisioner) ApplyIP(_, _, _ string) error          { return nil }
+func (p *neProvisioner) Name() string                          { return "ne" }
 func (p *neProvisioner) Provision(_ *infra.FirewallRule) error { return nil }
-func (p *neProvisioner) Cleanup() error        { return nil }
-func (p *neProvisioner) SetupNAT(_ string) error { return nil }
+func (p *neProvisioner) Cleanup() error                        { return nil }
+func (p *neProvisioner) SetupNAT(_ string) error               { return nil }
 
 var _ provision.Provisioner = (*neProvisioner)(nil)
