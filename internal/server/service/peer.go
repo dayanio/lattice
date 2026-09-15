@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 
+	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/store"
@@ -351,6 +352,9 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 	if client == nil && st != nil {
 		// Standalone mode: build netmaps from the DB peer registry.
 		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
+			svc.netmapBuilder.SetRelayURL(advertise)
+		}
 	}
 	return svc
 }

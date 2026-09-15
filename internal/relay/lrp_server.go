@@ -40,7 +40,7 @@ func NewServer(flags *config.Config) *Server {
 		sessionMgr: NewSessionManager(),
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/bolt/v1/upgrade", s.boltUpgradeHandler)
+	mux.HandleFunc("/lrp/v1/upgrade", s.boltUpgradeHandler)
 
 	httpServer := &http.Server{
 		Addr:         flags.Listen,
@@ -71,13 +71,15 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) boltUpgradeHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Header.Get("Upgrade") != "bolt" {
-		http.Error(w, "Expected Bolt Upgrade", http.StatusBadRequest)
+	// Accept both protocol spellings: legacy "bolt" and the current "lrp".
+	upgrade := r.Header.Get("Upgrade")
+	if upgrade != "bolt" && upgrade != "lrp" {
+		http.Error(w, "Expected LRP Upgrade", http.StatusBadRequest)
 		return
 	}
 
 	rc := http.NewResponseController(w)
-	w.Header().Set("Upgrade", "bolt")
+	w.Header().Set("Upgrade", upgrade)
 	w.Header().Set("Connection", "Upgrade")
 	w.WriteHeader(http.StatusSwitchingProtocols)
 

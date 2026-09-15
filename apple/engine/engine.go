@@ -226,7 +226,11 @@ func (e *Engine) run(ctx context.Context) {
 	localIP := *peer.Address
 	if peer.LrpUrl != "" {
 		agentconfig.Conf.EnableLrp = true
-		agentconfig.Conf.RelayURL = peer.LrpUrl
+		// Respect an explicit override (env) — the advertised URL may not be
+		// reachable from this network while an operator-provided one is.
+		if agentconfig.Conf.RelayURL == "" {
+			agentconfig.Conf.RelayURL = peer.LrpUrl
+		}
 	}
 
 	t := newPacketTUN("lattice", e.cfg.MTU)

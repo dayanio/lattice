@@ -65,6 +65,9 @@ type NetmapBuilder struct {
 	identities      store.PeerIdentityRepository
 	routeSelections store.PeerRouteSelectionRepository
 	logger          logr.Logger
+	// relayURL, when set, is stamped into every peer's LrpUrl so agents
+	// fall back to the control-plane relay when ICE cannot traverse.
+	relayURL string
 }
 
 // NewNetmapBuilder returns a builder over the standalone stores.
@@ -77,6 +80,9 @@ func NewNetmapBuilder(peers store.PeerRepository, policies store.PolicyRepositor
 		logger:          logr.Discard(),
 	}
 }
+
+// SetRelayURL stamps relayURL into every netmap peer's LrpUrl.
+func (b *NetmapBuilder) SetRelayURL(url string) { b.relayURL = url }
 
 // BuildForAppID resolves the peer by its agent instance id, verifies the
 // registration token, and builds the peer's netmap message.
@@ -132,6 +138,9 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 			continue // still enrolling; not part of the mesh yet
 		}
 		p := dbToInfraPeer(row)
+		if b.relayURL != "" {
+			p.LrpUrl = b.relayURL
+		}
 		if _, ok := selected[row.ID]; ok {
 			if extra := parseAdvertisedRoutes(row.AdvertisedRoutes); len(extra) > 0 {
 				p.AllowedIPs = strings.Join(append([]string{p.AllowedIPs}, extra...), ",")

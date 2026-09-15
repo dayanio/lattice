@@ -389,7 +389,10 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// LRP is an optional relay channel used as a fallback when ICE traversal
 	// fails (e.g. symmetric NAT on both sides).
 	// LRP is initialized before DefaultBind so node.bind receives a valid LrpClient.
-	if cfg.Flags.EnableLrp {
+	// LRP engages when flagged or when the netmap carries a relay URL —
+	// standalone stamps one into every peer so NATed topologies (containers)
+	// can fall back to the relay without operator flags.
+	if cfg.Flags.EnableLrp || node.current.LrpUrl != "" {
 		if cfg.Flags.RelayQuicURL != "" {
 			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, node.probeFactory.Handle)
 		} else {

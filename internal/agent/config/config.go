@@ -287,6 +287,11 @@ type Config struct {
 	// In K8s scenarios: auto-populated by environment variables like LATTICE_MANAGER_SERVICE_HOST.
 	ServerUrl     string `mapstructure:"server-url"`
 	RelayURL      string `mapstructure:"relay-url"`      // TCP relay connection address, default :6266
+	// RelayAdvertiseURL is the relay address stamped into netmaps for peers
+	// (scheme + host:port as reachable from the peer). Empty disables the
+	// advertisement. Peers behind different networks override it with
+	// LATTICE_RELAY_URL.
+	RelayAdvertiseURL string `mapstructure:"relay-advertise-url"`
 	RelayQuicURL  string `mapstructure:"relay-quic-url"` // QUIC relay connection address, empty=disabled
 	StunServerURL string `mapstructure:"stun-url"`       // STUN server address for ICE NAT traversal
 	PublicIP      string `mapstructure:"public-ip"`
@@ -628,6 +633,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("stun-url", "") // empty: use discovered value from server, or fall back in stunURIs()
 	v.SetDefault("relay-url", ":6266")
+	v.SetDefault("relay-advertise-url", "")
 	v.SetDefault("relay-quic-url", "")
 	v.SetDefault("port", 3478)
 	v.SetDefault("wg-port", 51820)
