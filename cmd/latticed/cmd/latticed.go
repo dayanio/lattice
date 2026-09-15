@@ -26,6 +26,7 @@ import (
 	internalnats "github.com/alatticeio/lattice/internal/agent/nats"
 	"github.com/alatticeio/lattice/internal/db"
 	"github.com/alatticeio/lattice/internal/reconcile"
+	"github.com/alatticeio/lattice/internal/relay"
 	"github.com/alatticeio/lattice/internal/server"
 	"github.com/alatticeio/lattice/internal/server/reconcilers"
 	"github.com/go-logr/logr"
@@ -60,6 +61,18 @@ func runLatticed(flags *config.Config) error {
 
 	// 4. Control plane logic layer: standalone (DB-backed) or K8s controller.
 	if flags.Standalone {
+		// Relay: standalone deployments run the LRP relay in-process so
+		// peers that ICE cannot traverse (containers, double-NAT) still
+		// connect. Advertise it in netmaps unless the operator pinned one.
+		if flags.RelayAdvertiseURL == "" {
+			flags.RelayAdvertiseURL = "127.0.0.1:6266"
+		}
+		relayFlags := *flags
+		relayFlags.Listen = ":6266" // lrper's default relay port
+		g.Go(func() error {
+			rs := relay.NewServer(&relayFlags)
+			return rs.Start()
+		})
 		g.Go(func() error {
 			resync := reconcile.DefaultResyncInterval
 			if flags.ResyncInterval != "" {
