@@ -301,6 +301,7 @@
 				5F0969FD2E4D62BB9AA00717 /* Frameworks */,
 				51C6EC670E7016A031DC9225 /* Embed Foundation Extensions */,
 				E7F47BAFEFDD976924B4449E /* Embed Frameworks */,
+				F5DE891952F2C2749F37A194 /* Restore LatticeCore engine binary */,
 			);
 			buildRules = (
 			);
@@ -380,6 +381,27 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F5DE891952F2C2749F37A194 /* Restore LatticeCore engine binary */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Restore LatticeCore engine binary";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nSRC_BIN=\"${SRCROOT}/Frameworks/MacOS/LatticeCore.xcframework/macos-arm64_x86_64/LatticeCore.framework/Versions/A/LatticeCore\"\nEMB_BIN=\"${BUILT_PRODUCTS_DIR}/LatticeMac.app/Contents/Frameworks/LatticeCore.framework/Versions/A/LatticeCore\"\nif [ -f \"${EMB_BIN}\" ] && ! cmp -s \"${SRC_BIN}\" \"${EMB_BIN}\"; then\n  cp -f \"${SRC_BIN}\" \"${EMB_BIN}\"\n  codesign --force --sign \"${CODE_SIGN_IDENTITY}\" \"${EMB_BIN%/LatticeCore}\"\n  codesign --force --sign \"${CODE_SIGN_IDENTITY}\" --entitlements \"${SRCROOT}/entitlements/LatticeMac.entitlements\" \"${BUILT_PRODUCTS_DIR}/LatticeMac.app\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		0225CDE037F22BF5B8A601E6 /* Sources */ = {
@@ -482,6 +504,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = JN4AC4DDAU;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -652,6 +675,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = JN4AC4DDAU;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
