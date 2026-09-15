@@ -284,21 +284,15 @@ func (e *Engine) run(ctx context.Context) {
 	go e.pollPeerStates(ctx, node)
 	go e.pollRoutes(ctx, node)
 
-	// Deliver decrypted packets to the Swift side.
+	// Deliver decrypted packets to the Swift side. PopOutbound blocks on
+	// the channel, so this goroutine sleeps at the OS level when idle —
+	// a polling variant here wakes the CPU ~1000x/s and NE kills the
+	// process for exceeding the CPU-wake limit within minutes.
 	go func() {
 		for {
 			pkt, ok := t.PopOutbound()
 			if !ok {
-				if ctx.Err() != nil {
-					return
-				}
-				// No packet pending — avoid a hot loop.
-				select {
-				case <-time.After(2 * time.Millisecond):
-				case <-ctx.Done():
-					return
-				}
-				continue
+				return
 			}
 			if err := e.delegate.DeliverPacket(pkt); err != nil {
 				return

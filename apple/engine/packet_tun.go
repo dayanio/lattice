@@ -115,15 +115,14 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 	}
 }
 
-// PopOutbound removes one decrypted packet for Swift delivery.
-// ok is false when no packet is pending or the TUN is closed.
+// PopOutbound removes one decrypted packet for Swift delivery, blocking
+// while the queue is empty (zero CPU wakeups when idle). ok is false when
+// the TUN is closed.
 func (t *packetTUN) PopOutbound() ([]byte, bool) {
 	select {
 	case pkt := <-t.outbound:
 		return pkt, true
 	case <-t.closedCh:
-		return nil, false
-	default:
 		return nil, false
 	}
 }
