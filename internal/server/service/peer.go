@@ -15,7 +15,6 @@
 package service
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -72,9 +71,6 @@ const (
 )
 
 func (p *peerService) UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (*vo.PeerVo, error) {
-	if p.netmapBuilder != nil {
-		return p.updatePeerStandalone(ctx, peerDto)
-	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: peerDto.Namespace, Name: peerDto.Name}, &peer); err != nil {
 		return nil, err
@@ -282,138 +278,9 @@ func (p *peerService) GetNetmap(ctx context.Context, token string, appId string)
 	return p.client.GetNetworkMap(ctx, token, appId)
 }
 
-// registerStandalone is the DB-path registration: validate the workspace
-// enrollment token, resume or create the t_peer record with a per-peer
-// credential, and apply the license node limit for new peers.
-func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
-	if dto.Token == "" {
-		return nil, fmt.Errorf("token is empty")
-	}
-	tok, err := p.store.EnrollmentTokens().GetByToken(ctx, dto.Token)
-	if err != nil {
-		return nil, fmt.Errorf("token not exists")
-	}
-	if time.Now().After(tok.ExpiresAt) {
-		return nil, fmt.Errorf("token is expired")
-	}
-	// Re-registration always resumes, regardless of the usage limit.
-	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
-	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	if existingErr == nil && existing.WorkspaceID != tok.WorkspaceID {
-		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
-	}
-	if existingErr != nil {
-		if limitErr := p.checkNodeLimitStandalone(ctx); limitErr != nil {
-			return nil, limitErr
-		}
-	}
-	if tok.UsageLimit > 0 && existingErr != nil && tok.UsedCount >= tok.UsageLimit {
-		return nil, fmt.Errorf("token usage limit reached (%d)", tok.UsageLimit)
-	}
-	if incErr := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); incErr != nil {
-		return nil, incErr
-	}
-
-	peer := existing
-	if peer == nil {
-		rows, listErr := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
-		if listErr != nil {
-			return nil, listErr
-		}
-		taken := make([]string, 0, len(rows))
-		for _, r := range rows {
-			taken = append(taken, r.Address)
-		}
-		address, allocErr := reconcilers.AllocateAddress(taken)
-		if allocErr != nil {
-			return nil, allocErr
-		}
-	peer = &models.Peer{
-		WorkspaceID: tok.WorkspaceID,
-		Name:        cmp.Or(dto.Name, dto.AppID), // agents may register without a display name
-		AppID:       dto.AppID,
-		Token:       dto.Token, // K8s semantics: the agent polls GetNetMap with its enrollment token
-		Address:     address,
-	}
-	}
-	// The control plane owns the WireGuard keypair (same as the K8s path):
-	// generate on first enrollment, reuse on re-registration.
-	var key wgtypes.Key
-	if peer.PrivateKey != "" {
-		key, err = wgtypes.ParseKey(peer.PrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("parse stored key: %w", err)
-		}
-	} else {
-		key, err = wgtypes.GeneratePrivateKey()
-		if err != nil {
-			return nil, fmt.Errorf("generate key: %w", err)
-		}
-		peer.PrivateKey = key.String()
-	}
-	peer.PublicKey = key.PublicKey().String()
-	peer.Endpoint = dto.Endpoint
-	peer.Hostname = dto.Hostname
-	peer.Platform = dto.Platform
-	if peer.Name == "" {
-		peer.Name = cmp.Or(dto.Name, dto.AppID) // backfill legacy registrations
-	}
-	now := time.Now()
-	peer.LastSeenAt = &now
-	if err := p.store.Peers().Update(ctx, peer); err != nil {
-		return nil, err
-	}
-
-	address := peer.Address
-	node := &infra.Peer{
-		Name:       peer.Name,
-		AppID:      peer.AppID,
-		Address:    &address,
-		Token:      peer.Token,
-		PrivateKey: peer.PrivateKey,
-		PublicKey:  peer.PublicKey,
-		Endpoint:   peer.Endpoint,
-		Hostname:   peer.Hostname,
-		Platform:   peer.Platform,
-		NetworkId:  peer.WorkspaceID,
-	}
-
-	// Look up enforcer_mode from the workspace owner's profile (best effort,
-	// same as the K8s path).
-	if workspace, wsErr := p.store.Workspaces().GetByID(ctx, tok.WorkspaceID); wsErr == nil && workspace.CreatedBy != "" {
-		if profile, profErr := p.store.Profiles().Get(ctx, workspace.CreatedBy); profErr == nil && profile.EnforcerMode != "" {
-			node.EnforcerMode = profile.EnforcerMode
-		}
-	}
-	return node, nil
-}
-
-// checkNodeLimitStandalone counts registered peers across the whole
-// deployment against the license's MaxNodes (Community: no restriction).
-func (p *peerService) checkNodeLimitStandalone(ctx context.Context) error {
-	lic, status, _ := p.licenseVerifier.Verify()
-	if status != license.StatusValid || lic == nil || lic.Limits.MaxNodes <= 0 {
-		return nil
-	}
-	count, err := p.store.Peers().CountAll(ctx)
-	if err != nil {
-		return fmt.Errorf("check node limit: %w", err)
-	}
-	if count >= int64(lic.Limits.MaxNodes) {
-		return fmt.Errorf("node limit reached (%d/%d) — upgrade at https://alattice.io/pro",
-			count, lic.Limits.MaxNodes)
-	}
-	return nil
-}
-
 func (p *peerService) UpdateStatus(_ context.Context, _ int) error { return nil }
 
 func (p *peerService) DisablePeer(ctx context.Context, namespace, name string) error {
-	if p.netmapBuilder != nil {
-		return p.setPeerDisabledStandalone(ctx, name, true)
-	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &peer); err != nil {
 		return err
@@ -428,9 +295,6 @@ func (p *peerService) DisablePeer(ctx context.Context, namespace, name string) e
 }
 
 func (p *peerService) EnablePeer(ctx context.Context, namespace, name string) error {
-	if p.netmapBuilder != nil {
-		return p.setPeerDisabledStandalone(ctx, name, false)
-	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &peer); err != nil {
 		return err
@@ -442,13 +306,6 @@ func (p *peerService) EnablePeer(ctx context.Context, namespace, name string) er
 }
 
 func (p *peerService) DeletePeer(ctx context.Context, namespace, name string) error {
-	if p.netmapBuilder != nil {
-		peer, err := p.standalonePeerByName(ctx, name)
-		if err != nil {
-			return err
-		}
-		return p.store.Peers().Delete(ctx, peer.ID)
-	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &peer); err != nil {
 		return err
@@ -462,73 +319,6 @@ func (p *peerService) DeletePeer(ctx context.Context, namespace, name string) er
 		_ = p.client.Delete(ctx, &cm)
 	}
 	return nil
-}
-
-// standalonePeerByName finds a t_peer row by name within the workspace
-// carried on ctx (standalone mode has no K8s namespace indirection).
-func (p *peerService) standalonePeerByName(ctx context.Context, name string) (*models.Peer, error) {
-	workspaceID, _ := ctx.Value(infra.WorkspaceKey).(string)
-	rows, err := p.store.Peers().ListByWorkspace(ctx, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	for _, r := range rows {
-		if r.Name == name {
-			return r, nil
-		}
-	}
-	return nil, fmt.Errorf("peer %q not found", name)
-}
-
-// updatePeerStandalone applies display-name and label changes to the t_peer
-// registry row. The peer's Name is its WG identity and never changes.
-func (p *peerService) updatePeerStandalone(ctx context.Context, peerDto *dto.PeerDto) (*vo.PeerVo, error) {
-	peer, err := p.standalonePeerByName(ctx, peerDto.Name)
-	if err != nil {
-		return nil, err
-	}
-	if peerDto.DisplayName != "" {
-		peer.Description = peerDto.DisplayName
-	}
-	if peerDto.Labels != nil {
-		filtered := make(map[string]string, len(peerDto.Labels))
-		for k, v := range peerDto.Labels {
-			if v != "" {
-				filtered[k] = v
-			}
-		}
-		if blob, jerr := json.Marshal(filtered); jerr == nil {
-			peer.Labels = string(blob)
-		}
-	}
-	if err := p.store.Peers().Update(ctx, peer); err != nil {
-		return nil, err
-	}
-	var labels map[string]string
-	_ = json.Unmarshal([]byte(peer.Labels), &labels)
-	address := peer.Address
-	return &vo.PeerVo{
-		Name:        peer.Name,
-		DisplayName: peer.Description,
-		AppID:       peer.AppID,
-		Labels:      labels,
-		PublicKey:   peer.PublicKey,
-		Platform:    peer.Platform,
-		Address:     &address,
-		Disabled:    peer.Disabled,
-	}, nil
-}
-
-// setPeerDisabledStandalone toggles the t_peer Disabled flag. Disabled peers
-// are excluded from netmaps by the builder, so agents stop dialing them and
-// their own netmap requests come back empty.
-func (p *peerService) setPeerDisabledStandalone(ctx context.Context, name string, disabled bool) error {
-	peer, err := p.standalonePeerByName(ctx, name)
-	if err != nil {
-		return err
-	}
-	peer.Disabled = disabled
-	return p.store.Peers().Update(ctx, peer)
 }
 
 func (p *peerService) Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
