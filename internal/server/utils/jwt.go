@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/alatticeio/lattice/internal/server/models"
@@ -53,7 +54,16 @@ func GetJWTSecret() []byte {
 
 // GenerateBusinessJWT issues a short-lived JWT (12h) for Dashboard sessions.
 func GenerateBusinessJWT(userID, email, username, systemRole string) (string, error) {
-	return GenerateBusinessJWTWithDuration(userID, email, username, systemRole, 12*time.Hour)
+	// 7 days by default (configurable via LATTICE_TOKEN_TTL seconds): a
+	// self-hosted console whose sign-in silently dies every 12 hours reads
+	// as a broken product. Logout revocation still applies.
+	ttl := 7 * 24 * time.Hour
+	if v := os.Getenv("LATTICE_TOKEN_TTL"); v != "" {
+		if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+			ttl = time.Duration(seconds) * time.Second
+		}
+	}
+	return GenerateBusinessJWTWithDuration(userID, email, username, systemRole, ttl)
 }
 
 // GenerateBusinessJWTWithDuration issues a JWT with an explicit lifetime.

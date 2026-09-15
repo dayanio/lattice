@@ -340,6 +340,7 @@ final class LatticeAPI {
         guard let t = decoded.data?.token, !t.isEmpty else { throw LatticeAPIError.server(decoded.msg ?? "登录失败") }
         UserDefaults.standard.set(t, forKey: "lattice.authToken")
         UserDefaults.standard.set(user, forKey: "lattice.adminUser")
+        KeychainStore.set(pass, forKey: "lattice.password")
         UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
         try await resolveWorkspaceIfNeeded()
     }
@@ -365,10 +366,8 @@ final class LatticeAPI {
     }
 
     @discardableResult
-    private func request(method: String, path: String, body: [String: Any]? = nil) async throws -> Data {
-        guard let url = URL(string: baseURL + path) else {
-            throw URLError(.badURL)
-        }
+    private func request(method: String, path: String, body: [String: Any]? = nil, allowRelogin: Bool = true) async throws -> Data {
+        guard let url = URL(string: baseURL + path) else { throw URLError(.badURL) }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -382,10 +381,31 @@ final class LatticeAPI {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw LatticeAPIError.server(Self.serverMessage(from: data, fallback: "HTTP \( (response as? HTTPURLResponse)?.statusCode ?? -1)"))
+        guard let http = response as? HTTPURLResponse else {
+            throw LatticeAPIError.server("无响应")
+        }
+        // Management tokens expire (7d TTL); silently re-login once from the
+        // Keychain-stored credentials and retry instead of failing the call.
+        if http.statusCode == 401, allowRelogin, await relogin() {
+            return try await request(method: method, path: path, body: body, allowRelogin: false)
+        }
+        guard http.statusCode == 200 else {
+            throw LatticeAPIError.server(Self.serverMessage(from: data, fallback: "HTTP \(http.statusCode)"))
         }
         return data
+    }
+
+    /// Silent re-login from the Keychain-stored credentials when the
+    /// management token expires.
+    private func relogin() async -> Bool {
+        guard let user = UserDefaults.standard.string(forKey: "lattice.adminUser"),
+              let pass = KeychainStore.get("lattice.password") else { return false }
+        do {
+            _ = try await login(user: user, pass: pass)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static func serverMessage(from data: Data, fallback: String) -> String {
