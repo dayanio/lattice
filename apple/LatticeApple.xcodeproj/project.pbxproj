@@ -22,6 +22,7 @@
 		5460D39AA904935F95C98BAB /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		5539E3D47E1D8B70496BE9F6 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */; };
 		58B765388DE135282E31A3E0 /* LatticeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A087BE65958F460FCF0CC468 /* LatticeApp.swift */; };
+		5FBC42897391D5809883E591 /* LatticeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95A0BFD0DAF055A494B0C02 /* LatticeTheme.swift */; };
 		60BD6805501BB1BEE557786E /* PeerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA822E36FCF84A5FB4C48F09 /* PeerDetailView.swift */; };
 		6834D56CEF449832FDD7C285 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA6CAD40A966A23C8C9272E9 /* ContentView.swift */; };
 		6A2DC249F454BC91FB65FC4A /* LatticeMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */; };
@@ -124,6 +125,7 @@
 		E73ACB07B695A778DE7339C3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		EA6CAD40A966A23C8C9272E9 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F13B3A4F2C310EAA9B9C1E7F /* LatticeMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LatticeMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F95A0BFD0DAF055A494B0C02 /* LatticeTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeTheme.swift; sourceTree = "<group>"; };
 		FA822E36FCF84A5FB4C48F09 /* PeerDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerDetailView.swift; sourceTree = "<group>"; };
 		FE4CF185A86A9E5B9DCDB935 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -230,6 +232,7 @@
 				E73ACB07B695A778DE7339C3 /* Info.plist */,
 				69C9BB4813C7BE0DDF1AEDF0 /* KeychainStore.swift */,
 				C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */,
+				F95A0BFD0DAF055A494B0C02 /* LatticeTheme.swift */,
 				B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */,
 				FA822E36FCF84A5FB4C48F09 /* PeerDetailView.swift */,
 				D651343557480E291D4C242C /* QRScanner.swift */,
@@ -434,6 +437,7 @@
 				2B1375F9CCA6405BA20B101F /* DesignComponents.swift in Sources */,
 				0AD73FCA8E7C43D50ECBBD77 /* KeychainStore.swift in Sources */,
 				6A2DC249F454BC91FB65FC4A /* LatticeMacApp.swift in Sources */,
+				5FBC42897391D5809883E591 /* LatticeTheme.swift in Sources */,
 				A8FEB6A60B7D5B4254818DCA /* NetworkPages.swift in Sources */,
 				60BD6805501BB1BEE557786E /* PeerDetailView.swift in Sources */,
 				0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */,
