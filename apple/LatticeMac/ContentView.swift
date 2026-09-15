@@ -215,6 +215,7 @@ struct ContentView: View {
     private var deviceList: some View {
         ScrollView {
             VStack(spacing: 0) {
+                SectionHead(title: "设备", trailing: "\(filteredPeers.count) 台在线")
                 if !inPanel, peers.count >= 4 {
                     PanelSearchField(text: $searchQuery)
                 }
@@ -370,8 +371,8 @@ struct ContentView: View {
     private var aggregateQuality: (text: String, color: Color)? {
         guard tunnel.status == .connected else { return nil }
         let states = Set(tunnel.peerStates.values)
-        if states.contains("ice-ready") { return ("直连", .green) }
-        if states.contains("lrp-ready") { return ("经中继", .orange) }
+        if states.contains("ice-ready") { return ("直连", LatticePalette.online) }
+        if states.contains("lrp-ready") { return ("经中继", LatticePalette.relay) }
         return nil
     }
 
@@ -387,10 +388,9 @@ struct ContentView: View {
 
     private var statusColor: Color {
         switch tunnel.status {
-        case .connected: return .green
-        case .connecting, .reasserting: return .orange
-        case .disconnecting: return .orange
-        default: return .gray
+        case .connected: return LatticePalette.online
+        case .connecting, .reasserting, .disconnecting: return LatticePalette.relay
+        default: return .secondary
         }
     }
 
@@ -608,10 +608,7 @@ struct PeerRow: View {
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(hovered ? 0.05 : 0))
-        )
+        .rowHover(hovered)
         .opacity(peer.disabled ? 0.55 : 1)
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
