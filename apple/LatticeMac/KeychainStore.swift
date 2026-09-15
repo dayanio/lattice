@@ -21,6 +21,7 @@ enum KeychainStore {
     static func set(_ value: String, forKey key: String) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "io.lattice.mac",
             kSecAttrAccount as String: key,
         ]
         SecItemDelete(query as CFDictionary)
@@ -31,6 +32,7 @@ enum KeychainStore {
     static func get(_ key: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "io.lattice.mac",
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -43,6 +45,7 @@ enum KeychainStore {
 
     static func delete(_ key: String) {
         SecItemDelete([kSecClass as String: kSecClassGenericPassword,
+                       kSecAttrService as String: "io.lattice.mac",
                        kSecAttrAccount as String: key] as CFDictionary)
     }
 }

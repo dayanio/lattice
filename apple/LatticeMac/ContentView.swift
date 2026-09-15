@@ -475,7 +475,14 @@ struct ContentView: View {
             }
             peers = loaded
         } catch {
-            errorMsg = "加载失败: \(error.localizedDescription)"
+            let description = error.localizedDescription
+            if description.contains("Invalid token") || description.contains("log in first")
+                || description.contains("token has been revoked") {
+                errorMsg = "登录已过期"
+                showingSettings = true
+            } else {
+                errorMsg = "加载失败: \(description)"
+            }
         }
     }
 
