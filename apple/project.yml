@@ -15,6 +15,10 @@ settings:
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: JN4AC4DDAU
     CODE_SIGN_IDENTITY: "Apple Development"
+    # Xcode 26's swbuild debug-dylib splitting turns the embedded gomobile
+    # framework binary into a stub pointing into the build temp dir, which is
+    # deleted after the session — the extension then crashes at launch.
+    ENABLE_DEBUG_DYLIB: NO
 
 targets:
   Lattice:
@@ -61,6 +65,21 @@ targets:
         CODE_SIGN_ENTITLEMENTS: entitlements/LatticeMac.entitlements
         CODE_SIGN_STYLE: Automatic
         COMBINE_HIDPI_IMAGES: YES
+    postBuildScripts:
+      # Xcode 26's swbuild engine stubs the embedded gomobile framework binary
+      # (points it into the build temp dir, deleted after the session) so a
+      # rebuilt app crashes its tunnel at launch. Restore the real binary and
+      # re-seal signatures after every build.
+      - name: Restore LatticeCore engine binary
+        script: |
+          set -e
+          SRC_BIN="${SRCROOT}/Frameworks/MacOS/LatticeCore.xcframework/macos-arm64_x86_64/LatticeCore.framework/Versions/A/LatticeCore"
+          EMB_BIN="${BUILT_PRODUCTS_DIR}/LatticeMac.app/Contents/Frameworks/LatticeCore.framework/Versions/A/LatticeCore"
+          if [ -f "${EMB_BIN}" ] && ! cmp -s "${SRC_BIN}" "${EMB_BIN}"; then
+            cp -f "${SRC_BIN}" "${EMB_BIN}"
+            codesign --force --sign "${CODE_SIGN_IDENTITY}" "${EMB_BIN%/LatticeCore}"
+            codesign --force --sign "${CODE_SIGN_IDENTITY}" --entitlements "${SRCROOT}/entitlements/LatticeMac.entitlements" "${BUILT_PRODUCTS_DIR}/LatticeMac.app"
+          fi
 
   LatticeTunnel:
     type: app-extension
