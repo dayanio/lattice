@@ -81,12 +81,8 @@ struct OverviewView: View {
                             }
                             .padding(.top, 30)
                         } else {
-                            if !favoritePeers.isEmpty {
-                                SectionHead(title: "⭐ 收藏")
-                                ForEach(favoritePeers) { peerRow($0) }
-                            }
-                            SectionHead(title: "全部设备")
-                            ForEach(otherPeers) { peerRow($0) }
+                            deviceGroup(title: "⭐ 收藏", peers: favoritePeers)
+                            deviceGroup(title: "全部设备", peers: otherPeers)
                         }
                     }
                 }
@@ -212,30 +208,53 @@ struct OverviewView: View {
         .padding(.top, 6)
     }
 
+    /// 圆角容器卡：一组设备行共用一张卡，与 hero 卡同一设计语言。
+    private func deviceGroup(title: String, peers: [PeerNode]) -> some View {
+        VStack(spacing: 0) {
+            SectionHead(title: title)
+                .padding(.horizontal, 4)
+            ForEach(peers) { peerRow($0) }
+        }
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.primary.opacity(0.04))
+        )
+        .padding(.horizontal, 15)
+    }
+
     private func peerRow(_ peer: PeerNode) -> some View {
         NavigationLink {
             PeerDetailView(peer: peer, quality: tunnel.peerStates[peer.name])
         } label: {
-            HStack(spacing: 10) {
-                PlatformIcon(os: peer.os)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(peer.shownName).font(.system(.body))
-                    Text(peer.address)
-                        .font(.system(.caption, design: .monospaced))
-                        .foregroundColor(.secondary)
+            HStack(spacing: 12) {
+                Group {
+                    if peer.os.isEmpty {
+                        MonogramAvatar(name: peer.shownName)
+                    } else {
+                        PlatformIcon(os: peer.os)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(peer.shownName).font(.system(.body, weight: .medium))
+                    HStack(spacing: 6) {
+                        Text(peer.address)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        if let quality = tunnel.peerStates[peer.name],
+                           let pill = PeerActions.qualityPill(quality) {
+                            QualityPill(text: pill.text, color: pill.color)
+                        }
+                    }
                 }
                 Spacer()
-                if let quality = tunnel.peerStates[peer.name],
-                   let pill = PeerActions.qualityPill(quality) {
-                    QualityPill(text: pill.text, color: pill.color)
-                }
-                HaloDot(color: peer.online ? LatticePalette.online : .secondary)
+                HaloDot(color: peer.disabled ? .secondary : (peer.online ? LatticePalette.online : .secondary), size: 8)
                 FavoriteStar(isOn: favorites.isFavorite(peer.name)) {
                     favorites.toggle(peer.name)
                 }
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

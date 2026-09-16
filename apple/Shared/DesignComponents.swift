@@ -363,6 +363,43 @@ struct ConnectionHero: View {
     }
 }
 
+/// 首字母彩色头像：os 数据缺失时的 peer 头像。颜色由名称哈希决定，
+/// 同一设备永远同色，一眼可辨。
+struct MonogramAvatar: View {
+    let name: String
+    var size: CGFloat = 30
+
+    private static let palette: [(Color, Color)] = [
+        (Color(red: 0.04, green: 0.52, blue: 1.00), Color(red: 0.30, green: 0.69, blue: 1.00)),
+        (Color(red: 0.13, green: 0.77, blue: 0.37), Color(red: 0.36, green: 0.85, blue: 0.55)),
+        (Color(red: 0.96, green: 0.63, blue: 0.18), Color(red: 1.00, green: 0.78, blue: 0.40)),
+        (Color(red: 0.49, green: 0.48, blue: 1.00), Color(red: 0.68, green: 0.67, blue: 1.00)),
+        (Color(red: 0.94, green: 0.35, blue: 0.42), Color(red: 1.00, green: 0.55, blue: 0.58)),
+        (Color(red: 0.20, green: 0.68, blue: 0.68), Color(red: 0.40, green: 0.82, blue: 0.82)),
+    ]
+
+    private var glyph: String {
+        let base = name.isEmpty ? "?" : name
+        return String(base.prefix(1)).uppercased()
+    }
+
+    private var gradient: LinearGradient {
+        let idx = abs(name.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }) % Self.palette.count
+        let pair = Self.palette[idx]
+        return LinearGradient(colors: [pair.1, pair.0], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+
+    var body: some View {
+        ZStack {
+            Circle().fill(gradient)
+            Text(glyph)
+                .font(.system(size: size * 0.44, weight: .bold, design: .rounded))
+                .foregroundColor(.white)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 /// peer 平台图标：os 字符串（前缀、不区分大小写）→ SF Symbol。
 struct PlatformIcon: View {
     let os: String
