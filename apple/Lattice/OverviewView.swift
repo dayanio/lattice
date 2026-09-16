@@ -86,16 +86,16 @@ struct OverviewView: View {
                 get: { renamingPeer != nil },
                 set: { if !$0 { renamingPeer = nil } }
             )) {
-                TextField("新名称", text: $renameText)
-                Button("确定") {
-                    if let peer = renamingPeer {
+                if let peer = renamingPeer {
+                    TextField("新名称", text: $renameText)
+                    Button("确定") {
                         Task {
                             try? await PeerActions.rename(peer, to: renameText)
                             await loadPeers()
                         }
                     }
+                    Button("取消", role: .cancel) {}
                 }
-                Button("取消", role: .cancel) {}
             }
             .confirmationDialog(
                 "停用 \"\(disablingPeer?.shownName ?? "")\"？",
@@ -105,15 +105,15 @@ struct OverviewView: View {
                 ),
                 titleVisibility: .visible
             ) {
-                Button("停用", role: .destructive) {
-                    if let peer = disablingPeer {
+                if let peer = disablingPeer {
+                    Button("停用", role: .destructive) {
                         Task {
                             try? await PeerActions.setDisabled(peer, true)
                             await loadPeers()
                         }
                     }
+                    Button("取消", role: .cancel) {}
                 }
-                Button("取消", role: .cancel) {}
             }
         }
     }
