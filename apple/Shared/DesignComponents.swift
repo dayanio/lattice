@@ -245,81 +245,32 @@ struct ConnectionHero: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            ZStack {
-                if state == .connecting {
-                    Capsule()
-                        .stroke(heroColor, lineWidth: 2)
-                        .frame(width: 216, height: 104)
-                        .scaleEffect(breathe ? 1.08 : 1.0)
-                        .opacity(breathe ? 0.12 : 0.55)
-                }
-                Capsule()
-                    .fill(ovalFill)
-                    .frame(width: 200, height: 96)
-                HStack(spacing: 14) {
-                    HaloDot(color: isOn ? .white : heroColor, size: 18)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(headline)
-                            .font(.system(size: 22, weight: .bold))
-                            .foregroundColor(isOn ? .white : .primary)
-                        if isOn, let since = connectedSince {
-                            TimelineView(.periodic(from: .now, by: 1)) { context in
-                                Text(timerText(at: context.date))
-                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                    .foregroundColor(.white.opacity(0.85))
-                            }
-                        } else if state == .connecting {
-                            Text("正在建立隧道")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
+            if isOn {
+                connectedBar
+            } else {
+                centeredOval
+                // 非连接态的信息行：质量 + 本机地址（固定高度，避免跳动）。
+                HStack(spacing: 8) {
+                    if !aggregateText.isEmpty {
+                        QualityPill(
+                            text: aggregateText,
+                            color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
+                        )
+                    }
+                    if !selfAddress.isEmpty {
+                        Text("本机 \(selfAddress)")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundColor(.secondary)
                     }
                 }
-            }
-            .frame(width: 200, height: 96)
-            .contentShape(Capsule())
-            .accessibilityAddTraits(.isButton)
-            .accessibilityLabel(state == .connected ? "断开连接" : "连接网络")
-            .accessibilityHint("切换 VPN 连接状态")
-            .onTapGesture { onToggle() }
-            .onChange(of: state) { _, newState in
-                breathe = false
-                if newState == .connecting {
-                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                        breathe = true
-                    }
+                .frame(minHeight: 20)
+                if !errorText.isEmpty {
+                    Text(errorText)
+                        .font(.caption)
+                        .foregroundColor(LatticePalette.blocked)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
                 }
-            }
-            .onAppear {
-                if state == .connecting {
-                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                        breathe = true
-                    }
-                }
-            }
-
-            // 状态信息行：质量 + 本机地址（保持固定高度，避免状态切换跳动）。
-            HStack(spacing: 8) {
-                if !aggregateText.isEmpty {
-                    QualityPill(
-                        text: aggregateText,
-                        color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
-                    )
-                }
-                if !selfAddress.isEmpty {
-                    Text("本机 \(selfAddress)")
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(.secondary)
-                }
-            }
-            .frame(minHeight: 20)
-
-            if !errorText.isEmpty {
-                Text(errorText)
-                    .font(.caption)
-                    .foregroundColor(LatticePalette.blocked)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 8)
             }
         }
         .frame(maxWidth: .infinity)
@@ -330,6 +281,100 @@ struct ConnectionHero: View {
                 .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
         )
         .padding(.horizontal, 15)
+    }
+
+    /// 已连接：全宽渐变横幅，左=状态与计时，右=质量与本机地址。
+    private var connectedBar: some View {
+        HStack(spacing: 14) {
+            HaloDot(color: .white, size: 18)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("已连接")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+                if let since = connectedSince {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(timerText(at: context.date))
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.85))
+                    }
+                }
+            }
+            Spacer()
+            VStack(alignment: .trailing, spacing: 5) {
+                if !aggregateText.isEmpty {
+                    // 绿底上用白色胶囊，最易读。
+                    QualityPill(text: aggregateText, color: .white)
+                }
+                if !selfAddress.isEmpty {
+                    Text(selfAddress)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.9))
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: .infinity, minHeight: 92)
+        .background(
+            Capsule().fill(LinearGradient(
+                colors: [LatticePalette.online, LatticePalette.online.opacity(0.72)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        )
+        .contentShape(Capsule())
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("断开连接")
+        .accessibilityHint("点击断开 VPN")
+        .onTapGesture { onToggle() }
+    }
+
+    /// 未连接/连接中：居中椭圆（呼吸环动画只在连接中出现）。
+    private var centeredOval: some View {
+        ZStack {
+            if state == .connecting {
+                Capsule()
+                    .stroke(heroColor, lineWidth: 2)
+                    .frame(width: 216, height: 104)
+                    .scaleEffect(breathe ? 1.08 : 1.0)
+                    .opacity(breathe ? 0.12 : 0.55)
+            }
+            Capsule()
+                .fill(ovalFill)
+                .frame(width: 200, height: 96)
+            HStack(spacing: 14) {
+                HaloDot(color: heroColor, size: 18)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(headline)
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundColor(.primary)
+                    if state == .connecting {
+                        Text("正在建立隧道")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .frame(width: 200, height: 96)
+        .contentShape(Capsule())
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(state == .connected ? "断开连接" : "连接网络")
+        .accessibilityHint("切换 VPN 连接状态")
+        .onTapGesture { onToggle() }
+        .onChange(of: state) { _, newState in
+            breathe = false
+            if newState == .connecting {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    breathe = true
+                }
+            }
+        }
+        .onAppear {
+            if state == .connecting {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    breathe = true
+                }
+            }
+        }
     }
 
     private var isOn: Bool { state == .connected }
