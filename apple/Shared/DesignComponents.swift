@@ -246,7 +246,7 @@ struct ConnectionHero: View {
     var body: some View {
         VStack(spacing: 14) {
             if isOn {
-                connectedBar
+                connectedContent
             } else {
                 centeredOval
                 // 非连接态的信息行：质量 + 本机地址（固定高度，避免跳动）。
@@ -277,14 +277,25 @@ struct ConnectionHero: View {
         .padding(.vertical, 20)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(.regularMaterial)
+                .fill(cardFill)
                 .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
         )
         .padding(.horizontal, 15)
     }
 
-    /// 已连接：全宽渐变横幅，左=状态与计时，右=质量与本机地址。
-    private var connectedBar: some View {
+    /// 连接时的卡片填充：整卡绿色渐变，不再内嵌胶囊。
+    private var cardFill: AnyShapeStyle {
+        if isOn {
+            return AnyShapeStyle(LinearGradient(
+                colors: [LatticePalette.online, LatticePalette.online.opacity(0.72)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            ))
+        }
+        return AnyShapeStyle(.regularMaterial)
+    }
+
+    /// 已连接：左右布局，左=状态与计时，右=质量与本机地址。
+    private var connectedContent: some View {
         HStack(spacing: 14) {
             HaloDot(color: .white, size: 18)
             VStack(alignment: .leading, spacing: 3) {
@@ -313,14 +324,8 @@ struct ConnectionHero: View {
             }
         }
         .padding(.horizontal, 20)
-        .frame(maxWidth: .infinity, minHeight: 92)
-        .background(
-            Capsule().fill(LinearGradient(
-                colors: [LatticePalette.online, LatticePalette.online.opacity(0.72)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            ))
-        )
-        .contentShape(Capsule())
+        .frame(minHeight: 92)
+        .contentShape(Rectangle())
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("断开连接")
         .accessibilityHint("点击断开 VPN")

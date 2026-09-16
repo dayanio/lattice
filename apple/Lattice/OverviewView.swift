@@ -248,6 +248,9 @@ struct OverviewView: View {
                     }
                 }
                 Spacer()
+                if peer.name == selfName {
+                    TagBadge(text: "本机", color: LatticePalette.ai)
+                }
                 HaloDot(color: peer.disabled ? .secondary : (peer.online ? LatticePalette.online : .secondary), size: 8)
                 FavoriteStar(isOn: favorites.isFavorite(peer.name)) {
                     favorites.toggle(peer.name)
