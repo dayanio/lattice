@@ -30,6 +30,7 @@
 		6830D61E55C183794559B204 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 239FC0A7F79E63F4E5BF729B /* TunnelManager.swift */; };
 		6A2DC249F454BC91FB65FC4A /* LatticeMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */; };
 		70634B99C412A1430F456CB2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */; };
+		76F9EAF841E4D1149CEBAC0C /* JoinView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2B465D56E6931B309FAEF61 /* JoinView.swift */; };
 		7B013D63F49DB80AF2D745ED /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 		7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B18389E61765B68DB7CF7D /* DesignComponents.swift */; };
 		868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 960BD20764F178AA8EE601C2 /* ExitNodeView.swift */; };
@@ -132,6 +133,7 @@
 		8D60E634E669109A674D97AC /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		960BD20764F178AA8EE601C2 /* ExitNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitNodeView.swift; sourceTree = "<group>"; };
 		A087BE65958F460FCF0CC468 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
+		A2B465D56E6931B309FAEF61 /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
 		A40878B1329E02B2C70EB9E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkPages.swift; sourceTree = "<group>"; };
 		C0665648C57C97A61F3F0A51 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
@@ -185,6 +187,7 @@
 			isa = PBXGroup;
 			children = (
 				960BD20764F178AA8EE601C2 /* ExitNodeView.swift */,
+				A2B465D56E6931B309FAEF61 /* JoinView.swift */,
 				A087BE65958F460FCF0CC468 /* LatticeApp.swift */,
 				293355084BBA1A64A7029EB5 /* PeerDetailView.swift */,
 				3A96A5BA984924A4BE08A5B2 /* QRScannerView.swift */,
@@ -443,6 +446,7 @@
 				7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */,
 				868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */,
 				FCF81D8DC792F9C1BC8000EF /* JoinPayload.swift in Sources */,
+				76F9EAF841E4D1149CEBAC0C /* JoinView.swift in Sources */,
 				00140F5ED99BBE357CC1F951 /* KeychainStore.swift in Sources */,
 				616890BBE0D3865DDF79A5E8 /* LatticeAPI.swift in Sources */,
 				58B765388DE135282E31A3E0 /* LatticeApp.swift in Sources */,
@@ -594,6 +598,7 @@
 					"\"Frameworks/iOS\"",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Lattice 需要使用摄像头扫描入网二维码";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -637,6 +642,7 @@
 					"\"Frameworks/iOS\"",
 				);
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Lattice 需要使用摄像头扫描入网二维码";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
