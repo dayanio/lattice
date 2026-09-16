@@ -16,15 +16,21 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/store"
 	"github.com/alatticeio/lattice/internal/license"
 	"github.com/alatticeio/lattice/internal/server/dto"
+	"github.com/alatticeio/lattice/internal/server/models"
 	managementnats "github.com/alatticeio/lattice/internal/server/nats"
+	"github.com/alatticeio/lattice/internal/server/reconcilers"
 	"github.com/alatticeio/lattice/internal/server/resource"
 	"github.com/alatticeio/lattice/internal/server/vo"
+	"gorm.io/gorm"
 	"strings"
 	"time"
 
@@ -63,6 +69,9 @@ type peerService struct {
 	store           store.Store
 	presence        *managementnats.NodePresenceStore
 	licenseVerifier license.Verifier
+	// netmapBuilder serves netmaps from the standalone DB registry when
+	// no K8s client exists (client == nil).
+	netmapBuilder *reconcilers.NetmapBuilder
 }
 
 const (
@@ -265,17 +274,136 @@ func (p *peerService) CreateToken(ctx context.Context, tokenDto *dto.TokenDto) (
 }
 
 func NewPeerService(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier) PeerService {
-	return &peerService{
+	svc := &peerService{
 		client:          client,
 		logger:          log.GetLogger("peer-service"),
 		store:           st,
 		presence:        presence,
 		licenseVerifier: verifier,
 	}
+	if client == nil && st != nil {
+		// Standalone mode: build netmaps from the DB peer registry.
+		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities())
+	}
+	return svc
 }
 
 func (p *peerService) GetNetmap(ctx context.Context, token string, appId string) (*infra.Message, error) {
+	if p.netmapBuilder != nil {
+		return p.netmapBuilder.BuildForAppID(ctx, appId, token)
+	}
 	return p.client.GetNetworkMap(ctx, token, appId)
+}
+
+// registerStandalone is the DB-path registration: validate the workspace
+// enrollment token, resume or create the t_peer record with a per-peer
+// credential, and apply the license node limit for new peers.
+func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
+	if dto.Token == "" {
+		return nil, fmt.Errorf("token is empty")
+	}
+	tok, err := p.store.EnrollmentTokens().GetByToken(ctx, dto.Token)
+	if err != nil {
+		return nil, fmt.Errorf("token not exists")
+	}
+	if time.Now().After(tok.ExpiresAt) {
+		return nil, fmt.Errorf("token is expired")
+	}
+	// Re-registration always resumes, regardless of the usage limit.
+	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
+	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if existingErr == nil && existing.WorkspaceID != tok.WorkspaceID {
+		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
+	}
+	if existingErr != nil {
+		if err := p.checkNodeLimitStandalone(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if tok.UsageLimit > 0 && existingErr != nil && tok.UsedCount >= tok.UsageLimit {
+		return nil, fmt.Errorf("token usage limit reached (%d)", tok.UsageLimit)
+	}
+	if err := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); err != nil {
+		return nil, err
+	}
+
+	peer := existing
+	if peer == nil {
+		rows, err := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
+		if err != nil {
+			return nil, err
+		}
+		taken := make([]string, 0, len(rows))
+		for _, r := range rows {
+			taken = append(taken, r.Address)
+		}
+		address, err := reconcilers.AllocateAddress(taken)
+		if err != nil {
+			return nil, err
+		}
+		credential, err := randomToken()
+		if err != nil {
+			return nil, err
+		}
+		peer = &models.Peer{
+			WorkspaceID: tok.WorkspaceID,
+			Name:        dto.Name,
+			AppID:       dto.AppID,
+			Token:       credential,
+			Address:     address,
+		}
+	}
+	peer.PublicKey = dto.PublicKey
+	peer.Endpoint = dto.Endpoint
+	peer.Hostname = dto.Hostname
+	peer.Platform = dto.Platform
+	now := time.Now()
+	peer.LastSeenAt = &now
+	if err := p.store.Peers().Update(ctx, peer); err != nil {
+		return nil, err
+	}
+
+	address := peer.Address
+	node := &infra.Peer{
+		Name:      peer.Name,
+		AppID:     peer.AppID,
+		Address:   &address,
+		Token:     peer.Token,
+		PublicKey: peer.PublicKey,
+		Endpoint:  peer.Endpoint,
+		Hostname:  peer.Hostname,
+		Platform:  peer.Platform,
+		NetworkId: peer.WorkspaceID,
+	}
+
+	// Look up enforcer_mode from the workspace owner's profile (best effort,
+	// same as the K8s path).
+	if workspace, wsErr := p.store.Workspaces().GetByID(ctx, tok.WorkspaceID); wsErr == nil && workspace.CreatedBy != "" {
+		if profile, profErr := p.store.Profiles().Get(ctx, workspace.CreatedBy); profErr == nil && profile.EnforcerMode != "" {
+			node.EnforcerMode = profile.EnforcerMode
+		}
+	}
+	return node, nil
+}
+
+// checkNodeLimitStandalone counts registered peers across the whole
+// deployment against the license's MaxNodes (Community: no restriction).
+func (p *peerService) checkNodeLimitStandalone(ctx context.Context) error {
+	lic, status, _ := p.licenseVerifier.Verify()
+	if status != license.StatusValid || lic == nil || lic.Limits.MaxNodes <= 0 {
+		return nil
+	}
+	count, err := p.store.Peers().CountAll(ctx)
+	if err != nil {
+		return fmt.Errorf("check node limit: %w", err)
+	}
+	if count >= int64(lic.Limits.MaxNodes) {
+		return fmt.Errorf("node limit reached (%d/%d) — upgrade at https://alattice.io/pro",
+			count, lic.Limits.MaxNodes)
+	}
+	return nil
 }
 
 func (p *peerService) UpdateStatus(_ context.Context, _ int) error { return nil }
@@ -323,6 +451,10 @@ func (p *peerService) DeletePeer(ctx context.Context, namespace, name string) er
 
 func (p *peerService) Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
 	p.logger.Info("Received peer", "info", dto)
+
+	if p.netmapBuilder != nil {
+		return p.registerStandalone(ctx, dto)
+	}
 
 	tokenValid, token, err := p.checkToken(ctx, dto.Token)
 	if err != nil {
@@ -480,4 +612,14 @@ func (p *peerService) ensureDefaultNetwork(ctx context.Context, nsName string) e
 		}
 	}
 	return nil
+}
+
+// randomToken generates a 256-bit random credential for a newly
+// registered peer.
+func randomToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate peer token: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }

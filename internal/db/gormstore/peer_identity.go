@@ -42,3 +42,23 @@ func (r *peerIdentityRepo) Delete(ctx context.Context, id string) error {
 }
 
 var _ store.PeerIdentityRepository = (*peerIdentityRepo)(nil)
+
+// ListIDs enumerates every identity primary key (soft-deleted rows excluded).
+func (r *peerIdentityRepo) ListIDs(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.DB().WithContext(ctx).Model(&models.PeerIdentity{}).Pluck("id", &ids).Error
+	return ids, err
+}
+
+// ClearGracePeriod zeroes the previous-device binding. Map-based Updates
+// are required because struct-based Updates skip zero values, which would
+// silently keep the old binding in place.
+func (r *peerIdentityRepo) ClearGracePeriod(ctx context.Context, id string) error {
+	return r.DB().WithContext(ctx).Model(&models.PeerIdentity{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"previous_peer_ref":       "",
+			"previous_peer_ip":        "",
+			"grace_period_expires_at": nil,
+		}).Error
+}

@@ -2,6 +2,7 @@ package gormstore
 
 import (
 	"context"
+	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/store"
 	"github.com/alatticeio/lattice/internal/server/models"
@@ -84,4 +85,30 @@ func (r *policyRepo) Delete(ctx context.Context, workspaceID, name string) error
 	return r.db.WithContext(ctx).
 		Where("workspace_id = ? AND name = ?", workspaceID, name).
 		Delete(&models.Policy{}).Error
+}
+
+// UpdateStatus persists only the status column.
+func (r *policyRepo) UpdateStatus(ctx context.Context, id string, status models.PolicyStatus) error {
+	return r.db.WithContext(ctx).Model(&models.Policy{}).
+		Where("id = ?", id).
+		Update("status", status).Error
+}
+
+// ListIDsActiveWithExpiry enumerates active policies carrying a TTL.
+func (r *policyRepo) ListIDsActiveWithExpiry(ctx context.Context) ([]string, error) {
+	var ids []string
+	err := r.db.WithContext(ctx).Model(&models.Policy{}).
+		Where("status = ? AND expires_at IS NOT NULL", models.PolicyStatusActive).
+		Pluck("id", &ids).Error
+	return ids, err
+}
+
+// ListActiveByWorkspace returns active policies whose TTL has not elapsed.
+func (r *policyRepo) ListActiveByWorkspace(ctx context.Context, workspaceID string) ([]*models.Policy, error) {
+	var rows []*models.Policy
+	err := r.db.WithContext(ctx).
+		Where("workspace_id = ? AND status = ? AND (expires_at IS NULL OR expires_at > ?)",
+			workspaceID, models.PolicyStatusActive, time.Now()).
+		Find(&rows).Error
+	return rows, err
 }

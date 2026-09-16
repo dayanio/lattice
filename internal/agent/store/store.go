@@ -40,6 +40,8 @@ type Store interface {
 	ToolSpans() ToolSpanRepository
 	FlowEvents() FlowEventRepository
 	PeerIdentities() PeerIdentityRepository
+	Peers() PeerRepository
+	EnrollmentTokens() EnrollmentTokenRepository
 	AgentIdentities() AgentIdentityRepository
 
 	Close() error
@@ -161,6 +163,15 @@ type PolicyRepository interface {
 	List(ctx context.Context, filter PolicyFilter) ([]*models.Policy, int64, error)
 	Update(ctx context.Context, policy *models.Policy) error
 	Delete(ctx context.Context, workspaceID, name string) error
+	// UpdateStatus persists only the status column (used by the standalone
+	// policy TTL reconciler).
+	UpdateStatus(ctx context.Context, id string, status models.PolicyStatus) error
+	// ListIDsActiveWithExpiry enumerates active policies carrying a TTL;
+	// used by the policy TTL reconciler's resync KeyLister.
+	ListIDsActiveWithExpiry(ctx context.Context) ([]string, error)
+	// ListActiveByWorkspace returns the workspace's active policies whose
+	// TTL has not elapsed — the TTL-enforced read for policy distribution.
+	ListActiveByWorkspace(ctx context.Context, workspaceID string) ([]*models.Policy, error)
 }
 
 // WorkflowRepository manages workflow approval requests.
@@ -264,6 +275,29 @@ type FlowEventRepository interface {
 	ListByTrace(ctx context.Context, traceID string) ([]*models.FlowEvent, error)
 }
 
+// PeerRepository manages the standalone peer registry (t_peer), mirroring
+// the netmap-relevant fields of the LatticePeer CRD.
+type PeerRepository interface {
+	Create(ctx context.Context, m *models.Peer) error
+	GetByID(ctx context.Context, id string) (*models.Peer, error)
+	GetByAppID(ctx context.Context, appID string) (*models.Peer, error)
+	ListByWorkspace(ctx context.Context, workspaceID string) ([]*models.Peer, error)
+	Update(ctx context.Context, m *models.Peer) error
+	Delete(ctx context.Context, id string) error
+	// CountAll counts every registered peer (license node-limit checks).
+	CountAll(ctx context.Context) (int64, error)
+}
+
+// EnrollmentTokenRepository manages the standalone device enrollment
+// tokens (the DB equivalent of the LatticeEnrollmentToken CRD).
+type EnrollmentTokenRepository interface {
+	Create(ctx context.Context, token *models.EnrollmentToken) error
+	GetByToken(ctx context.Context, token string) (*models.EnrollmentToken, error)
+	// IncrementUsedCount atomically bumps the usage counter.
+	IncrementUsedCount(ctx context.Context, id string) error
+	Delete(ctx context.Context, id string) error
+}
+
 // PeerIdentityRepository manages stable logical identities for devices.
 type PeerIdentityRepository interface {
 	GetByID(ctx context.Context, id string) (*models.PeerIdentity, error)
@@ -272,6 +306,13 @@ type PeerIdentityRepository interface {
 	Update(ctx context.Context, m *models.PeerIdentity) error
 	Delete(ctx context.Context, id string) error
 	ListByNetwork(ctx context.Context, networkID string) ([]*models.PeerIdentity, error)
+	// ListIDs enumerates every identity primary key; used by the TTL
+	// reconciler's resync KeyLister.
+	ListIDs(ctx context.Context) ([]string, error)
+	// ClearGracePeriod zeroes previous_peer_ref, previous_peer_ip and
+	// grace_period_expires_at. It exists because GORM's Updates skips
+	// zero-valued struct fields, which would silently keep the old binding.
+	ClearGracePeriod(ctx context.Context, id string) error
 }
 
 // AgentIdentityRepository manages AI Agent identity records.
@@ -282,4 +323,10 @@ type AgentIdentityRepository interface {
 	Update(ctx context.Context, m *models.AgentIdentity) error
 	Delete(ctx context.Context, id string) error
 	ListByTenant(ctx context.Context, tenantID string) ([]*models.AgentIdentity, error)
+	// ListIDs enumerates every identity primary key; used by the TTL
+	// reconciler's resync KeyLister.
+	ListIDs(ctx context.Context) ([]string, error)
+	// UpdatePhase persists only the phase column, avoiding lost updates
+	// on other fields written concurrently by the API layer.
+	UpdatePhase(ctx context.Context, id string, phase string) error
 }

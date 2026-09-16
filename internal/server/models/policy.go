@@ -1,5 +1,7 @@
 package models
 
+import "time"
+
 type PolicyStatus string
 
 const (
@@ -7,6 +9,7 @@ const (
 	PolicyStatusApproved PolicyStatus = "approved" // approved, executor running
 	PolicyStatusActive   PolicyStatus = "active"   // applied to k8s
 	PolicyStatusFailed   PolicyStatus = "failed"   // executor failed
+	PolicyStatusExpired  PolicyStatus = "expired"  // TTL elapsed; no longer distributed
 )
 
 // Policy is the database record for a LatticePolicy.
@@ -27,6 +30,10 @@ type Policy struct {
 	CreatedByName     string       `gorm:"size:200"                                   json:"createdByName,omitempty"`
 	UpdatedBy         string       `gorm:"size:36"                                    json:"updatedBy,omitempty"`
 	UpdatedByName     string       `gorm:"size:200"                                   json:"updatedByName,omitempty"`
+
+	// ExpiresAt stops distribution once passed; the standalone PolicyTTL
+	// reconciler flips status to expired at the deadline.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 
 	// IsSeed marks records injected by the seed data injector for new workspaces.
 	IsSeed bool `gorm:"default:false;index" json:"isSeed,omitempty"`
