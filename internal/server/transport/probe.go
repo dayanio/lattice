@@ -143,6 +143,7 @@ func (p *Probe) runLiveness(ctx context.Context) {
 	ticker := time.NewTicker(livenessInterval)
 	defer ticker.Stop()
 	pubKey := p.remoteId.PublicKey.String()
+	consecutiveErrs := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,12 +156,18 @@ func (p *Probe) runLiveness(ctx context.Context) {
 			}
 			t, err := p.getHandshake(pubKey)
 			if err != nil {
-				// Peer not yet visible in WireGuard (e.g. peer removed after
-				// Close); stop monitoring.
-				p.log.Debug("liveness: handshake query failed, stopping ticker",
-					"remoteId", p.remoteId.AppID, "err", err)
-				return
+				// Transient query failures (wgctrl hiccup, busy device) must
+				// not silently kill monitoring for the peer; stop only after
+				// repeated consecutive failures.
+				consecutiveErrs++
+				if consecutiveErrs >= 4 {
+					p.log.Warn("liveness: handshake query keeps failing, stopping ticker",
+						"remoteId", p.remoteId.AppID, "err", err)
+					return
+				}
+				continue
 			}
+			consecutiveErrs = 0
 			if t.IsZero() || time.Since(t) > livenessThreshold {
 				p.log.Warn("WireGuard handshake stale, restarting probe",
 					"remoteId", p.remoteId.AppID, "lastHandshake", t)
@@ -345,8 +352,15 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 	result := make(chan infra.Transport, dialerCount)
 	errs := make(chan error, dialerCount)
 	var lrpWon atomic.Bool
+	// upgradeTarget records the transport claimed by the LRP→ICE upgrade
+	// path: it is also delivered via result, and the loser-drainer below
+	// must not close it (it lives on as currentTransport).
+	var upgradeTarget atomic.Value
+	var racers sync.WaitGroup
+	racers.Add(dialerCount)
 
 	go func() {
+		defer racers.Done()
 		p.log.Debug("Starting ice dialer", "remoteId", p.remoteId)
 		if err := iceD.Prepare(ctx, p.remoteId); err != nil {
 			p.log.Error("Prepare failed", err)
@@ -360,6 +374,7 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 		}
 		result <- t
 		if lrpWon.Load() {
+			upgradeTarget.Store(t)
 			if err = p.handleUpgradeTransport(t); err != nil {
 				p.log.Error("Upgrade transport failed", err)
 			}
@@ -368,6 +383,7 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 
 	if config.Conf.EnableLrp {
 		go func() {
+			defer racers.Done()
 			p.log.Debug("Starting lrp dialer", "remoteId", p.remoteId)
 			if err := lrpD.Prepare(ctx, p.remoteId); err != nil {
 				errs <- err
@@ -381,6 +397,28 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 			result <- t
 		}()
 	}
+
+	// When this discovery settles, close losing transports that still
+	// arrive: without this, the LRP dial completing after ICE already won
+	// leaves an open relay session parked in the buffered channel until
+	// process restart. racers.Wait() guarantees the upgrade path (which
+	// sets upgradeTarget before its goroutine exits) is fully decided
+	// before the drain reads it.
+	defer func() {
+		go func() {
+			racers.Wait()
+			for {
+				select {
+				case t := <-result:
+					if claimed, _ := upgradeTarget.Load().(infra.Transport); t != claimed {
+						t.Close() //nolint:errcheck
+					}
+				default:
+					return
+				}
+			}
+		}()
+	}()
 
 	failed := 0
 	var lastErr error

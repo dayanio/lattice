@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/alatticeio/lattice/internal/metrics"
+
 	"github.com/pion/ice/v4"
 	"github.com/pion/logging"
 	"github.com/pion/stun/v3"
@@ -54,6 +56,7 @@ type FilteringUDPMux struct {
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
 	droppedCount atomic.Uint64 // count of dropped pass-through packets
+	dropped      metrics.Counter
 }
 
 // NewFilteringUDPMux constructs the wrapper. realConn is the shared UDP socket.
@@ -75,6 +78,7 @@ func NewFilteringUDPMux(realConn net.PacketConn, logger logging.LeveledLogger) *
 		chanConn: chanConn,
 		realConn: realConn,
 		stopCh:   make(chan struct{}),
+		dropped:  metrics.NewCounter(`lattice_agent_udpmux_passthrough_dropped_total`),
 	}
 }
 
@@ -127,18 +131,19 @@ func (f *FilteringUDPMux) readLoop() {
 		if stun.IsMessage(pkt) {
 			// STUN: inject into the mux so connWorker can dispatch by ufrag.
 			f.chanConn.inject(pkt, addr)
-		} else if f.passThroughCh != nil {
-			// Non-STUN (WireGuard encrypted): forward to DefaultBind.
-			// Allocate a fresh buffer; buf is reused on the next iteration.
-			data := make([]byte, n)
-			copy(data, pkt)
-			select {
-			case f.passThroughCh <- PassThroughPacket{Data: data, Addr: udpAddr}:
-			default:
-				// Channel full: drop rather than block the sole reader.
-				f.droppedCount.Add(1)
+			} else if f.passThroughCh != nil {
+				// Non-STUN (WireGuard encrypted): forward to DefaultBind.
+				// Allocate a fresh buffer; buf is reused on the next iteration.
+				data := make([]byte, n)
+				copy(data, pkt)
+				select {
+				case f.passThroughCh <- PassThroughPacket{Data: data, Addr: udpAddr}:
+				default:
+					// Channel full: drop rather than block the sole reader.
+					f.droppedCount.Add(1)
+					f.dropped.Inc()
+				}
 			}
-		}
 	}
 }
 

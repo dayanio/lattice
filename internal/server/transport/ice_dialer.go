@@ -140,17 +140,22 @@ func (i *iceDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		}
 		// Extract peer info from ACK payload (new design: peer info in SYN/ACK).
 		// Guard with credentialsInited to avoid redundant calls on ACK retransmissions.
-		if hs := packet.GetHandshake(); hs != nil && len(hs.PeerInfo) > 0 {
+		// The onPeerReceived callback (WG/route provisioning) runs OUTSIDE
+		// i.mu: it shells out to OS network operations and holding the dialer
+		// lock during it stalls every other signal packet.
+		if hs := packet.GetHandshake(); hs != nil && len(hs.PeerInfo) > 0 && !i.credentialsInited.Load() {
+			var remotePeer infra.Peer
+			notify := false
+			i.mu.Lock()
 			if !i.credentialsInited.Load() {
-				i.mu.Lock()
-				if !i.credentialsInited.Load() {
-					var remotePeer infra.Peer
-					if err := json.Unmarshal(hs.PeerInfo, &remotePeer); err == nil {
-						i.onPeerReceived(remotePeer)
-					}
-					i.credentialsInited.Store(true)
+				if err := json.Unmarshal(hs.PeerInfo, &remotePeer); err == nil {
+					notify = true
 				}
-				i.mu.Unlock()
+				i.credentialsInited.Store(true)
+			}
+			i.mu.Unlock()
+			if notify {
+				i.onPeerReceived(remotePeer)
 			}
 		}
 		// cancel send syn
@@ -186,17 +191,20 @@ func (i *iceDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 
 		// Extract peer info from SYN payload (new design: peer info in SYN/ACK).
 		// Guard with credentialsInited to avoid redundant calls on SYN retransmissions.
-		if hs := packet.GetHandshake(); hs != nil && len(hs.PeerInfo) > 0 {
+		// onPeerReceived runs OUTSIDE i.mu (see the ACK case).
+		if hs := packet.GetHandshake(); hs != nil && len(hs.PeerInfo) > 0 && !i.credentialsInited.Load() {
+			var remotePeer infra.Peer
+			notify := false
+			i.mu.Lock()
 			if !i.credentialsInited.Load() {
-				i.mu.Lock()
-				if !i.credentialsInited.Load() {
-					var remotePeer infra.Peer
-					if err := json.Unmarshal(hs.PeerInfo, &remotePeer); err == nil {
-						i.onPeerReceived(remotePeer)
-					}
-					i.credentialsInited.Store(true)
+				if err := json.Unmarshal(hs.PeerInfo, &remotePeer); err == nil {
+					notify = true
 				}
-				i.mu.Unlock()
+				i.credentialsInited.Store(true)
+			}
+			i.mu.Unlock()
+			if notify {
+				i.onPeerReceived(remotePeer)
 			}
 		}
 
@@ -289,18 +297,23 @@ func (i *iceDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 
 		// Extract peer info from OFFER (backward compatibility with
 		// older nodes that don't send peer_info in SYN/ACK).
+		// onPeerReceived runs OUTSIDE i.mu (see the ACK case).
 		if !i.credentialsInited.Load() {
+			var remotePeer infra.Peer
+			notify := false
 			i.mu.Lock()
 			if !i.credentialsInited.Load() {
 				if len(offer.Current) > 0 {
-					var remotePeer infra.Peer
 					if err := json.Unmarshal(offer.Current, &remotePeer); err == nil {
-						i.onPeerReceived(remotePeer)
+						notify = true
 					}
 				}
 				i.credentialsInited.Store(true)
 			}
 			i.mu.Unlock()
+			if notify {
+				i.onPeerReceived(remotePeer)
+			}
 		}
 
 		candidate, err := ice.UnmarshalCandidate(offer.Candidate)
@@ -686,6 +699,18 @@ func (i *iceDialer) Close() error {
 	i.log.Debug("closing ice", "remoteId", i.remoteId)
 	i.closeOnce.Do(func() {
 		i.closed.Store(true)
+
+		// Stop the SYN retransmit ticker: Close can run while Prepare's
+		// 60s SYN loop is still ticking (e.g. ICE failure while waiting
+		// for an ACK), and without this the goroutine keeps waking every
+		// 2s until its own deadline.
+		i.mu.Lock()
+		cancel := i.cancel
+		i.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+
 		i.mu.Lock()
 		agent := i.agent
 		i.agent = nil
