@@ -172,7 +172,7 @@ func TestPolicyService_PreviewPolicy(t *testing.T) {
 		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Dev",
 	}))
 
-	peerSvc := service.NewPeerService(nil, st, nil, &fakeVerifier{valid: false})
+	peerSvc := service.NewPeerService(nil, st, nil, &fakeVerifier{valid: false}, nil)
 	policySvc := service.NewPolicyService(nil, st)
 	for _, p := range []string{"a", "b"} {
 		_, err := peerSvc.Register(ctx, &dto.PeerDto{Name: p, AppID: "app-" + p, Token: "enr-test-token"})
@@ -210,7 +210,7 @@ func TestPolicyService_PreviewEditingExcludesSelf(t *testing.T) {
 	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
 		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Dev",
 	}))
-	peerSvc := service.NewPeerService(nil, st, nil, &fakeVerifier{valid: false})
+	peerSvc := service.NewPeerService(nil, st, nil, &fakeVerifier{valid: false}, nil)
 	policySvc := service.NewPolicyService(nil, st)
 	_, err := peerSvc.Register(ctx, &dto.PeerDto{Name: "a", AppID: "app-a", Token: "enr-test-token"})
 	require.NoError(t, err)

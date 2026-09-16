@@ -319,7 +319,7 @@ func NewServer(ctx context.Context, serverConfig *ServerConfig) (*Server, error)
 		client:                        client,
 		cfg:                           cfg,
 		presence:                      presence,
-		peerController:                controller.NewPeerController(client, st, presence, lv),
+		peerController:                controller.NewPeerController(client, st, presence, lv, signal),
 		networkController:             controller.NewNetworkController(client, st),
 		userController:                controller.NewUserController(st),
 		policyController:              controller.NewPolicyController(client, st, policyIntentSvc),

@@ -56,7 +56,7 @@ func newRegisterService(t *testing.T, verifier license.Verifier) (service.PeerSe
 	))
 	st, err := gormstore.New(db)
 	require.NoError(t, err)
-	svc := service.NewPeerService(nil, st, nil, verifier)
+	svc := service.NewPeerService(nil, st, nil, verifier, nil)
 	return svc, st
 }
 

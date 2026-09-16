@@ -52,9 +52,9 @@ type PeerController interface {
 	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
 }
 
-func NewPeerController(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier) PeerController {
+func NewPeerController(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier, signal infra.SignalService) PeerController {
 	return &peerController{
-		peerService:   service.NewPeerService(client, st, presence, verifier),
+		peerService:   service.NewPeerService(client, st, presence, verifier, signal),
 		policyService: service.NewPolicyService(client, st),
 	}
 }
