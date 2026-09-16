@@ -18,7 +18,7 @@ import SwiftUI
 struct LatticeApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootView()
         }
     }
 }
