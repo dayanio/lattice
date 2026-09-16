@@ -51,6 +51,11 @@ First time? Run "lattice init" to set up your config interactively.`,
   # enable the LRP relay for restrictive NAT environments
   lattice up --token <token> --server-url <server-url> --enable-lrp --relay-url <relay-url>`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			detach, _ := cmd.Flags().GetBool("daemon")
+			if detach {
+				cfgManager.Viper().Set("enable-daemon", true)
+				config.Conf.EnableDaemon = true
+			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -121,5 +126,6 @@ First time? Run "lattice init" to set up your config interactively.`,
 	fs.IntP("wg-port", "", 51820, "UDP port for WireGuard and ICE (default 51820)")
 	fs.StringP("enforcer-mode", "", "auto", "policy enforcement backend: auto, iptables, ebpf")
 	fs.StringP("name", "", "", "display name for this node (shown in the UI)")
+	fs.BoolP("daemon", "d", false, "run in the background as a daemon (log: /var/log/lattice)")
 	return cmd
 }

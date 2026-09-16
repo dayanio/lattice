@@ -53,6 +53,8 @@ type PeerService interface {
 	Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error)
 	UpdateStatus(ctx context.Context, status int) error
 	GetNetmap(ctx context.Context, namespace string, appId string) (*infra.Message, error)
+	PolicyDeliveryStatus(ctx context.Context, workspaceID string) (*vo.PolicyDeliveryStatusVo, error)
+	FlowStats(ctx context.Context, workspaceID string, days int) (*vo.FlowStatsVo, error)
 	CreateToken(ctx context.Context, tokenDto *dto.TokenDto) ([]byte, error)
 	bootstrap(ctx context.Context, provideToken string) error
 
@@ -788,4 +790,92 @@ func (p *peerService) createTokenStandalone(ctx context.Context, tokenDto *dto.T
 		return nil, err
 	}
 	return []byte(tok.Token), nil
+}
+
+// FlowStats aggregates observed traffic for every agent in the workspace
+// over the given window (policy hit/traffic statistics v1).
+func (p *peerService) FlowStats(ctx context.Context, workspaceID string, days int) (*vo.FlowStatsVo, error) {
+	if days <= 0 {
+		days = 7
+	}
+	rows, err := p.store.Peers().ListByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	agentIDs := make([]string, 0, len(rows))
+	nameByAgent := map[string]string{}
+	for _, r := range rows {
+		if r.AppID == "" {
+			continue
+		}
+		agentIDs = append(agentIDs, r.AppID)
+		nameByAgent[r.AppID] = r.Name
+	}
+
+	out := vo.FlowStatsVo{
+		WorkspaceID: workspaceID,
+		Since:       time.Now().AddDate(0, 0, -days).Format(time.RFC3339),
+		Days:        days,
+		PerAgent:    []vo.FlowAgentStats{},
+	}
+	if len(agentIDs) == 0 {
+		return &out, nil
+	}
+	flows, totalBytes, err := p.store.FlowEvents().SumByAgents(ctx, agentIDs, time.Now().AddDate(0, 0, -days))
+	if err != nil {
+		return nil, err
+	}
+	out.TotalFlows = flows
+	out.TotalBytes = totalBytes
+	for _, id := range agentIDs {
+		c, b, err := p.store.FlowEvents().SumByAgents(ctx, []string{id}, time.Now().AddDate(0, 0, -days))
+		if err != nil {
+			continue
+		}
+		out.PerAgent = append(out.PerAgent, vo.FlowAgentStats{AgentID: id, Name: nameByAgent[id], Flows: c, Bytes: b})
+	}
+	return &out, nil
+}
+
+// PolicyDeliveryStatus compares the workspace's expected netmap version
+// against what each node reports via heartbeat ("已下发 x/y 节点" 数据源).
+func (p *peerService) PolicyDeliveryStatus(ctx context.Context, workspaceID string) (*vo.PolicyDeliveryStatusVo, error) {
+	if p.netmapBuilder == nil {
+		return nil, fmt.Errorf("policy delivery status requires standalone mode")
+	}
+
+	rows, err := p.store.Peers().ListByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := vo.PolicyDeliveryStatusVo{Peers: []vo.PolicyDeliveryStatusPeer{}}
+	converged := 0
+	for _, r := range rows {
+		if r.Address == "" || r.Disabled {
+			continue
+		}
+		expected := ""
+		if msg, buildErr := p.netmapBuilder.BuildForPeer(ctx, r); buildErr == nil {
+			expected = msg.ConfigVersion
+		}
+		applied := ""
+		if p.presence != nil {
+			applied = p.presence.GetVersion(r.AppID)
+		}
+		isConverged := applied != "" && applied == expected
+		if isConverged {
+			converged++
+		}
+		out.Peers = append(out.Peers, vo.PolicyDeliveryStatusPeer{
+			Name:           r.Name,
+			Address:        r.Address,
+			AppliedVersion: applied,
+			Converged:      isConverged,
+		})
+	}
+	out.Total = len(out.Peers)
+	out.ConvergedCount = converged
+	out.Converged = converged == out.Total && out.Total > 0
+	return &out, nil
 }

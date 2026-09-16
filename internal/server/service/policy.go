@@ -28,6 +28,12 @@ type PolicyService interface {
 	// Called by the workflow executor after approval, or directly by admin on PUT.
 	Apply(ctx context.Context, policyID string) error
 
+	// PreviewPolicy computes the deterministic per-peer effect of a draft
+	// policy without persisting anything ("预览即事实").
+	PreviewPolicy(ctx context.Context, wsID string, draft dto.PolicyDto) (*vo.PolicyPreviewVo, error)
+	ExportPolicies(ctx context.Context, wsID string) (string, error)
+	ImportPolicies(ctx context.Context, wsID, content string, dryRun bool, operatorID, operatorName string) (*vo.PolicyImportVo, error)
+
 	// ApplyDirect writes to k8s immediately and upserts a DB record with status=active.
 	// Used for admin direct-create (POST) or direct-update (PUT).
 	ApplyDirect(ctx context.Context, wsID, operatorID, operatorName string, policyDto *dto.PolicyDto) (*vo.PolicyVo, error)
@@ -68,7 +74,9 @@ func (p *policyService) Submit(ctx context.Context, wsID, createdBy, createdByNa
 		Action:        policyDto.Action,
 		PolicyTypes:   string(typesBytes),
 		Spec:          string(specBytes),
+		Intent:        policyDto.Intent,
 		ExpiresAt:     policyDto.ExpiresAt,
+		Version:       1,
 		Status:        models.PolicyStatusPending,
 		CreatedBy:     createdBy,
 		CreatedByName: createdByName,
@@ -76,7 +84,26 @@ func (p *policyService) Submit(ctx context.Context, wsID, createdBy, createdByNa
 	if err := p.store.Policies().Create(ctx, rec); err != nil {
 		return nil, err
 	}
+	p.recordPolicyVersion(ctx, rec, models.PolicyVersionActionCreated, createdBy, "")
+
 	return rec, nil
+}
+
+// recordPolicyVersion appends one immutable entry to the policy's version
+// timeline; failures are logged, never fatal (audit must not break traffic).
+func (p *policyService) recordPolicyVersion(ctx context.Context, rec *models.Policy, action, changedBy, approvedBy string) {
+	v := &models.PolicyVersion{
+		PolicyID:   rec.ID,
+		Version:    rec.Version,
+		Spec:       rec.Spec,
+		Intent:     rec.Intent,
+		Action:     action,
+		ChangedBy:  changedBy,
+		ApprovedBy: approvedBy,
+	}
+	if err := p.store.PolicyVersions().Create(ctx, v); err != nil {
+		p.log.Error("record policy version failed", err, "policy", rec.Name)
+	}
 }
 
 // Apply is called by the workflow executor. It reads the DB record, writes to k8s,
@@ -130,9 +157,14 @@ func (p *policyService) Apply(ctx context.Context, policyID string) error {
 		}
 	}
 
+	rec.Version++
 	rec.Status = models.PolicyStatusActive
 	rec.ErrorMessage = ""
-	return p.store.Policies().Update(ctx, rec)
+	if err := p.store.Policies().Update(ctx, rec); err != nil {
+		return err
+	}
+	p.recordPolicyVersion(ctx, rec, models.PolicyVersionActionApplied, "workflow", "")
+	return nil
 }
 
 // ApplyDirect is used by platform_admin POST/PUT — writes directly to k8s and
@@ -196,6 +228,7 @@ func (p *policyService) ApplyDirect(ctx context.Context, wsID, operatorID, opera
 	existing.Action = policyDto.Action
 	existing.PolicyTypes = string(typesBytes)
 	existing.Spec = string(specBytes)
+	existing.Intent = policyDto.Intent
 	existing.ExpiresAt = policyDto.ExpiresAt
 	existing.Status = models.PolicyStatusActive
 	existing.ErrorMessage = ""
@@ -203,10 +236,12 @@ func (p *policyService) ApplyDirect(ctx context.Context, wsID, operatorID, opera
 	existing.UpdatedByName = operatorName
 
 	if existing.ID == "" {
+		existing.Version = 1
 		_ = p.store.Policies().Create(ctx, existing)
 	} else {
 		_ = p.store.Policies().Update(ctx, existing)
 	}
+	p.recordPolicyVersion(ctx, existing, models.PolicyVersionActionApplied, operatorID, operatorName)
 
 	return &vo.PolicyVo{
 		Name:              policyDto.Name,
@@ -285,8 +320,11 @@ func (p *policyService) DeletePolicy(ctx context.Context, name string) error {
 			Namespace: workspace.Namespace,
 		},
 	}
-	// Best-effort CRD deletion (may not exist if policy is still pending).
-	_ = p.client.Delete(ctx, crd)
+	// Standalone mode: deleting the DB row is the whole operation.
+	if p.client != nil {
+		// Best-effort CRD deletion (may not exist if policy is still pending).
+		_ = p.client.Delete(ctx, crd)
+	}
 
 	if err := p.store.Policies().Delete(ctx, wsID, name); err != nil {
 		return err

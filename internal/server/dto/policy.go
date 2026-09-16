@@ -20,4 +20,7 @@ type PolicyDto struct {
 	Description string   `json:"description"`
 	PolicyTypes []string `json:"policyTypes" binding:"required"`
 	PolicySpec
+	// Intent carries the natural-language description the policy was
+	// created from ("描述即策略") — persisted for audit.
+	Intent string `json:"intent,omitempty"`
 }

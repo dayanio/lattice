@@ -34,6 +34,8 @@ until an ALLOW policy is explicitly created for their workspace.`,
 		Args: cobra.MinimumNArgs(1),
 	}
 	c.AddCommand(
+		newApplyCommand(),
+		newExportCommand(),
 		policyAddCmd(),
 		policyAllowAllCmd(),
 		policyRemoveCmd(),

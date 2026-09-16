@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/alatticeio/lattice/internal/server/llm"
 	"github.com/alatticeio/lattice/internal/server/models"
 	managementnats "github.com/alatticeio/lattice/internal/server/nats"
+	"github.com/alatticeio/lattice/internal/server/reconcilers"
 	"github.com/alatticeio/lattice/internal/server/resource"
 	"github.com/alatticeio/lattice/internal/server/vo"
 	"github.com/google/uuid"
@@ -507,6 +509,9 @@ const baseSystemPrompt = `你是 Lattice 的网络管理助手，帮助用户管
 - 不确定的操作：先询问用户意图，再给出方案`
 
 func (s *aiService) buildSystemPrompt(ctx context.Context, wsID, namespace, wsName string) (string, error) {
+	if s.k8s == nil {
+		return s.buildSystemPromptStandalone(ctx, wsID, namespace, wsName)
+	}
 	var peerList v1alpha1.LatticePeerList
 	_ = s.k8s.GetAPIReader().List(ctx, &peerList, client.InNamespace(namespace))
 
@@ -538,6 +543,35 @@ func (s *aiService) buildSystemPrompt(ctx context.Context, wsID, namespace, wsNa
 		len(netList.Items),
 		len(peerList.Items), activePeers,
 		len(policyList.Items),
+	), nil
+}
+
+// buildSystemPromptStandalone renders the workspace context from the DB
+// registry (no K8s client in standalone mode).
+func (s *aiService) buildSystemPromptStandalone(ctx context.Context, wsID, namespace, wsName string) (string, error) {
+	peers, _ := s.store.Peers().ListByWorkspace(ctx, wsID)
+	policies, _ := s.store.Policies().ListActiveByWorkspace(ctx, wsID)
+
+	activePeers := 0
+	if s.presence != nil {
+		for _, p := range peers {
+			if status, _ := s.presence.GetStatus(p.AppID); status == "online" {
+				activePeers++
+			}
+		}
+	}
+
+	return fmt.Sprintf(`%s
+
+## 当前工作区状态
+- 工作区: %s（ID: %s，命名空间: %s）
+- 网络数量: 1（standalone 单网络）
+- Peer 总数: %d（在线: %d）
+- 策略条数: %d`,
+		baseSystemPrompt,
+		wsName, wsID, namespace,
+		len(peers), activePeers,
+		len(policies),
 	), nil
 }
 
@@ -833,6 +867,9 @@ func (s *aiService) dispatchTool(ctx context.Context, namespace, name string, in
 }
 
 func (s *aiService) toolListPeers(ctx context.Context, namespace string) (string, error) {
+	if s.k8s == nil {
+		return s.toolListPeersStandalone(ctx, namespace)
+	}
 	var list v1alpha1.LatticePeerList
 	if err := s.k8s.GetAPIReader().List(ctx, &list, client.InNamespace(namespace)); err != nil {
 		return "", err
@@ -863,6 +900,9 @@ func (s *aiService) toolListPeers(ctx context.Context, namespace string) (string
 }
 
 func (s *aiService) toolListPolicies(ctx context.Context, namespace string) (string, error) {
+	if s.k8s == nil {
+		return s.toolListPoliciesStandalone(ctx, namespace)
+	}
 	var list v1alpha1.LatticePolicyList
 	if err := s.k8s.GetAPIReader().List(ctx, &list, client.InNamespace(namespace)); err != nil {
 		return "", err
@@ -885,6 +925,9 @@ func (s *aiService) toolListPolicies(ctx context.Context, namespace string) (str
 }
 
 func (s *aiService) toolListNetworks(ctx context.Context, namespace string) (string, error) {
+	if s.k8s == nil {
+		return s.toolListNetworksStandalone(ctx, namespace)
+	}
 	var list v1alpha1.LatticeNetworkList
 	if err := s.k8s.GetAPIReader().List(ctx, &list, client.InNamespace(namespace)); err != nil {
 		return "", err
@@ -902,6 +945,9 @@ func (s *aiService) toolListNetworks(ctx context.Context, namespace string) (str
 }
 
 func (s *aiService) toolCheckConnectivity(ctx context.Context, namespace, from, to string) (string, error) {
+	if s.k8s == nil {
+		return s.toolCheckConnectivityStandalone(ctx, namespace, from, to)
+	}
 	// Get source peer labels
 	var fromPeer v1alpha1.LatticePeer
 	if err := s.k8s.GetAPIReader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: from}, &fromPeer); err != nil {
@@ -1667,4 +1713,156 @@ func (s *aiService) applyRevokeEnrollmentToken(ctx context.Context, namespace st
 		return "", fmt.Errorf("revoke token: %w", err)
 	}
 	return fmt.Sprintf("注册 Token %s 已撤销", args.Token), nil
+}
+
+// ── Standalone (DB-backed) tool implementations ──────────────────────────────
+
+// resolveWorkspaceIDStandalone maps a workspace namespace to its ID.
+func (s *aiService) resolveWorkspaceIDStandalone(ctx context.Context, namespace string) (string, error) {
+	ws, err := s.store.Workspaces().GetByNamespace(ctx, namespace)
+	if err != nil {
+		return "", fmt.Errorf("workspace not found: %w", err)
+	}
+	return ws.ID, nil
+}
+
+func (s *aiService) toolListPeersStandalone(ctx context.Context, namespace string) (string, error) {
+	wsID, err := s.resolveWorkspaceIDStandalone(ctx, namespace)
+	if err != nil {
+		return "", err
+	}
+	rows, err := s.store.Peers().ListByWorkspace(ctx, wsID)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "共 %d 个 Peer：\n", len(rows))
+	for _, r := range rows {
+		status, lastSeen := "pending", ""
+		if s.presence != nil {
+			st, ls := s.presence.GetStatus(r.AppID)
+			status = st
+			if ls != nil {
+				lastSeen = " 最后在线: " + ls.Format("2006-01-02 15:04:05")
+			}
+		}
+		addr := ""
+		if r.Address != "" {
+			addr = " IP: " + r.Address
+		}
+		fmt.Fprintf(&sb, "- %s [%s]%s%s%s\n", r.Name, status, addr, lastSeen, "")
+		if r.AppID != "" {
+			fmt.Fprintf(&sb, "  AppID: %s\n", r.AppID)
+		}
+	}
+	return sb.String(), nil
+}
+
+func (s *aiService) toolListPoliciesStandalone(ctx context.Context, namespace string) (string, error) {
+	wsID, err := s.resolveWorkspaceIDStandalone(ctx, namespace)
+	if err != nil {
+		return "", err
+	}
+	rows, err := s.store.Policies().ListActiveByWorkspace(ctx, wsID)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "共 %d 条 active 策略：\n", len(rows))
+	for _, r := range rows {
+		fmt.Fprintf(&sb, "- %s [%s] 网络: %s\n", r.Name, r.Action, r.WorkspaceID)
+		var spec dto.PolicySpec
+		if err := json.Unmarshal([]byte(r.Spec), &spec); err == nil {
+			if len(spec.Ingress) > 0 {
+				fmt.Fprintf(&sb, "  Ingress 规则: %d 条\n", len(spec.Ingress))
+			}
+			if len(spec.Egress) > 0 {
+				fmt.Fprintf(&sb, "  Egress 规则: %d 条\n", len(spec.Egress))
+			}
+		}
+	}
+	return sb.String(), nil
+}
+
+func (s *aiService) toolListNetworksStandalone(ctx context.Context, namespace string) (string, error) {
+	ws, err := s.store.Workspaces().GetByNamespace(ctx, namespace)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("共 1 个网络：\n- %s [%s]（standalone 单网络模式）\n", ws.ID, ws.DisplayName), nil
+}
+
+// toolCheckConnectivityStandalone evaluates whether `from` may reach `to`
+// using the DB policy set and the shared calculator.
+func (s *aiService) toolCheckConnectivityStandalone(ctx context.Context, namespace, from, to string) (string, error) {
+	wsID, err := s.resolveWorkspaceIDStandalone(ctx, namespace)
+	if err != nil {
+		return "", err
+	}
+	rows, err := s.store.Peers().ListByWorkspace(ctx, wsID)
+	if err != nil {
+		return "", err
+	}
+	policies, err := s.store.Policies().ListActiveByWorkspace(ctx, wsID)
+	if err != nil {
+		return "", err
+	}
+	identities, err := s.store.PeerIdentities().ListByNetwork(ctx, wsID)
+	if err != nil {
+		return "", err
+	}
+
+	var fromRow, toRow *models.Peer
+	infraPeers := make([]*infra.Peer, 0, len(rows))
+	for _, r := range rows {
+		if r.Address == "" {
+			continue
+		}
+		addr := r.Address
+		infraPeers = append(infraPeers, &infra.Peer{Name: r.Name, AppID: r.AppID, Address: &addr, NetworkId: wsID})
+		if r.Name == from {
+			fromRow = r
+		}
+		if r.Name == to {
+			toRow = r
+		}
+	}
+	if fromRow == nil {
+		return fmt.Sprintf("找不到 Peer %q", from), nil
+	}
+	if toRow == nil {
+		return fmt.Sprintf("找不到 Peer %q", to), nil
+	}
+
+	calc := reconcilers.NewPeerRuleCalculator(reconcilers.NewPolicyIdentityResolver(identities))
+	fromInfra := &infra.Peer{Name: fromRow.Name, AppID: fromRow.AppID, NetworkId: wsID}
+	fromInfra.Address = &fromRow.Address
+	rule, err := calc.ComputeForPeer(ctx, policies, infraPeers, fromInfra)
+	if err != nil {
+		return "", err
+	}
+
+	blocked := true
+	for _, tr := range rule.Egress {
+		for _, peer := range tr.Peers {
+			if peer == toRow.Address || cidrContains(peer, toRow.Address) {
+				if tr.Action == "ACCEPT" {
+					blocked = false
+				}
+			}
+		}
+	}
+	if blocked {
+		return fmt.Sprintf("%s → %s (%s): blocked（被默认拒绝或策略拦截）", from, to, toRow.Address), nil
+	}
+	return fmt.Sprintf("%s → %s (%s): allowed（有策略放行）", from, to, toRow.Address), nil
+}
+
+func cidrContains(cidr, ip string) bool {
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return cidr == ip
+	}
+	parsed := net.ParseIP(ip)
+	return parsed != nil && ipNet.Contains(parsed)
 }

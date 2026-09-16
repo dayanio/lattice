@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/config"
@@ -28,6 +29,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/provision"
 	"github.com/alatticeio/lattice/internal/agent/wireguard"
+	"github.com/alatticeio/lattice/internal/daemon"
 	"github.com/alatticeio/lattice/internal/relay"
 	ctrclient "github.com/alatticeio/lattice/internal/server/client"
 	"github.com/alatticeio/lattice/internal/server/nats"
@@ -118,6 +120,10 @@ type Node struct {
 
 	// NetmapPollInterval drives the pull-based convergence loop; <=0 disables it.
 	NetmapPollInterval time.Duration
+
+	appliedVersionMu sync.RWMutex
+	appliedVersion   string // last successfully applied netmap ConfigVersion
+	startedAt        time.Time
 
 	// GetNetworkMap is set externally after NewAgent returns and before Start
 	// is called. It fetches the current network topology from the control plane.
@@ -212,6 +218,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// ── Phase 1: Network foundation ──────────────────────────────────────────
 
 	node = new(Node)
+	node.startedAt = time.Now()
 	node.manager.peerManager = infra.NewPeerManager()
 	node.logger = cfg.Logger
 	// TurnManager removed — using external coturn for STUN
@@ -539,12 +546,17 @@ func (c *Node) Start(ctx context.Context) error {
 	if err := c.messageHandler.ApplyFullConfig(ctx, remoteCfg); err != nil {
 		return err
 	}
+	c.setAppliedVersion(remoteCfg.ConfigVersion)
 
 	// Pull-based convergence fallback: without the K8s push channel
 	// (standalone mode), policy and topology changes must be re-fetched.
 	if c.NetmapPollInterval > 0 {
 		go RunNetmapSync(ctx, c.NetmapPollInterval, c.GetNetworkMap, func(msg *infra.Message) error {
-			return c.messageHandler.ApplyFullConfig(ctx, msg)
+			if err := c.messageHandler.ApplyFullConfig(ctx, msg); err != nil {
+				return err
+			}
+			c.setAppliedVersion(msg.ConfigVersion)
+			return nil
 		})
 	}
 	return nil
@@ -627,6 +639,36 @@ func (c *Node) close() {
 // ICE/LRP signaling as regular peers. The companion is the ICE initiator
 // (higher peerID) and sends the ICE OFFER; the sandbox responds with ANSWER.
 // WireGuard endpoint is configured by the probe factory when ICE connects.
+// setAppliedVersion records the ConfigVersion of the last netmap this node
+// successfully applied; reported back via heartbeat for delivery tracking.
+func (c *Node) setAppliedVersion(v string) {
+	c.appliedVersionMu.Lock()
+	c.appliedVersion = v
+	c.appliedVersionMu.Unlock()
+}
+
+// AppliedVersion returns the last applied netmap ConfigVersion.
+// StatusSnapshot renders the node's runtime state for the daemon IPC.
+func (c *Node) StatusSnapshot(pid int) daemon.StatusInfo {
+	snapshot := daemon.StatusInfo{
+		State:          "running",
+		PID:            pid,
+		AppID:          c.Name,
+		AppliedVersion: c.AppliedVersion(),
+		UptimeSeconds:  int64(time.Since(c.startedAt).Seconds()),
+	}
+	if c.current != nil && c.current.Address != nil {
+		snapshot.Address = *c.current.Address
+	}
+	return snapshot
+}
+
+func (c *Node) AppliedVersion() string {
+	c.appliedVersionMu.RLock()
+	defer c.appliedVersionMu.RUnlock()
+	return c.appliedVersion
+}
+
 func (c *Node) AddPeer(peer *infra.Peer) error {
 	c.manager.peerManager.AddPeer(peer.AppID, peer)
 	if peer.PublicKey == c.current.PublicKey {

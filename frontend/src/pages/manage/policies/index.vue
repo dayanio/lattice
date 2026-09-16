@@ -17,6 +17,8 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
+import { Loader2 } from 'lucide-vue-next'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuSeparator, DropdownMenuTrigger,
@@ -24,6 +26,7 @@ import {
 import { toast } from 'vue-sonner'
 import { usePolicyPageStore } from '@/stores/usePolicyPageStore'
 import AppAlertDialog from '@/components/AlertDialog.vue'
+import { translatePolicy, previewPolicy, policyDeliveryStatus, policyFlowStats } from '@/api/policy'
 
 definePage({
   meta: { titleKey: 'manage.policies.title', descKey: 'manage.policies.desc' },
@@ -31,7 +34,10 @@ definePage({
 
 const { t } = useI18n()
 const store = usePolicyPageStore()
-onMounted(() => store.actions.refresh())
+onMounted(async () => {
+  await store.actions.refresh()
+  refreshOps()
+})
 
 // ── Types ─────────────────────────────────────────────────────────
 type Policy = (typeof store.rows)[number]
@@ -57,6 +63,89 @@ function promptDelete(policy: Policy) {
 async function confirmDelete() {
   if (deleteTarget.value) await store.actions.handleDelete(deleteTarget.value, toast)
   deleteTarget.value = null
+}
+
+// ── 下发收敛 + 流量统计（workspace 级） ──────────────────────────────
+const delivery = ref<{ total: number; convergedCount: number; converged: boolean } | null>(null)
+const flowStats = ref<{ totalFlows: number; totalBytes: number } | null>(null)
+
+async function refreshOps() {
+  try {
+    const [d, f] = await Promise.all([
+      policyDeliveryStatus(),
+      policyFlowStats(7),
+    ])
+    delivery.value = d.data?.data ?? null
+    flowStats.value = f.data?.data ?? null
+  } catch { /* 状态条失败不影响列表 */ }
+}
+
+function fmtBytes(n?: number): string {
+  if (!n) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return `${v.toFixed(i ? 1 : 0)} ${units[i]}`
+}
+
+// ── 描述即策略：自然语言 → 策略 → 效果预览 ─────────────────────────
+const nlMode        = ref(true)
+const nlDescription = ref('')
+const translating   = ref(false)
+const translation   = ref<{ spec: any; summary: string; warnings: string[] } | null>(null)
+const previewing    = ref(false)
+const preview       = ref<{ affectedPeers: { name: string; address: string; added: any[]; removed: any[] }[] } | null>(null)
+
+async function handleNLTranslate() {
+  if (!nlDescription.value.trim()) return
+  translating.value = true
+  translation.value = null
+  preview.value = null
+  try {
+    const res: any = await translatePolicy({ description: nlDescription.value })
+    translation.value = res.data?.data
+    if (translation.value) {
+      // 将翻译结果回填到表单：提交走既有管道（intent 随策略入库）
+      const spec = translation.value.spec || {}
+      const store_ = store as any
+      store_.form.name = 'nl-' + Date.now().toString(36)
+      store_.form.action = spec.action === 'Deny' ? 'Deny' : 'Allow'
+      store_.form.description = translation.value.summary || ''
+      store_.form._intent = nlDescription.value
+      store_.form.policyTypes = []
+      if (spec.ingress?.length) store_.form.policyTypes.push('Ingress')
+      if (spec.egress?.length) store_.form.policyTypes.push('Egress')
+      if (!store_.form.policyTypes.length) store_.form.policyTypes.push('Ingress')
+      store_.form.ingress = (spec.ingress || []).map((r: any) => ({
+        from: r.from || [],
+        ports: r.ports || [],
+      }))
+      store_.form.egress = (spec.egress || []).map((r: any) => ({
+        to: r.to || [],
+        ports: r.ports || [],
+      }))
+      store_.form._targetLabel = ''
+      store_.form.peerSelector = { matchLabels: {} }
+    }
+  } catch (e: any) {
+    toast.error(e?.response?.data?.msg || '翻译失败')
+  } finally {
+    translating.value = false
+  }
+}
+
+async function handleNLPreview() {
+  previewing.value = true
+  try {
+    const payload = (store as any).actions.buildPayload()
+    const res: any = await previewPolicy(payload)
+    preview.value = res.data?.data
+  } catch (e: any) {
+    toast.error(e?.response?.data?.msg || '预览失败')
+  } finally {
+    previewing.value = false
+  }
 }
 
 // ── Detail dialog ─────────────────────────────────────────────────
@@ -382,6 +471,22 @@ const table = useVueTable({
 
     </div>
 
+    <!-- ── 下发收敛 + 流量统计状态条 ──────────────────────────────── -->
+    <div v-if="delivery" class="mb-3 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5 text-xs">
+      <span class="flex items-center gap-1.5 font-medium">
+        <span
+          class="inline-block size-2 rounded-full"
+          :class="delivery.converged ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'"
+        />
+        {{ delivery.converged ? '已全部生效' : '下发中' }}
+        {{ delivery.convergedCount }}/{{ delivery.total }} 节点
+      </span>
+      <span class="text-muted-foreground">|</span>
+      <span v-if="flowStats" class="text-muted-foreground">
+        近 7 天流量：{{ flowStats.totalFlows }} 条连接 / {{ fmtBytes(flowStats.totalBytes) }}
+      </span>
+    </div>
+
     <!-- ── Toolbar ────────────────────────────────────────────────── -->
     <div class="flex items-center gap-2">
       <div class="relative w-72">
@@ -640,6 +745,37 @@ const table = useVueTable({
           </div>
         </div>
 
+        <div class="flex items-center gap-2 mb-3">
+          <button class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+            :class="nlMode ? 'bg-primary text-primary-foreground' : 'border border-border bg-muted/20'"
+            @click="nlMode = true">✨ 自然语言</button>
+          <button class="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+            :class="!nlMode ? 'bg-primary text-primary-foreground' : 'border border-border bg-muted/20'"
+            @click="nlMode = false">高级表单</button>
+        </div>
+
+        <div v-if="nlMode" class="space-y-3">
+          <Textarea v-model="nlDescription" :rows="3"
+            placeholder="用一句话描述你想怎么管控流量。例如：只允许前端访问 api 的 443 端口，其他全部拒绝" />
+          <Button size="sm" :disabled="translating || !nlDescription.trim()" @click="handleNLTranslate">
+            <Loader2 v-if="translating" class="mr-2 size-4 animate-spin" /> 翻译成策略
+          </Button>
+          <div v-if="translation" class="rounded-lg border p-3 space-y-2 bg-muted/30">
+            <p class="text-sm">📌 {{ translation.summary }}</p>
+            <p v-for="(w, i) in translation.warnings" :key="i" class="text-xs text-amber-600">⚠ {{ w }}</p>
+          </div>
+          <Button v-if="translation" size="sm" variant="secondary" :disabled="previewing" @click="handleNLPreview">
+            <Loader2 v-if="previewing" class="mr-2 size-4 animate-spin" /> 预览效果
+          </Button>
+          <div v-for="(pp, i) in preview?.affectedPeers" :key="i" class="rounded-lg border p-3 text-xs space-y-1">
+            <div class="font-medium">{{ pp.name }} <span class="text-muted-foreground">({{ pp.address }})</span></div>
+            <div v-for="(r, j) in pp.added" :key="'a' + j" class="text-emerald-600">+ [{{ r.action }}] {{ r.direction }} → {{ r.peers?.join(', ') }} : {{ r.port || '任意端口' }}</div>
+            <div v-for="(r, j) in pp.removed" :key="'r' + j" class="text-rose-500 line-through">- [{{ r.action }}] {{ r.direction }} → {{ r.peers?.join(', ') }} : {{ r.port || '任意端口' }}</div>
+          </div>
+          <p class="text-[10px] text-muted-foreground">提交后 {{ t('manage.policies.createDialog.nameLabel') }} 自动生成；可在高级表单中调整。</p>
+        </div>
+
+        <div v-show="!nlMode">
         <div class="grid grid-cols-2 gap-3">
           <!-- Name -->
           <div class="space-y-1.5 col-span-2">
@@ -702,7 +838,7 @@ const table = useVueTable({
         </div>
 
         <!-- Ingress rules -->
-        <div v-if="store.form.policyTypes?.includes('Ingress')" class="space-y-2">
+        <div v-if="!nlMode && store.form.policyTypes?.includes('Ingress')" class="space-y-2">
           <div class="flex items-center justify-between">
             <p class="text-xs font-semibold flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
               <ArrowDown class="size-3.5" /> {{ t('manage.policies.createDialog.ingressTitle') }}
@@ -734,7 +870,7 @@ const table = useVueTable({
         </div>
 
         <!-- Egress rules -->
-        <div v-if="store.form.policyTypes?.includes('Egress')" class="space-y-2">
+        <div v-if="!nlMode && store.form.policyTypes?.includes('Egress')" class="space-y-2">
           <div class="flex items-center justify-between">
             <p class="text-xs font-semibold flex items-center gap-1.5 text-violet-600 dark:text-violet-400">
               <ArrowUp class="size-3.5" /> {{ t('manage.policies.createDialog.egressTitle') }}
@@ -774,7 +910,8 @@ const table = useVueTable({
         </div>
       </div>
 
-      <DialogFooter>
+              </div>
+<DialogFooter>
         <Button variant="outline" @click="store.isDrawerOpen = false">{{ t('common.action.cancel') }}</Button>
         <Button :disabled="store.loading" @click="store.actions.handleCreateOrUpdate(toast)">
           <RefreshCw v-if="store.loading" class="size-3.5 animate-spin mr-2" />

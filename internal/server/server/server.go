@@ -61,6 +61,7 @@ type Server struct {
 	networkController controller.NetworkController
 	userController    controller.UserController
 	policyController  controller.PolicyController
+	policyIntentSvc   service.PolicyIntentService
 
 	workspaceController  controller.WorkspaceController
 	memberController     controller.WorkspaceMemberController
@@ -220,6 +221,8 @@ func NewServer(ctx context.Context, serverConfig *ServerConfig) (*Server, error)
 	// ── Weak Dependency 3: AI Service (tools always available; Chat/Audit/Debug need LLM) ──
 	var aiSvc service.AIService
 	var intentSvc service.IntentService
+	var policyIntentSvc service.PolicyIntentService
+	policyIntentSvc = service.NewPolicyIntentService(nil, st)
 	if cfg.AI.Enabled && cfg.AI.APIKey != "" {
 		llmClient, aiErr := llm.NewClient(cfg.AI)
 		if aiErr != nil {
@@ -234,6 +237,7 @@ func NewServer(ctx context.Context, serverConfig *ServerConfig) (*Server, error)
 			)
 			intentSvc = service.NewIntentService(llmClient, client, st)
 			service.SetIntentService(aiSvc, intentSvc)
+			policyIntentSvc = service.NewPolicyIntentService(llmClient, st)
 
 			// Time-Travel Debug: attach snapshot store to AI service
 			service.SetSnapStore(aiSvc, st.NetworkSnapshots())
@@ -318,7 +322,8 @@ func NewServer(ctx context.Context, serverConfig *ServerConfig) (*Server, error)
 		peerController:                controller.NewPeerController(client, st, presence, lv),
 		networkController:             controller.NewNetworkController(client, st),
 		userController:                controller.NewUserController(st),
-		policyController:              controller.NewPolicyController(client, st),
+		policyController:              controller.NewPolicyController(client, st, policyIntentSvc),
+		policyIntentSvc:               policyIntentSvc,
 		workspaceController:           controller.NewWorkspaceController(client, st),
 		memberController:              controller.NewWorkspaceMemberController(st),
 		tokenController:               controller.NewTokenController(client, st),
@@ -558,13 +563,18 @@ func (s *Server) GetNetMap(content []byte) ([]byte, error) {
 // the in-memory presence store so ListPeers can report real-time online status.
 func (s *Server) Heartbeat(content []byte) ([]byte, error) {
 	var payload struct {
-		AppID string `json:"appId"`
+		AppID         string `json:"appId"`
+		ConfigVersion string `json:"configVersion"`
 	}
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, err
 	}
 	if payload.AppID != "" {
-		s.presence.Update(payload.AppID)
+		if payload.ConfigVersion != "" {
+			s.presence.UpdateWithVersion(payload.AppID, payload.ConfigVersion)
+		} else {
+			s.presence.Update(payload.AppID)
+		}
 	}
 	return []byte{}, nil
 }

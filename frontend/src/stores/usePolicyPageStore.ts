@@ -163,6 +163,47 @@ export const usePolicyPageStore = defineStore('policyPage', () => {
             form.value = { ...base, ...templates[key] }
         },
 
+        // buildPayload 归一化表单为后端 payload；预览与提交共用同一份构建，
+        // 保证"预览即事实"。
+        buildPayload(): any {
+            const payload = JSON.parse(JSON.stringify(form.value))
+
+            // 空 _targetLabel → 空 matchLabels {}，匹配所有 peer
+            if (payload._targetLabel) {
+                const target = parseLabel(payload._targetLabel)
+                payload.peerSelector.matchLabels = { [target.key]: target.value }
+            } else {
+                payload.peerSelector.matchLabels = {}
+            }
+
+            const process = (rules: any[], dir: string) => {
+                rules.forEach((r: any) => {
+                    const peerKey = dir === 'ingress' ? 'from' : 'to'
+                    // 保留 NL/导入产生的 ipBlock 与 identityRef selection；
+                    // _rawLabel 仅用于表单手输的标签选择。
+                    if (r._rawLabel) {
+                        const p = parseLabel(r._rawLabel)
+                        r[peerKey] = [{ peerSelector: { matchLabels: { [p.key]: p.value } } }]
+                    } else if (!r[peerKey]?.length) {
+                        r[peerKey] = [{ peerSelector: { matchLabels: {} } }]
+                    }
+                    delete r._rawLabel
+                    if (r.ports?.[0]?.port && typeof r.ports[0].port === 'string') {
+                        r.ports[0].port = parseInt(r.ports[0].port, 10)
+                    }
+                })
+            }
+            process(payload.ingress, 'ingress')
+            process(payload.egress, 'egress')
+            delete payload._targetLabel
+            // 描述即策略：自然语言原文随策略入库（审计资产）
+            if (payload._intent) {
+                payload.intent = payload._intent
+            }
+            delete payload._intent
+            return payload
+        },
+
         async handleCreateOrUpdate(toast: any) {
             // 1. 校验逻辑
             if (!validateLabel(form.value._targetLabel)) {
@@ -172,33 +213,7 @@ export const usePolicyPageStore = defineStore('policyPage', () => {
 
             loading.value = true
             try {
-                const payload = JSON.parse(JSON.stringify(form.value))
-
-                // 空 _targetLabel → 空 matchLabels {}，匹配所有 peer
-                if (payload._targetLabel) {
-                    const target = parseLabel(payload._targetLabel)
-                    payload.peerSelector.matchLabels = { [target.key]: target.value }
-                } else {
-                    payload.peerSelector.matchLabels = {}
-                }
-
-                const process = (rules: any[], dir: string) => {
-                    rules.forEach(r => {
-                        const peerKey = dir === 'ingress' ? 'from' : 'to'
-                        // 空 _rawLabel → 空 matchLabels {}，匹配所有 peer
-                        if (r._rawLabel) {
-                            const p = parseLabel(r._rawLabel)
-                            r[peerKey] = [{ peerSelector: { matchLabels: { [p.key]: p.value } } }]
-                        } else {
-                            r[peerKey] = [{ peerSelector: { matchLabels: {} } }]
-                        }
-                        delete r._rawLabel
-                        if (r.ports?.[0]?.port) r.ports[0].port = parseInt(r.ports[0].port, 10)
-                    })
-                }
-                process(payload.ingress, 'ingress')
-                process(payload.egress, 'egress')
-                delete payload._targetLabel
+                const payload = this.buildPayload()
 
                 const res: any = drawerType.value === 'create'
                     ? await createPolicy(payload)

@@ -93,6 +93,12 @@ func (s *Server) apiRouter() error {
 		policyApi.GET("/list", s.listPolicies)
 		policyApi.PUT("/update", s.createOrUpdatePolicy)
 		policyApi.POST("/create", s.createOrUpdatePolicy)
+		policyApi.POST("/preview", s.handlePreviewPolicy())
+		policyApi.GET("/export", s.handleExportPolicies())
+		policyApi.POST("/import", s.handleImportPolicies())
+		policyApi.GET("/status", s.handlePolicyDeliveryStatus())
+		policyApi.GET("/flows/stats", s.handlePolicyFlowStats())
+		policyApi.POST("/translate", ipLimiter.Middleware(10.0/60, 3), s.handleTranslatePolicy())
 		policyApi.DELETE("/:name", s.deletePolicy)
 	}
 

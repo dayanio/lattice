@@ -36,6 +36,7 @@ func migrate(db *gorm.DB) error {
 		&models.PeerIdentity{},
 		&models.Peer{},
 		&models.EnrollmentToken{},
+		&models.PolicyVersion{},
 		&models.AgentIdentity{},
 	)
 }
