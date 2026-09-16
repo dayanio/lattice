@@ -39,6 +39,10 @@ final class TunnelManager: ObservableObject {
     /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
     @Published private(set) var peerStates: [String: String] = [:]
 
+    /// 本 App 会话内连接建立的时刻（spec §六：冷启动无法取回系统真实起点，
+    /// 用"发现连接的时刻"作为计时起点，离开 connected 即清空）。
+    @Published private(set) var connectedSince: Date?
+
     /// The management server this profile points at (panel subtitle).
     var serverURL: String? {
         (manager?.protocolConfiguration as? NETunnelProviderProtocol)?.serverAddress
@@ -66,6 +70,15 @@ final class TunnelManager: ObservableObject {
                 }
             }
         )
+    }
+
+    /// UI 侧连接态（ConnectionHero 消费；不暴露 NEVPNStatus 给组件层）。
+    var connectionState: ConnectionState {
+        switch status {
+        case .connected: return .connected
+        case .connecting, .disconnecting, .reasserting: return .connecting
+        default: return .disconnected
+        }
     }
 
     private var manager: NETunnelProviderManager?
@@ -158,8 +171,10 @@ final class TunnelManager: ObservableObject {
     private func refreshStatus() {
         status = manager?.connection.status ?? .invalid
         if status == .connected {
+            if connectedSince == nil { connectedSince = Date() }
             startStatePoller()
         } else {
+            connectedSince = nil
             stopStatePoller()
             if peerStates.isEmpty == false {
                 peerStates = [:]
