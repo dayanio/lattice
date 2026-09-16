@@ -293,7 +293,13 @@ type Config struct {
 	// LATTICE_RELAY_URL.
 	RelayAdvertiseURL string `mapstructure:"relay-advertise-url"`
 	RelayQuicURL      string `mapstructure:"relay-quic-url"` // QUIC relay connection address, empty=disabled
-	StunServerURL     string `mapstructure:"stun-url"`       // STUN server address for ICE NAT traversal
+	// LrpAuthToken is the shared secret LRP relay clients must present in
+	// their Register frame. Empty disables relay authentication (legacy
+	// open relay). Configure the same value on the relay server side
+	// (lrper / latticed / manager lrper); clients receive it via the
+	// "?token=..." query parameter appended to the relay address.
+	LrpAuthToken  string `mapstructure:"lrp-auth-token"`
+	StunServerURL string `mapstructure:"stun-url"` // STUN server address for ICE NAT traversal
 	PublicIP          string `mapstructure:"public-ip"`
 	Port              int    `mapstructure:"port"`          // STUN service port, default 3478
 	WgPort            int    `mapstructure:"wg-port"`       // WireGuard/ICE UDP listen port, default 51820
@@ -635,6 +641,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("relay-url", ":6266")
 	v.SetDefault("relay-advertise-url", "")
 	v.SetDefault("relay-quic-url", "")
+	v.SetDefault("lrp-auth-token", "")
 	v.SetDefault("port", 3478)
 	v.SetDefault("wg-port", 51820)
 	v.SetDefault("enforcer-mode", "auto")

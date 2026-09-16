@@ -52,6 +52,7 @@ func main() {
 	fs.StringP("addr", "l", ":6266", "TCP relay listen address")
 	fs.BoolP("enable-tls", "", false, "enable TLS on TCP listener")
 	fs.StringP("quic-addr", "", "", "QUIC relay listen address (e.g. :6267); empty disables QUIC")
+	fs.StringP("lrp-auth-token", "", "", "shared secret clients must present to register (empty disables auth)")
 	fs.StringP("level", "", "info", "log level: debug, info, warn, error, silent")
 
 	if err := cmd.Execute(); err != nil {
@@ -70,7 +71,7 @@ func run(flags *config.Config) error {
 		if err != nil {
 			log.GetLogger("lrper").Warn("failed to generate TLS cert, QUIC disabled", "err", err)
 		} else {
-			qs := relay.NewQUICServer(server.Manager())
+			qs := relay.NewQUICServer(server.Manager(), flags.LrpAuthToken)
 			go func() {
 				if startErr := qs.Start(flags.RelayQuicURL, tlsCfg); startErr != nil {
 					log.GetLogger("lrper").Error("QUIC server stopped", startErr)

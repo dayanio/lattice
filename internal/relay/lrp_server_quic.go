@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
@@ -57,13 +58,16 @@ func (s *quicControlStream) RemoteAddr() net.Addr {
 type QUICServer struct {
 	log        *internallog.Logger
 	sessionMgr *SessionManager
+	authToken  string
 }
 
 // NewQUICServer creates a new QUICServer backed by the given SessionManager.
-func NewQUICServer(manager *SessionManager) *QUICServer {
+// An empty authToken disables Register authentication (legacy open relay).
+func NewQUICServer(manager *SessionManager, authToken string) *QUICServer {
 	return &QUICServer{
 		log:        internallog.GetLogger("lrp-quic"),
 		sessionMgr: manager,
+		authToken:  authToken,
 	}
 }
 
@@ -110,6 +114,25 @@ func (s *QUICServer) handleConn(conn *quic.Conn) {
 	h, err := Unmarshal(headBuf)
 	if err != nil || h.Cmd != Register {
 		s.log.Warn("expected Register command")
+		return
+	}
+
+	// Drain the Register payload (auth token) before validating so the
+	// control stream stays aligned; the size is capped before allocation.
+	var regPayload []byte
+	if h.PayloadLen > 0 {
+		if h.PayloadLen > MaxRegisterPayload {
+			s.log.Warn("register payload too large", "bytes", h.PayloadLen)
+			return
+		}
+		regPayload = make([]byte, h.PayloadLen)
+		if _, err = io.ReadFull(ctrl, regPayload); err != nil {
+			s.log.Error("failed to read Register payload", err)
+			return
+		}
+	}
+	if s.authToken != "" && subtle.ConstantTimeCompare(regPayload, []byte(s.authToken)) != 1 {
+		s.log.Warn("relay register rejected: bad or missing auth token")
 		return
 	}
 

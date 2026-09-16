@@ -43,7 +43,10 @@ type QUICClient struct {
 }
 
 // NewQUICClient creates a new QUIC LRP client, connects, and registers.
+// The URL may carry a "?token=secret" query parameter; it is stripped
+// before dialing and presented in the Register frame.
 func NewQUICClient(ctx context.Context, localID infra.PeerID, url string, onMessage func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error) (*QUICClient, error) {
+	serverURL, authToken := splitURLToken(url)
 	ctx, cancel := context.WithCancel(ctx)
 	c := &QUICClient{
 		lrpClient: &lrpClient{
@@ -51,7 +54,8 @@ func NewQUICClient(ctx context.Context, localID infra.PeerID, url string, onMess
 			cancel:    cancel,
 			log:       log.GetLogger("lrp-quic"),
 			localId:   localID,
-			serverURL: url,
+			serverURL: serverURL,
+			authToken: authToken,
 			probeCh:   make(chan *Task, probeChanSize),
 			onMessage: onMessage,
 		},

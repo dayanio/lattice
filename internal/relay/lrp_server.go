@@ -16,6 +16,7 @@ package relay
 
 import (
 	"bufio"
+	"crypto/subtle"
 	"crypto/tls"
 	"io"
 	"log"
@@ -32,12 +33,14 @@ type Server struct {
 	log        *internallog.Logger
 	server     *http.Server
 	sessionMgr *SessionManager
+	authToken  string
 }
 
 func NewServer(flags *config.Config) *Server {
 	s := &Server{
 		log:        internallog.GetLogger("bolt"),
 		sessionMgr: NewSessionManager(),
+		authToken:  flags.LrpAuthToken,
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/lrp/v1/upgrade", s.boltUpgradeHandler)
@@ -98,6 +101,16 @@ func (s *Server) boltUpgradeHandler(w http.ResponseWriter, r *http.Request) {
 	s.handleBoltSession(conn, bufrw)
 }
 
+// checkRegisterToken validates the Register frame payload against the
+// configured shared token. Empty server token disables auth (legacy open
+// relay). Comparison is constant-time.
+func (s *Server) checkRegisterToken(payload []byte) bool {
+	if s.authToken == "" {
+		return true
+	}
+	return subtle.ConstantTimeCompare(payload, []byte(s.authToken)) == 1
+}
+
 func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 	stream := &ReadWriterConn{Conn: conn, ReadWriter: bufrw}
 	defer stream.Close() //nolint:errcheck
@@ -113,6 +126,25 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 	header, err := Unmarshal(headBuf)
 	if err != nil || header.Cmd != Register {
 		s.log.Warn("expected Register command", "err", err)
+		return
+	}
+
+	// Drain the Register payload (auth token) before validating so the
+	// frame stream stays aligned; the size is capped before allocation.
+	var regPayload []byte
+	if header.PayloadLen > 0 {
+		if header.PayloadLen > MaxRegisterPayload {
+			s.log.Warn("register payload too large", "from", header.ToID, "bytes", header.PayloadLen)
+			return
+		}
+		regPayload = make([]byte, header.PayloadLen)
+		if _, err = io.ReadFull(stream, regPayload); err != nil {
+			s.log.Error("failed to read Register payload", err)
+			return
+		}
+	}
+	if !s.checkRegisterToken(regPayload) {
+		s.log.Warn("relay register rejected: bad or missing auth token", "from", header.ToID)
 		return
 	}
 

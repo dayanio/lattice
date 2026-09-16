@@ -21,6 +21,17 @@ import (
 
 const HeaderSize = 12
 
+// MaxRegisterPayload bounds the Register frame payload (the shared auth
+// token). Anything larger is a protocol violation — the connection is
+// rejected before any sized allocation happens, so a crafted header cannot
+// force the relay into a huge allocation.
+const MaxRegisterPayload = 512
+
+// MaxForwardPayload bounds Forward/Probe payload sizes on the relay server
+// read path. WireGuard packets are at most 65535 bytes; anything claiming to
+// be larger is a protocol violation.
+const MaxForwardPayload = 64 << 10
+
 // Commands
 const (
 	Register  uint8 = 0x01
