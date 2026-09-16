@@ -44,6 +44,10 @@ func (n *noopSignalService) Send(_ context.Context, _ infra.PeerID, _ []byte) er
 	return nil
 }
 
+func (n *noopSignalService) Publish(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+
 func (n *noopSignalService) Request(_ context.Context, _, _ string, _ []byte) ([]byte, error) {
 	return nil, fmt.Errorf("nats: not connected (noop service)")
 }
@@ -165,6 +169,10 @@ func (s *NatsSignalService) Flush() error {
 
 func (s *NatsSignalService) Send(_ context.Context, peerId infra.PeerID, data []byte) error {
 	subject := fmt.Sprintf("lattice.signals.peers.%s", peerId)
+	return s.nc.Publish(subject, data)
+}
+
+func (s *NatsSignalService) Publish(_ context.Context, subject string, data []byte) error {
 	return s.nc.Publish(subject, data)
 }
 
