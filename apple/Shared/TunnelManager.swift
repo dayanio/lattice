@@ -126,6 +126,30 @@ final class TunnelManager: ObservableObject {
         }
     }
 
+    /// Removes the Lattice VPN profile from system preferences (退出网络).
+    /// Without this the profile lingers, isConfigured stays true, and the
+    /// overview would keep treating the device as joined.
+    func removeProfile(completion: (() -> Void)? = nil) {
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            let stale = (managers ?? []).filter {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.tunnelBundleID
+            }
+            let group = DispatchGroup()
+            for m in stale {
+                group.enter()
+                m.removeFromPreferences { _ in group.leave() }
+            }
+            group.notify(queue: .main) {
+                self.manager = nil
+                self.isConfigured = false
+                self.status = .invalid
+                self.connectedSince = nil
+                self.peerStates = [:]
+                completion?()
+            }
+        }
+    }
+
     private func createProfile(serverURL: String, token: String, name: String, completion: ((String?) -> Void)? = nil) {
         let proto = NETunnelProviderProtocol()
         proto.providerBundleIdentifier = Self.tunnelBundleID

@@ -126,19 +126,14 @@ struct SettingsView: View {
 
     private func leaveNetwork() {
         tunnel.disconnect()
-        UserDefaults.standard.removeObject(forKey: "lattice.serverURL")
-        UserDefaults.standard.removeObject(forKey: "lattice.nodeName")
-        UserDefaults.standard.removeObject(forKey: "lattice.authToken")
-        UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
-        UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
-        KeychainStore.delete("lattice.password")
-        // Actual VPN-profile removal happens the same way TunnelManager.saveJoin
-        // already does it (removeFromPreferences for the stale profile) — the
-        // next join flow's saveJoin call handles cleanup, so there is nothing
-        // further to do here beyond clearing local state and forcing RootView
-        // to re-show the join flow, which happens because isConfigured/
-        // isLoggedIn now evaluate false the next time evaluateJoinState() runs
-        // (RootView.onAppear) — trigger that by reloading:
-        tunnel.load()
+        tunnel.removeProfile {
+            UserDefaults.standard.removeObject(forKey: "lattice.serverURL")
+            UserDefaults.standard.removeObject(forKey: "lattice.nodeName")
+            UserDefaults.standard.removeObject(forKey: "lattice.authToken")
+            UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
+            UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
+            KeychainStore.delete("lattice.password")
+            tunnel.load()
+        }
     }
 }
