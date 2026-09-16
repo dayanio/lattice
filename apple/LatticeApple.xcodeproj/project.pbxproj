@@ -32,10 +32,12 @@
 		70634B99C412A1430F456CB2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */; };
 		7B013D63F49DB80AF2D745ED /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 		7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B18389E61765B68DB7CF7D /* DesignComponents.swift */; };
+		868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 960BD20764F178AA8EE601C2 /* ExitNodeView.swift */; };
 		A8FEB6A60B7D5B4254818DCA /* NetworkPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */; };
 		B3C7A14C0465C3DF7DDEF3E2 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		B78ADF07D928BBC23F1C2C5A /* DesignComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B18389E61765B68DB7CF7D /* DesignComponents.swift */; };
 		C01C46866068658B9D68BC86 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D60E634E669109A674D97AC /* KeychainStore.swift */; };
+		C389EB4080C7F9FD556938E8 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */; };
 		C5D855A3DA02C11765207DDE /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		CB573F157F641243D23A8271 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
 		E67E73C171D445673D559589 /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
@@ -123,10 +125,12 @@
 		3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinPayload.swift; sourceTree = "<group>"; };
 		4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
+		4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		7D9A63EC1133A466D5C858C6 /* StatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusView.swift; sourceTree = "<group>"; };
 		8287DD726BF401E4637ECBC7 /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8D60E634E669109A674D97AC /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		960BD20764F178AA8EE601C2 /* ExitNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitNodeView.swift; sourceTree = "<group>"; };
 		A087BE65958F460FCF0CC468 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
 		A40878B1329E02B2C70EB9E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkPages.swift; sourceTree = "<group>"; };
@@ -180,10 +184,12 @@
 		0171ED0F822E990AE5A368A9 /* Lattice */ = {
 			isa = PBXGroup;
 			children = (
+				960BD20764F178AA8EE601C2 /* ExitNodeView.swift */,
 				A087BE65958F460FCF0CC468 /* LatticeApp.swift */,
 				293355084BBA1A64A7029EB5 /* PeerDetailView.swift */,
 				3A96A5BA984924A4BE08A5B2 /* QRScannerView.swift */,
 				C0665648C57C97A61F3F0A51 /* RootView.swift */,
+				4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */,
 				7D9A63EC1133A466D5C858C6 /* StatusView.swift */,
 			);
 			path = Lattice;
@@ -435,6 +441,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */,
+				868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */,
 				FCF81D8DC792F9C1BC8000EF /* JoinPayload.swift in Sources */,
 				00140F5ED99BBE357CC1F951 /* KeychainStore.swift in Sources */,
 				616890BBE0D3865DDF79A5E8 /* LatticeAPI.swift in Sources */,
@@ -442,6 +449,7 @@
 				02AAD2A81C61D9265999E855 /* PeerDetailView.swift in Sources */,
 				4C67BC58EF90C9FA7420538A /* QRScannerView.swift in Sources */,
 				42F5C0F09765D9837FE4E78C /* RootView.swift in Sources */,
+				C389EB4080C7F9FD556938E8 /* SettingsView.swift in Sources */,
 				52E2CA3CA26E7E2C2864CAD5 /* StatusView.swift in Sources */,
 				18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */,
 				6830D61E55C183794559B204 /* TunnelManager.swift in Sources */,
