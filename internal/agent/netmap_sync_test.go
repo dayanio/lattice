@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,15 +63,16 @@ func waitForSync(t *testing.T, timeout time.Duration, cond func() bool, msg stri
 
 func TestNetmapSync_AppliesWhenVersionChanges(t *testing.T) {
 	rec := &syncRecorder{}
-	version := "v1"
-	fetch := func() (*infra.Message, error) { return msgWithVersion(version), nil }
+	var version atomic.Value // string — read by the loop's fetch closure
+	version.Store("v1")
+	fetch := func() (*infra.Message, error) { return msgWithVersion(version.Load().(string)), nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go RunNetmapSync(ctx, 20*time.Millisecond, fetch, rec.apply)
 
 	waitForSync(t, 2*time.Second, func() bool { return rec.count() >= 1 }, "initial apply")
-	version = "v2"
+	version.Store("v2")
 	waitForSync(t, 2*time.Second, func() bool { return rec.count() >= 2 }, "apply after version change")
 }
 
@@ -96,9 +98,10 @@ func TestNetmapSync_SkipsSameVersion(t *testing.T) {
 
 func TestNetmapSync_ContinuesAfterFetchError(t *testing.T) {
 	rec := &syncRecorder{}
-	fail := true
+	var fail atomic.Bool
+	fail.Store(true)
 	fetch := func() (*infra.Message, error) {
-		if fail {
+		if fail.Load() {
 			return nil, errors.New("boom")
 		}
 		return msgWithVersion("v1"), nil
@@ -108,7 +111,7 @@ func TestNetmapSync_ContinuesAfterFetchError(t *testing.T) {
 	defer cancel()
 	go RunNetmapSync(ctx, 20*time.Millisecond, fetch, rec.apply)
 
-	fail = false
+	fail.Store(false)
 	waitForSync(t, 2*time.Second, func() bool { return rec.count() >= 1 },
 		"fetch errors must not stop the loop")
 }

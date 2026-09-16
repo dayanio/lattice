@@ -491,17 +491,34 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		return nil, err
 	}
 
-	// Control-plane push: refresh the netmap immediately when the server says
+	// Control-plane push: refresh the netmap shortly after the server says
 	// something changed (peer joined/left, endpoint pinned, routes edited),
-	// instead of waiting for the next poll cycle.
-	netmapSubject := infra.NetmapChangedSubject(localIdentity.AppID)
-	if err = natsSignalService.SubscribeRaw(netmapSubject, func() {
-		refreshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if rErr := node.RefreshConfig(refreshCtx); rErr != nil {
-			node.logger.Warn("netmap-changed notification: refresh failed", "err", rErr)
+	// instead of waiting for the next poll cycle. Bursts are coalesced with
+	// a 250ms debounce and the fetch+apply runs in the timer's own goroutine,
+	// so a slow control-plane fetch never delays NATS signaling dispatch.
+	var refreshMu sync.Mutex
+	var refreshTimer *time.Timer
+	requestNetmapRefresh := func() {
+		refreshMu.Lock()
+		defer refreshMu.Unlock()
+		if refreshTimer != nil {
+			refreshTimer.Reset(netmapRefreshDebounce)
+			return
 		}
-	}); err != nil {
+		refreshTimer = time.AfterFunc(netmapRefreshDebounce, func() {
+			refreshMu.Lock()
+			refreshTimer = nil
+			refreshMu.Unlock()
+
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if rErr := node.RefreshConfig(refreshCtx); rErr != nil {
+				node.logger.Warn("netmap-changed notification: refresh failed", "err", rErr)
+			}
+		})
+	}
+	netmapSubject := infra.NetmapChangedSubject(localIdentity.AppID)
+	if err = natsSignalService.SubscribeRaw(netmapSubject, requestNetmapRefresh); err != nil {
 		return nil, err
 	}
 	node.token = cfg.Token
@@ -586,8 +603,15 @@ func (c *Node) Start(ctx context.Context) error {
 	return nil
 }
 
+// netmapRefreshDebounce coalesces netmap-changed notification bursts: the
+// server publishes one notification per changed peer, so a workspace-wide
+// change would otherwise trigger one full fetch+apply per peer.
+const netmapRefreshDebounce = 250 * time.Millisecond
+
 // RefreshConfig re-fetches the current network map from the control plane and
-// applies it. It is safe to call concurrently with normal NATS push handlers.
+// applies it. It is safe to call concurrently with normal NATS push handlers:
+// MessageHandler.ApplyFullConfig serializes concurrent applies, and a fetch
+// whose ConfigVersion matches the last applied one is skipped as a no-op.
 // Sandbox nodes call this periodically as a fallback in case a NATS config-push
 // is dropped (e.g. when the ConfigMap is updated before the subscription is
 // fully established on the broker).
@@ -598,6 +622,13 @@ func (c *Node) RefreshConfig(ctx context.Context) error {
 	remoteCfg, err := c.GetNetworkMap()
 	if err != nil {
 		return err
+	}
+	// Skip redundant full applies when nothing changed since the last
+	// successful apply: the server fans one workspace change out to every
+	// peer, so most notifications arrive with an already-applied version.
+	if v := remoteCfg.ConfigVersion; v != "" && v == c.AppliedVersion() {
+		c.logger.Debug("netmap refresh skipped: version already applied", "version", v)
+		return nil
 	}
 	return c.messageHandler.ApplyFullConfig(ctx, remoteCfg)
 }
