@@ -14,7 +14,25 @@
 
 package infra
 
-import "context"
+import (
+	"context"
+	"regexp"
+	"strings"
+)
+
+// appIDUnsafe matches everything a NATS subject token may not contain
+// (subjects are dot-separated; spaces and most specials are illegal).
+var appIDUnsafe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+// NormalizeAppID collapses a client-supplied AppID into a NATS-safe token.
+// Device names arrive with spaces ("MacBook Pro", "iPhone 15 Pro Max"),
+// which would produce illegal subjects like lattice.signals.peers.MacBook
+// Pro.netmap and silently break per-peer push. Apply identically on the
+// client (before register) and the server (at registration) so both sides
+// derive the same subject for the same device.
+func NormalizeAppID(id string) string {
+	return appIDUnsafe.ReplaceAllString(strings.TrimSpace(id), "-")
+}
 
 // NetmapChangedSubject returns the NATS subject an agent with the given
 // AppID subscribes to for "your netmap changed, refresh now" notifications.

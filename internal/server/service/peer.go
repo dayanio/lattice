@@ -424,6 +424,10 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if dto.Token == "" {
 		return nil, fmt.Errorf("token is empty")
 	}
+	// NATS subjects are derived from the AppID (per-peer push); normalize
+	// client-supplied IDs (device names carry spaces) before any lookup or
+	// persistence.
+	dto.AppID = infra.NormalizeAppID(dto.AppID)
 	tok, err := p.store.EnrollmentTokens().GetByToken(ctx, dto.Token)
 	if err != nil {
 		return nil, fmt.Errorf("token not exists")

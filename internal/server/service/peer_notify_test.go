@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/db/gormstore"
@@ -86,4 +87,38 @@ func TestSetRouteSelectionStandalone_NotifiesAllPeers(t *testing.T) {
 
 	require.Contains(t, fake.subjects, infra.NetmapChangedSubject("app-a"))
 	require.Contains(t, fake.subjects, infra.NetmapChangedSubject("app-b"))
+}
+
+func TestRegisterStandalone_NormalizesAppID(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Peer{}, &models.EnrollmentToken{}, &models.Policy{}, &models.Workspace{}, &models.UserProfile{},
+	))
+	st, err := gormstore.New(db)
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Home",
+	}))
+	require.NoError(t, st.EnrollmentTokens().Create(ctx, &models.EnrollmentToken{
+		Token: "enr-norm", WorkspaceID: "ws1", ExpiresAt: time.Now().Add(time.Hour),
+	}))
+	fake := &notifyFakeSignal{}
+	svc := service.NewPeerService(nil, st, nil, license.NewVerifier("pro"), fake)
+
+	node, err := svc.Register(context.Background(), &dto.PeerDto{
+		Name: "MacBook Pro", AppID: "MacBook Pro 16", Token: "enr-norm",
+		PublicKey: "pub-norm",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "MacBook-Pro-16", node.AppID, "AppID must be normalized to a NATS-safe token")
+
+	got, err := st.Peers().GetByAppID(ctx, "MacBook-Pro-16")
+	require.NoError(t, err)
+	require.Equal(t, "MacBook-Pro-16", got.AppID)
+
+	// The push subject derived from the normalized ID is a legal NATS subject.
+	require.Equal(t, "lattice.signals.peers.MacBook-Pro-16.netmap",
+		infra.NetmapChangedSubject(got.AppID))
 }

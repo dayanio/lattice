@@ -43,6 +43,10 @@ func RegisterSandboxViaNATS(
 ) (*infra.Peer, error) {
 	pubKey := privKey.PublicKey().String()
 
+	// Keep the client and server derivation identical: the server stores the
+	// normalized AppID, and every later subject/lookup uses the same token.
+	agentName = infra.NormalizeAppID(agentName)
+
 	natsURL, err := discoverNATSURLOnly(ctx, serverURL)
 	if err != nil {
 		return nil, fmt.Errorf("discover NATS: %w", err)
