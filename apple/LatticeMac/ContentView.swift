@@ -52,7 +52,7 @@ struct ContentView: View {
             if let detail = detailPeer {
                 PeerDetailView(
                     peer: detail,
-                    quality: tunnel.peerStates[detail.name],
+                    quality: tunnel.peerStates[detail.appID],
                     onBack: { detailPeer = nil },
                     onRename: { name in
                         renameText = peers.first { $0.name == name }?.displayName ?? ""
@@ -265,7 +265,7 @@ struct ContentView: View {
     private func peerRow(_ peer: PeerNode) -> some View {
         PeerRow(
             peer: peer,
-            quality: tunnel.peerStates[peer.name],
+            quality: tunnel.peerStates[peer.appID],
             onRename: { name in
                 if inPanel {
                     UIState.shared.detailPeerName = peer.name
@@ -566,6 +566,7 @@ struct PeerRow: View {
         case "lrp-ready": return ("经中继", .orange)
         case "probing", "created": return ("连接中", .secondary)
         case "failed": return ("失败", .red)
+        case "closed": return ("不可达", .secondary)
         default: return nil
         }
     }

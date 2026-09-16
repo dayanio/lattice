@@ -144,6 +144,7 @@ struct PeerDetailView: View {
         case "lrp-ready": return ("经中继", .orange)
         case "probing", "created": return ("连接中", .secondary)
         case "failed": return ("失败", .red)
+        case "closed": return ("不可达", .secondary)
         default: return nil
         }
     }
