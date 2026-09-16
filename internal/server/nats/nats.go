@@ -167,6 +167,16 @@ func (s *NatsSignalService) Flush() error {
 	return s.nc.Flush()
 }
 
+// SubscribeRaw subscribes to subject with no payload parsing — for simple
+// control-plane notifications (like netmap-changed pings) that aren't
+// signal.SignalPacket-shaped.
+func (s *NatsSignalService) SubscribeRaw(subject string, onMessage func()) error {
+	_, err := s.nc.Subscribe(subject, func(_ *natsgo.Msg) {
+		onMessage()
+	})
+	return err
+}
+
 func (s *NatsSignalService) Send(_ context.Context, peerId infra.PeerID, data []byte) error {
 	subject := fmt.Sprintf("lattice.signals.peers.%s", peerId)
 	return s.nc.Publish(subject, data)

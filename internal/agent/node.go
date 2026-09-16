@@ -483,6 +483,20 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	if err = natsSignalService.Subscribe(fmt.Sprintf("%s.%s", "lattice.signals.peers", localIdentity), node.probeFactory.Handle); err != nil {
 		return nil, err
 	}
+
+	// Control-plane push: refresh the netmap immediately when the server says
+	// something changed (peer joined/left, endpoint pinned, routes edited),
+	// instead of waiting for the next poll cycle.
+	netmapSubject := infra.NetmapChangedSubject(localIdentity.AppID)
+	if err = natsSignalService.SubscribeRaw(netmapSubject, func() {
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if rErr := node.RefreshConfig(refreshCtx); rErr != nil {
+			node.logger.Warn("netmap-changed notification: refresh failed", "err", rErr)
+		}
+	}); err != nil {
+		return nil, err
+	}
 	node.token = cfg.Token
 
 	// Re-register and re-apply the network map whenever NATS reconnects.
