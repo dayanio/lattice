@@ -14,28 +14,69 @@
 
 import SwiftUI
 
+/// 主题三选（spec §五），@AppStorage 持久化，键 lattice.theme。
+enum LatticeTheme: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
 struct SettingsView: View {
     @StateObject private var tunnel = TunnelManager.shared
     @State private var showingLeaveConfirm = false
+    @AppStorage("lattice.theme") private var theme = LatticeTheme.system.rawValue
 
     var body: some View {
         NavigationStack {
             List {
-                Section("网络") {
-                    LabeledContent("服务器", value: tunnel.serverURL ?? "—")
-                    NavigationLink("退出节点") {
-                        ExitNodeView()
+                Section {
+                    HStack(spacing: 12) {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 40))
+                            .foregroundColor(LatticePalette.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin")
+                                .font(.system(.body, weight: .semibold))
+                            Text(tunnel.serverURL ?? "—")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
                     }
+                    .padding(.vertical, 4)
                 }
 
-                Section {
-                    Button("退出网络", role: .destructive) {
-                        showingLeaveConfirm = true
+                Section("网络") {
+                    NavigationLink("退出节点") { ExitNodeView() }
+                    LabeledContent("本机节点", value: UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "—")
+                }
+
+                Section("偏好") {
+                    Picker("主题", selection: $theme) {
+                        ForEach(LatticeTheme.allCases) { t in
+                            Text(t.label).tag(t.rawValue)
+                        }
                     }
                 }
 
                 Section {
                     LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
+                }
+
+                Section {
+                    Button("退出网络", role: .destructive) { showingLeaveConfirm = true }
                 }
             }
             .navigationTitle("设置")
