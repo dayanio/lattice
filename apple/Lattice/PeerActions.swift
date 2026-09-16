@@ -25,6 +25,7 @@ enum PeerActions {
         case "lrp-ready": return ("经中继", LatticePalette.relay)
         case "probing", "created": return ("连接中", LatticePalette.neutral)
         case "failed": return ("失败", LatticePalette.blocked)
+        case "closed": return ("不可达", LatticePalette.neutral)
         default: return nil
         }
     }
