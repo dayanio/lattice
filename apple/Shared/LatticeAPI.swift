@@ -65,6 +65,15 @@ final class LatticeAPI {
                           body: ["name": name, "displayName": displayName])
     }
 
+    // Pins a peer's real reachable address (IP:port), bypassing automatic
+    // discovery for topologies where it fails (e.g. a NATed container with
+    // a published port). An empty string clears the pin, reverting to
+    // automatic discovery.
+    func setPeerEndpoint(_ name: String, endpoint: String) async throws {
+        try await request(method: "PUT", path: "/api/v1/peers/update",
+                          body: ["name": name, "endpoint": endpoint])
+    }
+
     func setPeerDisabled(_ name: String, _ disabled: Bool) async throws {
         let action = disabled ? "disable" : "enable"
         try await request(method: "PUT", path: "/api/v1/peers/\(encodePath(name))/\(action)")

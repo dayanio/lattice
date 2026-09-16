@@ -36,6 +36,8 @@ struct ContentView: View {
     @StateObject private var tunnel = TunnelManager.shared
     @State private var renameTarget: PeerNode?
     @State private var renameText = ""
+    @State private var endpointTarget: PeerNode?
+    @State private var endpointText = ""
     @State private var deleteTarget: PeerNode?
     @State private var opError = ""
     @State private var detailPeer: PeerNode?
@@ -55,6 +57,10 @@ struct ContentView: View {
                     onRename: { name in
                         renameText = peers.first { $0.name == name }?.displayName ?? ""
                         renameTarget = detailPeer
+                    },
+                    onSetEndpoint: { _ in
+                        endpointText = ""
+                        endpointTarget = detailPeer
                     },
                     onToggleDisabled: {
                         Task {
@@ -80,11 +86,25 @@ struct ContentView: View {
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
         )) {
-            TextField("显示名称", text: $renameText)
-            Button("保存") { Task { await renamePeer() } }
-            Button("取消", role: .cancel) { renameTarget = nil }
+            if let target = renameTarget {
+                TextField("显示名称", text: $renameText)
+                Button("保存") { Task { await renamePeer(target) } }
+                Button("取消", role: .cancel) { renameTarget = nil }
+            }
         } message: {
             Text("只改显示名称，不影响节点的网络身份。")
+        }
+        .alert("设置静态地址", isPresented: Binding(
+            get: { endpointTarget != nil },
+            set: { if !$0 { endpointTarget = nil } }
+        )) {
+            if let target = endpointTarget {
+                TextField("IP:端口，如 203.0.113.5:51820", text: $endpointText)
+                Button("保存") { Task { await setEndpoint(target) } }
+                Button("取消", role: .cancel) { endpointTarget = nil }
+            }
+        } message: {
+            Text("手动指定该节点的真实可达地址，跳过自动打洞。留空清除，恢复自动探测。")
         }
         .confirmationDialog(
             "删除节点 \(deleteTarget?.shownName ?? "")？",
@@ -486,14 +506,21 @@ struct ContentView: View {
         }
     }
 
-    private func renamePeer() async {
-        guard let target = renameTarget else { return }
-        renameTarget = nil
+    private func renamePeer(_ target: PeerNode) async {
         do {
             try await LatticeAPI.shared.renamePeer(target.name, displayName: renameText)
             await loadPeers()
         } catch {
             opError = "重命名失败: \(error.localizedDescription)"
+        }
+    }
+
+    private func setEndpoint(_ target: PeerNode) async {
+        do {
+            try await LatticeAPI.shared.setPeerEndpoint(target.name, endpoint: endpointText)
+            await loadPeers()
+        } catch {
+            opError = "设置静态地址失败: \(error.localizedDescription)"
         }
     }
 
