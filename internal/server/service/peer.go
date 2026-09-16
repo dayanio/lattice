@@ -15,9 +15,9 @@
 package service
 
 import (
+	"cmp"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -80,6 +80,9 @@ const (
 )
 
 func (p *peerService) UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (*vo.PeerVo, error) {
+	if p.netmapBuilder != nil {
+		return p.updatePeerStandalone(ctx, peerDto)
+	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: peerDto.Namespace, Name: peerDto.Name}, &peer); err != nil {
 		return nil, err
@@ -343,15 +346,11 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		if err != nil {
 			return nil, err
 		}
-		credential, err := randomToken()
-		if err != nil {
-			return nil, err
-		}
 		peer = &models.Peer{
 			WorkspaceID: tok.WorkspaceID,
-			Name:        dto.Name,
+			Name:        cmp.Or(dto.Name, dto.AppID), // agents may register without a display name
 			AppID:       dto.AppID,
-			Token:       credential,
+			Token:       dto.Token, // K8s semantics: the agent polls GetNetMap with its enrollment token
 			Address:     address,
 		}
 	}
@@ -359,6 +358,9 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	peer.Endpoint = dto.Endpoint
 	peer.Hostname = dto.Hostname
 	peer.Platform = dto.Platform
+	if peer.Name == "" {
+		peer.Name = cmp.Or(dto.Name, dto.AppID) // backfill legacy registrations
+	}
 	now := time.Now()
 	peer.LastSeenAt = &now
 	if err := p.store.Peers().Update(ctx, peer); err != nil {
@@ -409,6 +411,9 @@ func (p *peerService) checkNodeLimitStandalone(ctx context.Context) error {
 func (p *peerService) UpdateStatus(_ context.Context, _ int) error { return nil }
 
 func (p *peerService) DisablePeer(ctx context.Context, namespace, name string) error {
+	if p.netmapBuilder != nil {
+		return p.setPeerDisabledStandalone(ctx, name, true)
+	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &peer); err != nil {
 		return err
@@ -423,6 +428,9 @@ func (p *peerService) DisablePeer(ctx context.Context, namespace, name string) e
 }
 
 func (p *peerService) EnablePeer(ctx context.Context, namespace, name string) error {
+	if p.netmapBuilder != nil {
+		return p.setPeerDisabledStandalone(ctx, name, false)
+	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &peer); err != nil {
 		return err
@@ -434,6 +442,13 @@ func (p *peerService) EnablePeer(ctx context.Context, namespace, name string) er
 }
 
 func (p *peerService) DeletePeer(ctx context.Context, namespace, name string) error {
+	if p.netmapBuilder != nil {
+		peer, err := p.standalonePeerByName(ctx, name)
+		if err != nil {
+			return err
+		}
+		return p.store.Peers().Delete(ctx, peer.ID)
+	}
 	var peer v1alpha1.LatticePeer
 	if err := p.client.GetAPIReader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, &peer); err != nil {
 		return err
@@ -447,6 +462,73 @@ func (p *peerService) DeletePeer(ctx context.Context, namespace, name string) er
 		_ = p.client.Delete(ctx, &cm)
 	}
 	return nil
+}
+
+// standalonePeerByName finds a t_peer row by name within the workspace
+// carried on ctx (standalone mode has no K8s namespace indirection).
+func (p *peerService) standalonePeerByName(ctx context.Context, name string) (*models.Peer, error) {
+	workspaceID, _ := ctx.Value(infra.WorkspaceKey).(string)
+	rows, err := p.store.Peers().ListByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range rows {
+		if r.Name == name {
+			return r, nil
+		}
+	}
+	return nil, fmt.Errorf("peer %q not found", name)
+}
+
+// updatePeerStandalone applies display-name and label changes to the t_peer
+// registry row. The peer's Name is its WG identity and never changes.
+func (p *peerService) updatePeerStandalone(ctx context.Context, peerDto *dto.PeerDto) (*vo.PeerVo, error) {
+	peer, err := p.standalonePeerByName(ctx, peerDto.Name)
+	if err != nil {
+		return nil, err
+	}
+	if peerDto.DisplayName != "" {
+		peer.Description = peerDto.DisplayName
+	}
+	if peerDto.Labels != nil {
+		filtered := make(map[string]string, len(peerDto.Labels))
+		for k, v := range peerDto.Labels {
+			if v != "" {
+				filtered[k] = v
+			}
+		}
+		if blob, jerr := json.Marshal(filtered); jerr == nil {
+			peer.Labels = string(blob)
+		}
+	}
+	if err := p.store.Peers().Update(ctx, peer); err != nil {
+		return nil, err
+	}
+	var labels map[string]string
+	_ = json.Unmarshal([]byte(peer.Labels), &labels)
+	address := peer.Address
+	return &vo.PeerVo{
+		Name:        peer.Name,
+		DisplayName: peer.Description,
+		AppID:       peer.AppID,
+		Labels:      labels,
+		PublicKey:   peer.PublicKey,
+		Platform:    peer.Platform,
+		Address:     &address,
+		Disabled:    peer.Disabled,
+	}, nil
+}
+
+// setPeerDisabledStandalone toggles the t_peer Disabled flag. Disabled peers
+// are excluded from netmaps by the builder, so agents stop dialing them and
+// their own netmap requests come back empty.
+func (p *peerService) setPeerDisabledStandalone(ctx context.Context, name string, disabled bool) error {
+	peer, err := p.standalonePeerByName(ctx, name)
+	if err != nil {
+		return err
+	}
+	peer.Disabled = disabled
+	return p.store.Peers().Update(ctx, peer)
 }
 
 func (p *peerService) Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
@@ -612,14 +694,4 @@ func (p *peerService) ensureDefaultNetwork(ctx context.Context, nsName string) e
 		}
 	}
 	return nil
-}
-
-// randomToken generates a 256-bit random credential for a newly
-// registered peer.
-func randomToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate peer token: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
