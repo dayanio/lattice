@@ -24,6 +24,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -59,19 +60,21 @@ func AllocateAddress(taken []string) (string, error) {
 // ComputedPeers for connection targets, and ComputedRules computed by the
 // shared PolicyEvaluator (via PeerRuleCalculator).
 type NetmapBuilder struct {
-	peers      store.PeerRepository
-	policies   store.PolicyRepository
-	identities store.PeerIdentityRepository
-	logger     logr.Logger
+	peers           store.PeerRepository
+	policies        store.PolicyRepository
+	identities      store.PeerIdentityRepository
+	routeSelections store.PeerRouteSelectionRepository
+	logger          logr.Logger
 }
 
 // NewNetmapBuilder returns a builder over the standalone stores.
-func NewNetmapBuilder(peers store.PeerRepository, policies store.PolicyRepository, identities store.PeerIdentityRepository) *NetmapBuilder {
+func NewNetmapBuilder(peers store.PeerRepository, policies store.PolicyRepository, identities store.PeerIdentityRepository, routeSelections store.PeerRouteSelectionRepository) *NetmapBuilder {
 	return &NetmapBuilder{
-		peers:      peers,
-		policies:   policies,
-		identities: identities,
-		logger:     logr.Discard(),
+		peers:           peers,
+		policies:        policies,
+		identities:      identities,
+		routeSelections: routeSelections,
+		logger:          logr.Discard(),
 	}
 }
 
@@ -114,12 +117,26 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 		NetworkName: peer.WorkspaceID,
 		Peers:       make([]*infra.Peer, 0, len(rows)),
 	}
+	selectedProviderIDs, err := b.routeSelections.ListProviderIDsForConsumer(ctx, peer.WorkspaceID, peer.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list route selections: %w", err)
+	}
+	selected := make(map[string]struct{}, len(selectedProviderIDs))
+	for _, id := range selectedProviderIDs {
+		selected[id] = struct{}{}
+	}
+
 	computedPeers := make([]*infra.Peer, 0, len(rows))
 	for _, row := range rows {
 		if row.Address == "" {
 			continue // still enrolling; not part of the mesh yet
 		}
 		p := dbToInfraPeer(row)
+		if _, ok := selected[row.ID]; ok {
+			if extra := parseAdvertisedRoutes(row.AdvertisedRoutes); len(extra) > 0 {
+				p.AllowedIPs = strings.Join(append([]string{p.AllowedIPs}, extra...), ",")
+			}
+		}
 		network.Peers = append(network.Peers, p)
 		if row.ID != peer.ID {
 			computedPeers = append(computedPeers, p)
@@ -163,6 +180,27 @@ func versionFor(current *infra.Peer, network *infra.Network, policies []*infra.P
 	}{current, network, policies, rules})
 	sum := sha256.Sum256(blob)
 	return hex.EncodeToString(sum[:8])
+}
+
+// parseAdvertisedRoutes decodes the AdvertisedRoutes JSON-array column.
+// Malformed or empty input yields no routes rather than an error — a peer
+// that never declared anything (or has a stale/corrupt value) should just
+// offer nothing, not break netmap building for everyone who selected it.
+func parseAdvertisedRoutes(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var routes []string
+	if err := json.Unmarshal([]byte(raw), &routes); err != nil {
+		return nil
+	}
+	valid := routes[:0]
+	for _, r := range routes {
+		if _, _, err := net.ParseCIDR(r); err == nil {
+			valid = append(valid, r)
+		}
+	}
+	return valid
 }
 
 // dbToInfraPeer converts the registry record into its wire form.

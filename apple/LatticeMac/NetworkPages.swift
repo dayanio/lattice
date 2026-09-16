@@ -16,11 +16,20 @@ import SwiftUI
 
 // MARK: - Network settings page (mockup §02)
 
-/// Exit Node / subnet routes / MagicDNS live here per the mockup. All three
-/// capabilities are roadmap items without control-plane support yet, so the
-/// page renders its final shape with everything disabled + 即将推出 badges.
+/// Exit Node / subnet routes / MagicDNS live here per the mockup. Exit Node
+/// selection is backed by real API calls; subnet-route advertising is a no-op
+/// toggle (CIDR entry UI deferred — see design doc §6.2); MagicDNS stays
+/// disabled until its backend ships.
 struct NetworkSettingsView: View {
     var onBack: () -> Void
+
+    @State private var candidates: [PeerNode] = []
+    @State private var selectedProviders: Set<String> = []
+    @State private var selfName: String = UserDefaults.standard.string(forKey: "lattice.nodeName") ?? (Host.current().localizedName ?? "")
+    @State private var isLoading = true
+    @State private var errorText = ""
+    @State private var advertisingSubnet = false
+    @State private var showingPicker = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -29,15 +38,21 @@ struct NetworkSettingsView: View {
 
             settingsRow(
                 title: "使用退出节点",
-                desc: "全部流量经由所选节点转发",
+                desc: exitNodeDesc,
                 trailing: { Text("›").font(.body).foregroundColor(.secondary) }
             )
+            .onTapGesture { showingPicker = true }
             Divider().padding(.leading, 15)
 
             settingsRow(
                 title: "广播子网路由",
                 desc: "把本机所在局域网开放给 workspace 里的其它设备",
-                trailing: { disabledToggle }
+                trailing: {
+                    Toggle("", isOn: Binding(
+                        get: { advertisingSubnet },
+                        set: { toggleAdvertiseSubnet($0) }
+                    )).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                }
             )
             Divider().padding(.leading, 15)
 
@@ -48,9 +63,94 @@ struct NetworkSettingsView: View {
                 trailing: { disabledToggle }
             )
 
+            if !errorText.isEmpty {
+                Text(errorText).font(.caption2).foregroundColor(.red)
+                    .padding(.horizontal, 15).padding(.top, 6)
+            }
+
             Spacer(minLength: 0)
             Divider()
             footerBar
+        }
+        .task { await load() }
+        .sheet(isPresented: $showingPicker) {
+            exitNodePicker
+        }
+    }
+
+    private var exitNodeDesc: String {
+        if let picked = selectedProviders.first(where: { provider in candidates.first(where: { c in c.name == provider })?.advertisedRoutes.contains("0.0.0.0/0") == true }) {
+            return "当前：\(picked)"
+        }
+        return "全部流量经由所选节点转发 · 当前：无"
+    }
+
+    private func load() async {
+        isLoading = true
+        errorText = ""
+        do {
+            let peers = try await LatticeAPI.shared.listPeers()
+            candidates = peers.filter { !$0.advertisedRoutes.isEmpty }
+            let selected = try await LatticeAPI.shared.listRouteSelections(selfName)
+            selectedProviders = Set(selected)
+            if let mine = peers.first(where: { $0.name == selfName }) {
+                advertisingSubnet = !mine.advertisedRoutes.isEmpty && !mine.advertisedRoutes.contains("0.0.0.0/0")
+            }
+        } catch {
+            errorText = "加载失败: \(error.localizedDescription)"
+        }
+        isLoading = false
+    }
+
+    private func toggleAdvertiseSubnet(_ on: Bool) {
+        advertisingSubnet = on
+        Task {
+            do {
+                // MVP: hand-entered CIDR isn't collected by this pass — see
+                // the design doc §6.2 note that auto-detecting the local
+                // subnet is deferred. Advertise a placeholder-free empty
+                // set when turning off; turning on with no real CIDR input
+                // UI yet is intentionally a no-op beyond persisting the
+                // toggle, until a CIDR entry field is added.
+                if !on {
+                    try await LatticeAPI.shared.setAdvertisedRoutes(selfName, routes: [])
+                }
+            } catch {
+                errorText = "更新失败: \(error.localizedDescription)"
+                advertisingSubnet = !on
+            }
+        }
+    }
+
+    private var exitNodePicker: some View {
+        NavigationStack {
+            List {
+                Button("无（关闭）") { Task { await selectExitNode(nil) } }
+                ForEach(candidates.filter { $0.advertisedRoutes.contains("0.0.0.0/0") }) { peer in
+                    Button(peer.name) { Task { await selectExitNode(peer.name) } }
+                }
+            }
+            .navigationTitle("选择退出节点")
+        }
+        .frame(width: 280, height: 320)
+    }
+
+    private func selectExitNode(_ name: String?) async {
+        let oldExitNodes = selectedProviders.filter { provider in
+            candidates.first(where: { c in c.name == provider })?.advertisedRoutes.contains("0.0.0.0/0") == true
+        }
+        do {
+            if let name {
+                try await LatticeAPI.shared.setRouteSelection(consumer: selfName, provider: name, selected: true)
+            }
+            for provider in oldExitNodes where provider != name {
+                try await LatticeAPI.shared.setRouteSelection(consumer: selfName, provider: provider, selected: false)
+            }
+            showingPicker = false
+            await load()
+        } catch {
+            errorText = "选择失败: \(error.localizedDescription)"
+            await load()
         }
     }
 

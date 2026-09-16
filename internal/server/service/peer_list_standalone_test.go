@@ -22,6 +22,7 @@ import (
 	"github.com/alatticeio/lattice/internal/server/dto"
 	"github.com/alatticeio/lattice/internal/server/models"
 	"github.com/alatticeio/lattice/internal/server/service"
+	"github.com/alatticeio/lattice/internal/server/vo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -113,4 +114,32 @@ func TestPeerService_PolicyDeliveryStatus(t *testing.T) {
 	for _, p := range status.Peers {
 		assert.Empty(t, p.AppliedVersion, "no heartbeat means no applied version")
 	}
+}
+
+func TestPeerService_ListPeersStandalone_IncludesAdvertisedRoutes(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Dev",
+	}))
+
+	_, err := svc.Register(ctx, &dto.PeerDto{Name: "gw", AppID: "gw-app", Token: "enr-test-token"})
+	require.NoError(t, err)
+	_, err = svc.Register(ctx, &dto.PeerDto{Name: "plain", AppID: "plain-app", Token: "enr-test-token"})
+	require.NoError(t, err)
+
+	wsCtx := context.WithValue(ctx, infra.WorkspaceKey, "ws1")
+	require.NoError(t, svc.SetAdvertisedRoutes(wsCtx, "gw", []string{"0.0.0.0/0"}))
+
+	page, err := svc.ListPeers(wsCtx, &dto.PageRequest{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, page.List, 2)
+
+	byName := map[string]vo.PeerVo{}
+	for _, pv := range page.List {
+		byName[pv.Name] = pv
+	}
+	assert.Equal(t, []string{"0.0.0.0/0"}, byName["gw"].AdvertisedRoutes)
+	assert.Empty(t, byName["plain"].AdvertisedRoutes)
 }

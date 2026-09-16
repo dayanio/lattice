@@ -25,6 +25,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Latest per-peer connection-quality snapshot, served to the containing
     /// app via handleAppMessage (the app cannot read engine state directly).
     private var latestPeerStates = "{}"
+    /// Latest extra-routes snapshot from the engine (JSON array of CIDRs),
+    /// applied as NEIPv4Routes once the tunnel is up. Empty until the first
+    /// OnRoutesChanged call.
+    private var latestExtraRoutes: [String] = []
+    private var currentOverlayIP = "10.96.0.1"
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         if String(data: messageData, encoding: .utf8) == "peerStates" {
@@ -99,16 +104,56 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Network settings
 
-    private func makeSettings(overlayIP: String) -> NEPacketTunnelNetworkSettings {
+    private func makeSettings(overlayIP: String, extraRoutes: [String]) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: overlayIP)
         settings.mtu = 1280
 
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
-        // Route the overlay range into the tunnel. No default route: Lattice
-        // joins a mesh, it does not replace the uplink.
-        ipv4.includedRoutes = [NEIPv4Route(destinationAddress: "10.96.0.0", subnetMask: "255.255.255.0")]
+        // Route the overlay range into the tunnel always. No default route
+        // unless a selected Exit Node advertises 0.0.0.0/0 (handled below):
+        // Lattice joins a mesh, it does not replace the uplink by default.
+        var included = [NEIPv4Route(destinationAddress: "10.96.0.0", subnetMask: "255.255.255.0")]
+        var excluded: [NEIPv4Route] = []
+
+        for cidr in extraRoutes {
+            guard let route = Self.ipv4Route(fromCIDR: cidr) else { continue }
+            included.append(route)
+        }
+
+        // Exit Node (0.0.0.0/0): exclude this device's own control-plane
+        // server from the tunnel, or every packet talking to it would loop
+        // back through the tunnel it's trying to keep alive. The LRP relay
+        // address isn't known on the Swift side yet — if traffic to it also
+        // needs excluding, that's a follow-up once this is verified against
+        // a real Exit Node (see the design doc's open item on this).
+        if extraRoutes.contains("0.0.0.0/0"),
+           let serverURL = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["serverURL"] as? String,
+           let host = URL(string: serverURL)?.host,
+           let hostIP = Self.ipv4Route(fromCIDR: "\(host)/32") {
+            excluded.append(hostIP)
+        }
+
+        ipv4.includedRoutes = included
+        ipv4.excludedRoutes = excluded.isEmpty ? nil : excluded
         settings.ipv4Settings = ipv4
         return settings
+    }
+
+    /// Parses "a.b.c.d/n" into an NEIPv4Route. Returns nil for anything that
+    /// isn't a plain dotted-quad CIDR (defense in depth — the engine already
+    /// validates on the server side, but this is the last line before an OS
+    /// API call that would otherwise silently no-op on a bad string).
+    private static func ipv4Route(fromCIDR cidr: String) -> NEIPv4Route? {
+        let parts = cidr.split(separator: "/")
+        guard parts.count == 2, let prefixLen = UInt8(parts[1]), prefixLen <= 32 else { return nil }
+        let address = String(parts[0])
+        let mask = prefixLen == 0 ? "0.0.0.0" : ipv4SubnetMask(prefixLength: prefixLen)
+        return NEIPv4Route(destinationAddress: address, subnetMask: mask)
+    }
+
+    private static func ipv4SubnetMask(prefixLength: UInt8) -> String {
+        let mask: UInt32 = prefixLength == 0 ? 0 : ~UInt32(0) << (32 - prefixLength)
+        return [24, 16, 8, 0].map { String((mask >> $0) & 0xFF) }.joined(separator: ".")
     }
 }
 
@@ -134,7 +179,8 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
     /// network settings, then let the system proceed with the tunnel.
     func onTunnelUp(_ overlayIP: String!) {
         NSLog("[Lattice] tunnel up, overlay IP \(overlayIP ?? "?")")
-        setTunnelNetworkSettings(makeSettings(overlayIP: overlayIP ?? "10.96.0.1")) { [weak self] error in
+        currentOverlayIP = overlayIP ?? "10.96.0.1"
+        setTunnelNetworkSettings(makeSettings(overlayIP: currentOverlayIP, extraRoutes: latestExtraRoutes)) { [weak self] error in
             guard let self else { return }
             self.pendingStart?(error)
             self.pendingStart = nil
@@ -147,6 +193,17 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
     /// Per-peer connection-quality snapshot changed (JSON: name → state).
     func onPeerStates(_ statesJSON: String!) {
         latestPeerStates = statesJSON ?? "{}"
+    }
+
+    /// Extra CIDRs to route into the tunnel changed — reapply network
+    /// settings if the tunnel is already up (first call, at startup, is a
+    /// no-op here since onTunnelUp installs settings itself right after).
+    func onRoutesChanged(_ routesJSON: String!) {
+        guard let data = routesJSON?.data(using: .utf8),
+              let routes = try? JSONDecoder().decode([String].self, from: data) else { return }
+        latestExtraRoutes = routes
+        guard pendingStart == nil else { return } // still starting up — onTunnelUp will apply this set
+        setTunnelNetworkSettings(makeSettings(overlayIP: currentOverlayIP, extraRoutes: routes), completionHandler: nil)
     }
 }
 

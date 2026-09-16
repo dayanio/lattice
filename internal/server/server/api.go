@@ -85,6 +85,9 @@ func (s *Server) apiRouter() error {
 		peerApi.PUT("/:name/disable", s.disablePeer)
 		peerApi.PUT("/:name/enable", s.enablePeer)
 		peerApi.DELETE("/:name", s.deletePeerHandler)
+		peerApi.POST("/:name/advertised-routes", s.setAdvertisedRoutes)
+		peerApi.POST("/:name/route-selection", s.setRouteSelection)
+		peerApi.GET("/:name/route-selection", s.listRouteSelections)
 	}
 
 	policyApi := s.Group("/api/v1/policies")
@@ -335,6 +338,44 @@ func (s *Server) deletePeerHandler(c *gin.Context) {
 		return
 	}
 	resp.OK(c, nil)
+}
+
+func (s *Server) setAdvertisedRoutes(c *gin.Context) {
+	name := c.Param("name")
+	var req dto.AdvertisedRoutesDto
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.BadRequest(c, "invalid params")
+		return
+	}
+	if err := s.peerController.SetAdvertisedRoutes(c.Request.Context(), name, req.Routes); err != nil {
+		resp.Error(c, err.Error())
+		return
+	}
+	resp.OK(c, nil)
+}
+
+func (s *Server) setRouteSelection(c *gin.Context) {
+	consumerName := c.Param("name")
+	var req dto.RouteSelectionDto
+	if err := c.ShouldBindJSON(&req); err != nil {
+		resp.BadRequest(c, "invalid params")
+		return
+	}
+	if err := s.peerController.SetRouteSelection(c.Request.Context(), consumerName, req.Provider, req.Selected); err != nil {
+		resp.Error(c, err.Error())
+		return
+	}
+	resp.OK(c, nil)
+}
+
+func (s *Server) listRouteSelections(c *gin.Context) {
+	consumerName := c.Param("name")
+	names, err := s.peerController.ListRouteSelections(c.Request.Context(), consumerName)
+	if err != nil {
+		resp.Error(c, err.Error())
+		return
+	}
+	resp.OK(c, names)
 }
 
 func (s *Server) handleDiscovery() gin.HandlerFunc {
