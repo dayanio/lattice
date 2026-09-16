@@ -31,6 +31,14 @@ struct PeerNode: Identifiable {
     var disabled: Bool = false
     var os: String = "macOS"
     var lastHandshake: String = "—"
+    var appID: String = ""
+    var labels: [String: String]? = nil
+    var lastSeen: String = ""
+    /// True when an AgentIdentity references this peer — AI agents are
+    /// first-class network citizens and get a badge (UI mockup §04).
+    var isAgent: Bool = false
+    /// gVisor sandbox state from the AgentIdentity ("none" | "gvisor" | ...).
+    var sandbox: String? = nil
 
     var shownName: String { displayName.isEmpty ? name : displayName }
 }

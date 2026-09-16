@@ -30,6 +30,11 @@ final class TunnelManager: ObservableObject {
     /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
     @Published private(set) var peerStates: [String: String] = [:]
 
+    /// The management server this profile points at (panel subtitle).
+    var serverURL: String? {
+        (manager?.protocolConfiguration as? NETunnelProviderProtocol)?.serverAddress
+    }
+
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
     private var statePoller: Timer?
