@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> **Status (2026-09-16 evening):** Tasks 1–7 all implemented and committed (`3ba3c2f9`…`6f5fcdbe`). Final iOS code build verified (simulator destination). macOS regression build re-run after the shared-code moves: BUILD SUCCEEDED. App installs and launches in the simulator without crashing. The single unchecked box below (Task 7 Step 5) is the manual on-screen join walkthrough, which still needs a human against a live `latticed`.
+> **Status (2026-09-16 evening):** Tasks 1–7 all implemented and committed (`3ba3c2f9`…`6f5fcdbe`). Final iOS code build verified (simulator destination). macOS regression build re-run after the shared-code moves: BUILD SUCCEEDED. App installs and launches in the simulator without crashing. Join screen driven end-to-end via accessibility automation: URL + enrollment-token fields accept input, tapping 加入网络 surfaces a red "IPC failed" error — this is the engine's WireGuard device IPC (`wferrors.IPCError`) failing because NetworkExtension tunnel providers cannot run in the iOS Simulator (documented Apple limitation), not an app bug. The full join → login → peer-list walkthrough therefore requires a real iPhone (Task 7 Step 5 stays unchecked for that reason).
 
 **Goal:** Build the iOS app's first real version per `docs/superpowers/specs/2026-09-16-ios-app-design.md`: join a network (QR or paste), log into the management API, see connection status and the peer list with live quality, view a peer's read-only details, and pick an Exit Node.
 
