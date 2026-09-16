@@ -30,18 +30,21 @@ import (
 )
 
 type Server struct {
-	log        *internallog.Logger
-	server     *http.Server
-	sessionMgr *SessionManager
-	authToken  string
+	log             *internallog.Logger
+	server          *http.Server
+	sessionMgr      *SessionManager
+	authToken       string
+	requirePeerAuth bool
 }
 
 func NewServer(flags *config.Config) *Server {
 	s := &Server{
-		log:        internallog.GetLogger("bolt"),
-		sessionMgr: NewSessionManager(),
-		authToken:  flags.LrpAuthToken,
+		log:             internallog.GetLogger("bolt"),
+		sessionMgr:      NewSessionManager(),
+		authToken:       flags.LrpAuthToken,
+		requirePeerAuth: flags.LrpRequirePeerAuth,
 	}
+	s.sessionMgr.SetRequirePeerAuth(flags.LrpRequirePeerAuth)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/lrp/v1/upgrade", s.boltUpgradeHandler)
 
@@ -111,6 +114,25 @@ func (s *Server) checkRegisterToken(payload []byte) bool {
 	return subtle.ConstantTimeCompare(payload, []byte(s.authToken)) == 1
 }
 
+// frameWriter is the minimal sink for outgoing frames (TCP stream or QUIC
+// control stream).
+type frameWriter interface {
+	Write(p []byte) (int, error)
+}
+
+// sendFrame writes one complete frame (header + payload) to the stream.
+func sendFrame(w frameWriter, cmd uint8, payload []byte) error {
+	h := Header{PayloadLen: uint32(len(payload)), Cmd: cmd}
+	if _, err := w.Write(h.Marshal()); err != nil {
+		return err
+	}
+	if len(payload) == 0 {
+		return nil
+	}
+	_, err := w.Write(payload)
+	return err
+}
+
 func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 	stream := &ReadWriterConn{Conn: conn, ReadWriter: bufrw}
 	defer stream.Close() //nolint:errcheck
@@ -149,15 +171,45 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 	}
 
 	fromId := uint64(header.ToID)
-	sess := &Session{
-		ID:     fromId,
-		Stream: stream,
-		Type:   "TCP",
-	}
-	s.sessionMgr.Register(fromId, sess)
-	defer s.sessionMgr.Unregister(fromId, sess)
 
-	_ = conn.SetReadDeadline(time.Time{})
+	// ── Per-peer auth (ADR-0004): X25519 challenge-response ─────────────
+	//
+	// Lenient mode (requirePeerAuth=false): the session is inserted
+	// immediately (legacy semantics — old clients must keep working) and
+	// the challenge is opportunistic; the session upgrades to verified
+	// when a valid AuthResponse arrives.
+	//
+	// Strict mode: nothing is inserted until the proof verifies, so an
+	// unauthenticated connection can neither occupy a peer ID nor receive
+	// its traffic. Any frame other than AuthResponse before verification
+	// identifies a legacy or hostile client and is rejected.
+	var sess *Session
+	defer func() {
+		if sess != nil {
+			s.sessionMgr.Unregister(fromId, sess)
+		}
+	}()
+
+	if !s.requirePeerAuth {
+		sess = &Session{ID: fromId, Stream: stream, Type: "TCP"}
+		s.sessionMgr.Register(fromId, sess)
+		_ = conn.SetReadDeadline(time.Time{})
+	} else {
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	}
+
+	var pending *relayChallenge
+	if challengePub, ch, chErr := newChallenge(); chErr == nil {
+		if err := sendFrame(stream, AuthChallenge, challengePub[:]); err == nil {
+			pending = ch
+		} else if s.requirePeerAuth {
+			s.log.Error("failed to send auth challenge", err, "from", fromId)
+			return
+		}
+	} else if s.requirePeerAuth {
+		s.log.Error("failed to generate auth challenge", chErr)
+		return
+	}
 	s.log.Info("session registered", "from", fromId)
 
 	for {
@@ -172,6 +224,43 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 			// corrupt there is no way to resync, so close the session.
 			s.log.Error("invalid lrp header, closing session", err, "from", fromId)
 			break
+		}
+
+		if pending != nil {
+			if h.Cmd == AuthResponse {
+				// Size-check before allocating: a hostile pre-auth client
+				// must not be able to force a sized allocation.
+				if h.PayloadLen > AuthResponsePayload {
+					s.log.Warn("auth response too large, closing session", "from", fromId, "bytes", h.PayloadLen)
+					return
+				}
+				payload := make([]byte, h.PayloadLen)
+				if h.PayloadLen > 0 {
+					if _, err = io.ReadFull(stream, payload); err != nil {
+						break
+					}
+				}
+				if verifyErr := pending.verifyResponse(uint32(fromId), payload); verifyErr != nil {
+					s.log.Warn("peer-auth failed, closing session", "from", fromId, "err", verifyErr)
+					return
+				}
+				if sess != nil {
+					s.sessionMgr.MarkVerified(fromId, sess)
+				} else {
+					sess = &Session{ID: fromId, Stream: stream, Type: "TCP", verified: true}
+					s.sessionMgr.Register(fromId, sess)
+				}
+				pending = nil
+				_ = conn.SetReadDeadline(time.Time{})
+				s.log.Info("peer-auth verified", "from", fromId)
+				continue
+			}
+			// Any other frame before the proof: legacy client.
+			if s.requirePeerAuth {
+				s.log.Warn("legacy client rejected under require-peer-auth", "from", fromId, "cmd", h.Cmd)
+				return
+			}
+			pending = nil // opportunistic upgrade abandoned; serve as legacy
 		}
 
 		switch h.Cmd {

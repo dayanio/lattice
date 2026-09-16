@@ -298,8 +298,13 @@ type Config struct {
 	// open relay). Configure the same value on the relay server side
 	// (lrper / latticed / manager lrper); clients receive it via the
 	// "?token=..." query parameter appended to the relay address.
-	LrpAuthToken  string `mapstructure:"lrp-auth-token"`
-	StunServerURL string `mapstructure:"stun-url"` // STUN server address for ICE NAT traversal
+	LrpAuthToken string `mapstructure:"lrp-auth-token"`
+	// LrpRequirePeerAuth enables the X25519 challenge-response binding a
+	// relay session to the peer's WireGuard private key (ADR-0004). With
+	// it on, legacy clients that cannot prove identity are rejected;
+	// server and agents must both be new enough. Default false.
+	LrpRequirePeerAuth bool   `mapstructure:"lrp-require-peer-auth"`
+	StunServerURL      string `mapstructure:"stun-url"` // STUN server address for ICE NAT traversal
 	PublicIP          string `mapstructure:"public-ip"`
 	Port              int    `mapstructure:"port"`          // STUN service port, default 3478
 	WgPort            int    `mapstructure:"wg-port"`       // WireGuard/ICE UDP listen port, default 51820
@@ -642,6 +647,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("relay-advertise-url", "")
 	v.SetDefault("relay-quic-url", "")
 	v.SetDefault("lrp-auth-token", "")
+	v.SetDefault("lrp-require-peer-auth", false)
 	v.SetDefault("port", 3478)
 	v.SetDefault("wg-port", 51820)
 	v.SetDefault("enforcer-mode", "auto")

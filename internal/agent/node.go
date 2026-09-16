@@ -401,7 +401,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// can fall back to the relay without operator flags.
 	if cfg.Flags.EnableLrp || node.current.LrpUrl != "" {
 		if cfg.Flags.RelayQuicURL != "" {
-			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, node.probeFactory.Handle)
+			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, privateKey, node.probeFactory.Handle)
 		} else {
 			lrpUrl := cfg.Flags.RelayURL
 			if lrpUrl == "" {
@@ -411,7 +411,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 			if lrpUrl != "" {
 				// probeFactory.Handle is passed directly: probeFactory already exists
 				// at this point so no closure is needed on this side of the circular dep.
-				lrp, err = relay.NewTCPClient(ctx, localIdentity.ID(), lrpUrl, node.probeFactory.Handle)
+				lrp, err = relay.NewTCPClient(ctx, localIdentity.ID(), lrpUrl, privateKey, node.probeFactory.Handle)
 			}
 		}
 		if err != nil {

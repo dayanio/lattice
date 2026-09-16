@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -29,6 +30,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	wgconn "golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 var _ infra.Lrp = (*QUICClient)(nil)
@@ -54,20 +56,22 @@ type QUICClient struct {
 // supervisor. The first dial happens in the background: construction does
 // not fail when the relay is unreachable. The URL may carry a
 // "?token=secret" query parameter; it is stripped before dialing and
-// presented in the Register frame.
-func NewQUICClient(ctx context.Context, localID infra.PeerID, url string, onMessage func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error) (*QUICClient, error) {
+// presented in the Register frame. privateKey is this peer's WireGuard
+// private key, used to answer the relay's per-peer auth challenge.
+func NewQUICClient(ctx context.Context, localID infra.PeerID, url string, privateKey wgtypes.Key, onMessage func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error) (*QUICClient, error) {
 	serverURL, authToken := splitURLToken(url)
 	ctx, cancel := context.WithCancel(ctx)
 	c := &QUICClient{
 		lrpClient: &lrpClient{
-			ctx:       ctx,
-			cancel:    cancel,
-			log:       log.GetLogger("lrp-quic"),
-			localId:   localID,
-			serverURL: serverURL,
-			authToken: authToken,
-			probeCh:   make(chan *Task, probeChanSize),
-			onMessage: onMessage,
+			ctx:        ctx,
+			cancel:     cancel,
+			log:        log.GetLogger("lrp-quic"),
+			localId:    localID,
+			serverURL:  serverURL,
+			authToken:  authToken,
+			privateKey: [KeySize]byte(privateKey),
+			probeCh:    make(chan *Task, probeChanSize),
+			onMessage:  onMessage,
 		},
 	}
 
@@ -146,7 +150,46 @@ func (c *QUICClient) Connect() error {
 		c.disconnectIfCurrent(conn)
 		return err
 	}
+	c.doAuthExchange(ctrl)
 	return nil
+}
+
+// doAuthExchange answers the relay's per-peer auth challenge on the control
+// stream. A read timeout means a legacy relay that already accepted the
+// bare Register — the client proceeds unverified. Only this goroutine reads
+// the control stream, so the exchange needs no locking.
+func (c *QUICClient) doAuthExchange(ctrl *quic.Stream) {
+	_ = ctrl.SetReadDeadline(time.Now().Add(authChallengeWait))
+
+	headBuf := make([]byte, HeaderSize)
+	if _, err := io.ReadFull(ctrl, headBuf); err != nil {
+		c.log.Debug("no auth challenge received, assuming legacy relay")
+		return
+	}
+	header, perr := Unmarshal(headBuf)
+	if perr != nil || header.Cmd != AuthChallenge || header.PayloadLen != KeySize {
+		c.log.Warn("unexpected frame while awaiting auth challenge", "cmd", header.Cmd, "err", perr)
+		return
+	}
+	var challenge [KeySize]byte
+	if _, err := io.ReadFull(ctrl, challenge[:]); err != nil {
+		return
+	}
+	resp, err := c.computeAuthResponse(challenge)
+	if err != nil {
+		c.log.Error("compute auth response failed", err)
+		return
+	}
+	h := Header{PayloadLen: uint32(len(resp)), Cmd: AuthResponse, Seq: c.nextSeq()}
+	frame := make([]byte, HeaderSize+len(resp))
+	copy(frame, h.Marshal())
+	copy(frame[HeaderSize:], resp[:])
+	if _, err := ctrl.Write(frame); err != nil {
+		c.log.Warn("send auth response failed", "err", err)
+		return
+	}
+	_ = ctrl.SetReadDeadline(time.Time{})
+	c.log.Debug("peer-auth response sent")
 }
 
 func (c *QUICClient) connectedCh() chan struct{} {

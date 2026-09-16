@@ -31,6 +31,7 @@ import (
 	"github.com/alatticeio/lattice/internal/signal"
 
 	wgconn "golang.zx2c4.com/wireguard/conn"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 var _ infra.Lrp = (*TCPClient)(nil)
@@ -67,6 +68,12 @@ type TCPClient struct {
 	// goroutines that need to wait out a disconnect.
 	connected chan struct{}
 
+	// authPending is set after each successful Register; ReceiveFunc — the
+	// sole reader of the stream once it starts — consumes it and performs
+	// the per-peer auth exchange (doing it in the supervisor would race
+	// the ReceiveFunc reader after a reconnect).
+	authPending atomic.Bool
+
 	closed atomic.Bool
 }
 
@@ -75,20 +82,22 @@ type TCPClient struct {
 // not fail when the relay is unreachable (the agent starts degraded and
 // the supervisor retries with backoff). The URL may carry a
 // "?token=secret" query parameter; it is stripped before dialing and
-// presented in the Register frame.
-func NewTCPClient(ctx context.Context, localID infra.PeerID, url string, onMessage func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error) (*TCPClient, error) {
+// presented in the Register frame. privateKey is this peer's WireGuard
+// private key, used to answer the relay's per-peer auth challenge.
+func NewTCPClient(ctx context.Context, localID infra.PeerID, url string, privateKey wgtypes.Key, onMessage func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error) (*TCPClient, error) {
 	serverURL, authToken := splitURLToken(url)
 	ctx, cancel := context.WithCancel(ctx)
 	c := &TCPClient{
 		lrpClient: &lrpClient{
-			ctx:       ctx,
-			cancel:    cancel,
-			log:       log.GetLogger("lrp-tcp"),
-			localId:   localID,
-			serverURL: serverURL,
-			authToken: authToken,
-			probeCh:   make(chan *Task, probeChanSize),
-			onMessage: onMessage,
+			ctx:        ctx,
+			cancel:     cancel,
+			log:        log.GetLogger("lrp-tcp"),
+			localId:    localID,
+			serverURL:  serverURL,
+			authToken:  authToken,
+			privateKey: [KeySize]byte(privateKey),
+			probeCh:    make(chan *Task, probeChanSize),
+			onMessage:  onMessage,
 		},
 		sendCh: make(chan []byte, sendChanDepth),
 	}
@@ -179,6 +188,7 @@ func (c *TCPClient) Connect() error {
 		c.disconnectIfCurrent(conn)
 		return err
 	}
+	c.authPending.Store(true)
 	return nil
 }
 
@@ -327,6 +337,88 @@ func (c *TCPClient) keepaliveLoop() {
 	}
 }
 
+// performAuthExchange answers the relay's per-peer auth challenge on the
+// just-established connection. Returns true when the caller should proceed
+// reading frames (exchange completed, or the relay turned out to be a
+// legacy one that never challenges); false when the connection was torn
+// down and the outer loop should wait for a reconnect.
+func (c *TCPClient) performAuthExchange(conn net.Conn, reader *bufio.Reader) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(authChallengeWait))
+
+	headBufp := GetHeaderBuffer()
+	headBuf := *headBufp
+	_, err := io.ReadFull(reader, headBuf)
+	if err != nil {
+		PutHeaderBuffer(headBufp)
+		// No challenge in time: a legacy relay already accepted the bare
+		// Register — proceed unverified.
+		c.log.Debug("no auth challenge received, assuming legacy relay")
+		return true
+	}
+	header, perr := Unmarshal(headBuf)
+	PutHeaderBuffer(headBufp)
+	if perr != nil || header.Cmd != AuthChallenge || header.PayloadLen != KeySize {
+		// The frame we consumed cannot be re-interpreted — the stream
+		// framing is lost, so the connection must be rebuilt.
+		c.log.Warn("unexpected frame while awaiting auth challenge", "cmd", headerCmd(header), "err", perr)
+		c.disconnectIfCurrent(conn)
+		return false
+	}
+
+	var challenge [KeySize]byte
+	if _, err = io.ReadFull(reader, challenge[:]); err != nil {
+		c.disconnectIfCurrent(conn)
+		return false
+	}
+	resp, err := c.computeAuthResponse(challenge)
+	if err != nil {
+		c.log.Error("compute auth response failed", err)
+		c.disconnectIfCurrent(conn)
+		return false
+	}
+
+	h := Header{PayloadLen: uint32(len(resp)), Cmd: AuthResponse, Seq: c.nextSeq()}
+	frame := make([]byte, HeaderSize+len(resp))
+	copy(frame, h.Marshal())
+	copy(frame[HeaderSize:], resp[:])
+	if !c.writeFramesTo(conn, [][]byte{frame}) {
+		return false
+	}
+	c.log.Debug("peer-auth response sent")
+	return true
+}
+
+// headerCmd safely extracts the command byte for logging.
+func headerCmd(h *Header) uint8 {
+	if h == nil {
+		return 0
+	}
+	return h.Cmd
+}
+
+// writeFramesTo writes complete frames on the connection identified by
+// conn (no-op failure if the current connection has moved on).
+func (c *TCPClient) writeFramesTo(conn net.Conn, frames [][]byte) bool {
+	c.mu.Lock()
+	cur := c.conn
+	w := c.writer
+	c.mu.Unlock()
+	if cur != conn || w == nil {
+		return false
+	}
+	for _, f := range frames {
+		if _, err := w.Write(f); err != nil {
+			c.disconnectIfCurrent(conn)
+			return false
+		}
+	}
+	if err := w.Flush(); err != nil {
+		c.disconnectIfCurrent(conn)
+		return false
+	}
+	return true
+}
+
 // ReceiveFunc returns a WireGuard ReceiveFunc that reads incoming LRP
 // frames. It survives reconnects: on a connection error it waits for the
 // supervisor to re-establish the connection instead of returning an error
@@ -352,6 +444,15 @@ func (c *TCPClient) ReceiveFunc() wgconn.ReceiveFunc {
 				case <-time.After(500 * time.Millisecond):
 				}
 				continue
+			}
+
+			// Per-peer auth (ADR-0004): answer the relay's challenge before
+			// serving any frame. Consumed here because this goroutine is
+			// the sole reader of the stream once it has started.
+			if c.authPending.CompareAndSwap(true, false) {
+				if !c.performAuthExchange(conn, reader) {
+					continue
+				}
 			}
 
 			// 30s read deadline — lets this goroutine observe closure/timeout

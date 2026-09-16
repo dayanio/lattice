@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"encoding/json"
 
@@ -45,15 +46,16 @@ type writer interface {
 
 // lrpClient holds logic shared between TCP and QUIC clients.
 type lrpClient struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	log       *log.Logger
-	localId   infra.PeerID
-	serverURL string
-	authToken string
-	onMessage func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error
-	probeCh   chan *Task
-	seq       atomic.Uint32
+	ctx        context.Context
+	cancel     context.CancelFunc
+	log        *log.Logger
+	localId    infra.PeerID
+	serverURL  string
+	authToken  string
+	privateKey [KeySize]byte // WireGuard private key, for the per-peer auth proof (ADR-0004)
+	onMessage  func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error
+	probeCh    chan *Task
+	seq        atomic.Uint32
 }
 
 // splitURLToken extracts a "?token=..." query parameter from a relay
@@ -71,6 +73,17 @@ func splitURLToken(addr string) (cleanAddr, token string) {
 		token = q.Get("token")
 	}
 	return cleanAddr, token
+}
+
+// authChallengeWait bounds how long a client waits for the relay's auth
+// challenge after registering. Expiry means the relay is a legacy one that
+// already accepted the bare Register — the client proceeds unverified.
+const authChallengeWait = 3 * time.Second
+
+// computeAuthResponse builds the AuthResponse payload for the relay's
+// challenge: clientPublicKey || DH(clientPrivate, challenge).
+func (c *lrpClient) computeAuthResponse(challenge [KeySize]byte) ([AuthResponsePayload]byte, error) {
+	return answerChallenge(challenge, c.privateKey)
 }
 
 func (c *lrpClient) nextSeq() uint16 {

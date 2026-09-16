@@ -59,7 +59,7 @@ func runLrp(flags *config.Config) error {
 		if err != nil {
 			log.GetLogger("lrp").Warn("failed to generate self-signed TLS, skipping QUIC", "err", err)
 		} else {
-			qs := relay.NewQUICServer(server.Manager(), flags.LrpAuthToken)
+			qs := relay.NewQUICServer(server.Manager(), flags.LrpAuthToken, flags.LrpRequirePeerAuth)
 			go func() {
 				if err := qs.Start(flags.RelayQuicURL, tlsCfg); err != nil {
 					log.GetLogger("lrp").Error("QUIC server error", err)
