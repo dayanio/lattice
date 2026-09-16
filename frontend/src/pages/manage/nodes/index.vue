@@ -831,6 +831,18 @@ const table = useVueTable({
           <p class="text-[10px] text-muted-foreground/50">{{ t('manage.nodes.detail.nameHint') }}</p>
         </div>
 
+        <div v-if="store.drawerType === 'edit'" class="space-y-1.5">
+          <p class="text-[11px] font-medium text-muted-foreground flex items-center gap-1.5">
+            <Network class="size-3" /> {{ t('manage.nodes.detail.staticEndpoint') }}
+          </p>
+          <Input
+            v-model="store.selectedNode.endpoint"
+            placeholder="203.0.113.5:51820"
+            class="h-8 text-xs font-mono"
+          />
+          <p class="text-[10px] text-muted-foreground/50">{{ t('manage.nodes.detail.staticEndpointHint') }}</p>
+        </div>
+
         <Separator v-if="store.drawerType === 'edit'" />
 
         <div class="space-y-2">

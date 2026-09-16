@@ -415,6 +415,8 @@
       "publicKey": "Public Key",
       "customName": "Custom Name",
       "nameHint": "Leave empty to use system default name.",
+"staticEndpoint": "Static Endpoint (Advanced)",
+"staticEndpointHint": "Manually pin this node's real reachable address (IP:port) for cases where automatic hole-punching fails, e.g. a container with a published port behind NAT. Leave blank to use automatic discovery.",
       "labels": "Labels",
       "noLabels": "No labels",
       "addLabel": "Add Label",
