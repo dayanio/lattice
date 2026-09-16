@@ -147,14 +147,28 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
 
     func onEvent(_ event: String!) {
         NSLog("[Lattice] engine event: \(event ?? "")")
-        guard let event, event.hasPrefix("error: "), let pendingStart else { return }
+        guard let event, event.hasPrefix("error: ") else { return }
         let message = String(event.dropFirst("error: ".count))
-        self.pendingStart = nil
-        pendingStart(NSError(
-            domain: "io.lattice.tunnel",
-            code: 2,
-            userInfo: [NSLocalizedDescriptionKey: message]
-        ))
+        if let pendingStart {
+            // Failure during start: surface the reason to NE (and thus to the
+            // containing app) as a failed start.
+            self.pendingStart = nil
+            pendingStart(NSError(
+                domain: "io.lattice.tunnel",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+            return
+        }
+        // Failure AFTER start completed: the engine is dead but NE still
+        // considers the tunnel up. Tear the session down so the UI shows
+        // 未连接 and the next connect tap spawns a fresh engine instead of
+        // silently no-oping against a zombie provider.
+        NSLog("[Lattice] engine failed post-start, tearing down: \(message)")
+        // NEPacketTunnelProvider exposes no callable cancelTunnel in this SDK;
+        // exiting the extension marks the session down in NE, and the next
+        // connect tap spawns a fresh engine instead of a zombie session.
+        exit(0)
     }
 
     func onTunnelUp(_ overlayIP: String!) {

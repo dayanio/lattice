@@ -57,7 +57,11 @@ var (
 // network the agent sits on (e.g. containers reaching a control plane on the
 // host via host.docker.internal, while the host itself uses loopback).
 func discoverNATSURLOnly(ctx context.Context, serverURL string) (string, error) {
-	if override := config.Conf.GetSignalingURL(); override != "" {
+	// Only an explicit override skips discovery. The runtime-discovered URL
+	// (runtimeNATSURL) must NOT: it may be stale (e.g. the server was fixed
+	// or moved since the last start), and a cached loopback URL famously
+	// made remote devices reconnect to themselves forever.
+	if override := config.Conf.SignalingURL; override != "" {
 		return override, nil
 	}
 	d, err := discover(ctx, serverURL)
@@ -267,8 +271,11 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		node.filteringMux6 = filteringMux6
 	}
 
-	// Auto-discover NATS and STUN URLs from server if not already set.
-	if config.Conf.GetSignalingURL() == "" {
+	// Auto-discover NATS and STUN URLs unless an explicit override exists.
+	// Guard on SignalingURL (the operator-provided value), NOT GetSignalingURL()
+	// — the runtime-discovered cache must never suppress a fresh discovery on
+	// a later engine (re)start within the same process.
+	if config.Conf.SignalingURL == "" {
 		var d discoveryResult
 		d, err = discover(ctx, config.Conf.ServerUrl)
 		if err != nil {
