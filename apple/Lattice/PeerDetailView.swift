@@ -1,86 +1,102 @@
 // Copyright 2026 The Lattice Authors, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Use of this source code is governed by the Apache-2.0 license found in LICENSE.
 
 import SwiftUI
 
-/// Read-only peer detail — no rename/disable/delete (device management is
-/// explicitly out of scope for iOS v1, see
-/// docs/superpowers/specs/2026-09-16-ios-app-design.md).
+/// 只读 peer 详情 + 复制/收藏/重命名/停用动作（spec §四）。
 struct PeerDetailView: View {
     let peer: PeerNode
-    var quality: String?
+    let quality: String?
+
+    @StateObject private var favorites = FavoritesStore()
+    @State private var currentDisabled: Bool
+    @State private var showingRename = false
+    @State private var renameText = ""
     @State private var copied = false
+
+    init(peer: PeerNode, quality: String?) {
+        self.peer = peer
+        self.quality = quality
+        _currentDisabled = State(initialValue: peer.disabled)
+    }
 
     var body: some View {
         List {
             Section {
-                LabeledContent("名称", value: peer.shownName)
-                LabeledContent("地址", value: peer.address)
-                    .font(.system(.body, design: .monospaced))
-                if let q = qualityLabel {
-                    LabeledContent("连接质量") {
-                        Text(q.text).foregroundColor(q.color)
+                VStack(spacing: 8) {
+                    PlatformIcon(os: peer.os, size: 56)
+                    Text(peer.shownName).font(.system(.title3, design: .rounded)).bold()
+                    HStack(spacing: 6) {
+                        HaloDot(color: peer.online ? LatticePalette.online : .secondary)
+                        Text(peer.online ? "在线" : "离线")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
                 }
-                LabeledContent("平台", value: peer.os.isEmpty ? "未知" : peer.os)
-                if !peer.lastSeen.isEmpty {
-                    LabeledContent("最近在线", value: relativeTime(peer.lastSeen))
-                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
             }
 
-            if !peer.appID.isEmpty {
-                Section("设备标识") {
+            Section {
+                HStack {
+                    Text("IP 地址")
+                    Spacer()
+                    Text(peer.address)
+                        .font(.system(.body, design: .monospaced))
                     Button {
-                        UIPasteboard.general.string = peer.appID
+                        PeerActions.copyToClipboard(peer.address)
                         copied = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
                     } label: {
-                        HStack {
-                            Text(peer.appID)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .foregroundColor(copied ? .green : .secondary)
-                        }
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                            .foregroundColor(LatticePalette.accent)
                     }
+                    .buttonStyle(.plain)
+                }
+                LabeledContent("平台", value: peer.os.isEmpty ? "未知" : peer.os)
+                LabeledContent("连接质量") {
+                    if let quality, let pill = PeerActions.qualityPill(quality) {
+                        QualityPill(text: pill.text, color: pill.color)
+                    } else {
+                        Text("—").foregroundColor(.secondary)
+                    }
+                }
+                LabeledContent("最近握手", value: peer.lastHandshake)
+            }
+
+            Section {
+                Button {
+                    PeerActions.copyToClipboard(peer.address)
+                    copied = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false }
+                } label: {
+                    Label(copied ? "已复制" : "复制 IP 地址", systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                Button { favorites.toggle(peer.name) } label: {
+                    Label(favorites.isFavorite(peer.name) ? "取消收藏" : "收藏",
+                          systemImage: favorites.isFavorite(peer.name) ? "star.fill" : "star")
+                }
+                Button { showingRename = true; renameText = peer.shownName } label: {
+                    Label("重命名", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    Task {
+                        try? await PeerActions.setDisabled(peer, !currentDisabled)
+                        currentDisabled.toggle()
+                    }
+                } label: {
+                    Label(currentDisabled ? "启用" : "停用", systemImage: currentDisabled ? "checkmark.circle" : "nosign")
                 }
             }
         }
         .navigationTitle(peer.shownName)
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private var qualityLabel: (text: String, color: Color)? {
-        switch quality {
-        case "ice-ready": return ("直连", .green)
-        case "lrp-ready": return ("经中继", .orange)
-        case "probing", "created": return ("连接中", .secondary)
-        case "failed": return ("失败", .red)
-        default: return nil
+        .alert("重命名设备", isPresented: $showingRename) {
+            TextField("新名称", text: $renameText)
+            Button("确定") {
+                Task { try? await PeerActions.rename(peer, to: renameText) }
+            }
+            Button("取消", role: .cancel) {}
         }
-    }
-
-    private func relativeTime(_ rfc3339: String) -> String {
-        let formatter = ISO8601DateFormatter()
-        guard let date = formatter.date(from: rfc3339) else {
-            return rfc3339
-        }
-        let formatter2 = RelativeDateTimeFormatter()
-        formatter2.locale = Locale(identifier: "zh_CN")
-        return formatter2.localizedString(for: date, relativeTo: Date())
     }
 }
