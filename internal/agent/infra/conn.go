@@ -421,10 +421,14 @@ func (b *DefaultBind) send4(udpConn *net.UDPConn, pc *ipv4.PacketConn, ep conn.E
 
 func (b *DefaultBind) send6(udpConn *net.UDPConn, pc *ipv6.PacketConn, ep conn.Endpoint, bufs [][]byte) error {
 	ua := b.udpAddrPool.Get().(*net.UDPAddr)
+	// Restore the full 16-byte slice: send4 re-slices the pooled address's
+	// IP down to 4 bytes before returning it to the pool, and a truncated
+	// copy would silently corrupt the v6 destination (and a stale port from
+	// a previous send4 would misroute the packet).
 	as16 := ep.DstIP().As16()
+	ua.IP = ua.IP[:16]
 	copy(ua.IP, as16[:])
-	//ua.IP = ua.IP[:16]
-	//ua.Port = int(ep.(*internal.MagicEndpoint).Port())
+	ua.Port = int(ep.(*LRPEndpoint).Addr.Port())
 	msgs := b.ipv6MsgsPool.Get().(*[]ipv6.Message)
 	for i, buf := range bufs {
 		(*msgs)[i].Buffers[0] = buf
