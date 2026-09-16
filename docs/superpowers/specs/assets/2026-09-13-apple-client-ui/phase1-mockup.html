@@ -1,0 +1,212 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>阶段一界面草案</title>
+<style>
+  :root {
+    --page-bg: #eceef1;
+    --canvas-a: #e2e6ea;
+    --canvas-b: #f2f4f6;
+    --panel-bg: rgba(255, 255, 255, 0.86);
+    --panel-border: rgba(0, 0, 0, 0.09);
+    --panel-shadow: 0 1px 1px rgba(0,0,0,.04), 0 18px 40px -14px rgba(20,30,40,.28);
+    --text: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --text-tertiary: #98989d;
+    --divider: rgba(60, 60, 67, 0.14);
+    --accent: #0a84ff;
+    --accent-soft: rgba(10,132,255,0.12);
+    --online: #22a83e;
+    --relay: #c2740a;
+    --relay-soft: rgba(194,116,10,0.12);
+    --online-soft: rgba(34,168,62,0.12);
+    --blocked: #e0342a;
+    --blocked-soft: rgba(224,52,42,0.1);
+    --offline-gray: #98989d;
+    --page-text: #1d1d1f;
+    --page-text-secondary: #55595e;
+    --caption-accent: #0a84ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page-bg);
+    color: var(--page-text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Helvetica Neue", system-ui, sans-serif;
+  }
+  .sf-mono { font-family: ui-monospace, "SF Mono", "Menlo", monospace; }
+  .page { max-width: 1080px; margin: 0 auto; padding: 48px 24px 72px; }
+  .intro { max-width: 66ch; margin-bottom: 40px; }
+  .intro .eyebrow { font-size: 12.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--caption-accent); margin-bottom: 10px; }
+  .intro h1 { font-size: clamp(24px, 4vw, 30px); font-weight: 700; margin: 0 0 10px; letter-spacing: -0.01em; }
+  .intro p { color: var(--page-text-secondary); font-size: 15px; margin: 0; line-height: 1.6; }
+  .intro p b { color: var(--page-text); font-weight: 600; }
+  .gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; align-items: start; }
+  @media (max-width: 880px) { .gallery { grid-template-columns: 1fr; max-width: 400px; margin-inline: auto; } }
+  figure { margin: 0; }
+  figcaption { margin-top: 16px; font-size: 13px; color: var(--page-text-secondary); line-height: 1.55; }
+  figcaption .tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.03em; color: var(--caption-accent); background: var(--accent-soft); padding: 2px 7px; border-radius: 5px; margin-bottom: 7px; }
+  figcaption b { color: var(--page-text); font-weight: 600; }
+  .canvas { border-radius: 18px; padding: 30px 18px; display: flex; justify-content: center; background: radial-gradient(120% 100% at 50% -10%, var(--canvas-b), var(--canvas-a)); }
+  .win { width: 300px; border-radius: 14px; background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: var(--panel-shadow); backdrop-filter: blur(20px); overflow: hidden; color: var(--text); font-size: 13px; }
+  .win .win-header { display: flex; align-items: center; gap: 8px; padding: 13px 15px 11px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .status-dot.online { background: var(--online); box-shadow: 0 0 0 3px var(--online-soft); }
+  .status-col { min-width: 0; flex: 1; }
+  .status-title { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+  .quality-pill { font-size: 10px; font-weight: 700; letter-spacing: 0.01em; padding: 1.5px 6px; border-radius: 100px; }
+  .quality-pill.direct { color: var(--online); background: var(--online-soft); }
+  .quality-pill.relay { color: var(--relay); background: var(--relay-soft); }
+  .status-sub { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+  .toggle { width: 30px; height: 18px; border-radius: 100px; background: var(--online); flex: none; position: relative; }
+  .toggle::after { content: ""; position: absolute; top: 2px; right: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .divider { height: 1px; background: var(--divider); }
+  .list { padding-block: 4px; }
+  .row { display: flex; align-items: center; gap: 9px; padding: 8px 15px; position: relative; }
+  .row .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .row .dot.online { background: var(--online); }
+  .row .id { min-width: 0; flex: 1; }
+  .row .id .name { font-size: 13px; line-height: 1.3; }
+  .row .id .addr { font-size: 11px; color: var(--text-secondary); line-height: 1.3; }
+  .row .meta { display: flex; align-items: center; gap: 7px; flex: none; }
+  .row .lat { font-size: 10.5px; color: var(--text-tertiary); }
+  .more-btn { width: 20px; height: 20px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); font-weight: 700; font-size: 13px; letter-spacing: 1px; }
+  .row.highlight { background: var(--accent-soft); }
+  .row-indent { padding-left: 44px; }
+  .footer-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 15px; font-size: 11px; color: var(--text-tertiary); }
+  .menu-pop { position: absolute; right: 14px; top: 34px; width: 140px; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: 10px; box-shadow: var(--panel-shadow); backdrop-filter: blur(20px); padding: 5px; z-index: 3; }
+  .menu-pop .item { padding: 6px 9px; border-radius: 6px; font-size: 12.5px; display: flex; align-items: center; justify-content: space-between; }
+  .menu-pop .item.danger { color: var(--blocked); }
+  .menu-pop .sep { height: 1px; background: var(--divider); margin: 4px 2px; }
+  .acl-head { padding: 13px 15px 10px; }
+  .acl-head .back { font-size: 11.5px; color: var(--accent); margin-bottom: 8px; }
+  .acl-head .name { font-size: 14.5px; font-weight: 700; }
+  .acl-head .addr { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
+  .acl-list { padding: 6px 0 10px; }
+  .acl-item { display: flex; gap: 9px; padding: 9px 15px; align-items: flex-start; }
+  .acl-icon { width: 18px; height: 18px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 800; color: #fff; margin-top: 1px; }
+  .acl-icon.allow { background: var(--online); }
+  .acl-icon.deny { background: var(--blocked); }
+  .acl-body .policy { font-size: 12.5px; font-weight: 600; }
+  .acl-body .reason { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+  .acl-body code { font-family: ui-monospace, "SF Mono", monospace; font-size: 10.5px; background: rgba(120,120,128,0.14); padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="intro">
+    <div class="eyebrow">阶段一 · 界面草案</div>
+    <h1>把已经跑通的东西露出来</h1>
+    <p>三张图对应路线图阶段一的三项：<b>连接质量展示</b>、<b>设备操作入口</b>、<b>ACL 调试视图</b>。窗口尺寸和列表行样式照抄了 <code class="sf-mono">ContentView.swift</code> 现有实现，新增的都是在这套骨架上叠加。图里的节点数据（node-a / node-b）沿用了这次调试里见到的示例节点，仅作示意。</p>
+  </div>
+  <div class="gallery">
+    <figure>
+      <div class="canvas">
+        <div class="win">
+          <div class="win-header">
+            <div class="status-dot online"></div>
+            <div class="status-col">
+              <div class="status-title">已连接 <span class="quality-pill direct">直连 · 8ms</span></div>
+              <div class="status-sub">Mac Demo</div>
+            </div>
+            <div class="toggle"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="list">
+            <div class="row">
+              <div class="dot online"></div>
+              <div class="id"><div class="name">MacBook Pro（本机）</div><div class="addr sf-mono">10.96.0.4</div></div>
+              <div class="meta"><span class="quality-pill direct">直连</span></div>
+            </div>
+            <div class="divider row-indent"></div>
+            <div class="row">
+              <div class="dot online"></div>
+              <div class="id"><div class="name">node-a</div><div class="addr sf-mono">10.96.0.2</div></div>
+              <div class="meta"><span class="lat">12ms</span><span class="quality-pill direct">直连</span></div>
+            </div>
+            <div class="divider row-indent"></div>
+            <div class="row">
+              <div class="dot online"></div>
+              <div class="id"><div class="name">node-b</div><div class="addr sf-mono">10.96.0.3</div></div>
+              <div class="meta"><span class="lat">46ms</span><span class="quality-pill relay">经中继</span></div>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div class="footer-row"><span>Lattice standalone</span><span>⚙︎</span></div>
+        </div>
+      </div>
+      <figcaption><span class="tag">连接质量展示</span>顶部状态行从纯文字"已连接"变成带质量徽标——直连显示延迟，经中继时提示"经中继"。设备列表每行右侧也加同样的徽标。数据来自引擎本来就有、只是没透传的 <code class="sf-mono">ICEReady/LRPReady</code> 状态。</figcaption>
+    </figure>
+    <figure>
+      <div class="canvas">
+        <div class="win">
+          <div class="win-header">
+            <div class="status-dot online"></div>
+            <div class="status-col">
+              <div class="status-title">已连接 <span class="quality-pill direct">直连 · 8ms</span></div>
+              <div class="status-sub">Mac Demo</div>
+            </div>
+            <div class="toggle"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="list">
+            <div class="row">
+              <div class="dot online"></div>
+              <div class="id"><div class="name">MacBook Pro（本机）</div><div class="addr sf-mono">10.96.0.4</div></div>
+              <div class="meta"><span class="quality-pill direct">直连</span></div>
+            </div>
+            <div class="divider row-indent"></div>
+            <div class="row highlight" style="position:relative;">
+              <div class="dot online"></div>
+              <div class="id"><div class="name">node-a</div><div class="addr sf-mono">10.96.0.2</div></div>
+              <div class="meta"><span class="lat">12ms</span><div class="more-btn">···</div></div>
+              <div class="menu-pop">
+                <div class="item">重命名</div>
+                <div class="item">查看 ACL</div>
+                <div class="sep"></div>
+                <div class="item danger">移除此设备</div>
+              </div>
+            </div>
+            <div class="divider row-indent"></div>
+            <div class="row">
+              <div class="dot online"></div>
+              <div class="id"><div class="name">node-b</div><div class="addr sf-mono">10.96.0.3</div></div>
+              <div class="meta"><span class="lat">46ms</span><span class="quality-pill relay">经中继</span></div>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div class="footer-row"><span>Lattice standalone</span><span>⚙︎</span></div>
+        </div>
+      </div>
+      <figcaption><span class="tag">设备操作入口</span>每行悬停/点开 <b>···</b> 露出重命名、查看 ACL、移除此设备——接的是管理面已经有的 <code class="sf-mono">peers</code> 增删接口，客户端这边纯粹是补一个入口。</figcaption>
+    </figure>
+    <figure>
+      <div class="canvas">
+        <div class="win">
+          <div class="acl-head">
+            <div class="back">‹ 返回设备列表</div>
+            <div class="name">node-b</div>
+            <div class="addr sf-mono">10.96.0.3 · 经中继 · 46ms</div>
+          </div>
+          <div class="divider"></div>
+          <div class="acl-list">
+            <div class="acl-item">
+              <div class="acl-icon allow">✓</div>
+              <div class="acl-body"><div class="policy">可访问 · web 服务（80/443）</div><div class="reason">策略 <code>allow-web</code> 生效</div></div>
+            </div>
+            <div class="acl-item">
+              <div class="acl-icon deny">✕</div>
+              <div class="acl-body"><div class="policy">被拦截 · 数据库（5432）</div><div class="reason">策略 <code>deny-all-except-web</code> 命中</div></div>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div class="footer-row"><span>LatticePolicy · 2 条生效</span><span>刷新</span></div>
+        </div>
+      </div>
+      <figcaption><span class="tag">ACL 调试视图</span>点进某个设备，把 <code class="sf-mono">LatticePolicy</code> 对这条连接的裁决结果摊开——能连的标绿、被拦的标红并附上命中的策略名。</figcaption>
+    </figure>
+  </div>
+</div>
+</body>
+</html>

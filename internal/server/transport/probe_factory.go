@@ -425,3 +425,17 @@ func (p *ProbeFactory) OnReceive(sessionId [28]byte, data []byte) error {
 func (p *ProbeFactory) Allows(remoteId string) bool {
 	return true
 }
+
+// PeerConnectionStates snapshots each tracked peer's connection lifecycle
+// state (probing / ice-ready / lrp-ready / failed / closed), keyed by remote
+// AppID. Embedded-engine clients (Apple Network Extension) surface this as
+// connection quality: ice-ready = direct, lrp-ready = relayed.
+func (p *ProbeFactory) PeerConnectionStates() map[string]string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	states := make(map[string]string, len(p.probes))
+	for appID, probe := range p.probes {
+		states[appID] = probe.State().String()
+	}
+	return states
+}

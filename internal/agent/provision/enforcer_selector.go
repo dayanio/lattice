@@ -17,6 +17,7 @@ package provision
 import (
 	"github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/log"
+	"runtime"
 )
 
 // EnforcerMode represents the selected policy enforcement backend.
@@ -26,6 +27,10 @@ const (
 	ModeUnset EnforcerMode = iota
 	ModeIPTables
 	ModeEBPF
+	// ModeNone disables kernel-level enforcement entirely — for platforms
+	// without iptables/nftables (Apple: enforcement is route-level via the
+	// Network Extension; the default-deny tail is implicit in routing).
+	ModeNone
 )
 
 func (m EnforcerMode) String() string {
@@ -34,6 +39,8 @@ func (m EnforcerMode) String() string {
 		return "iptables"
 	case ModeEBPF:
 		return "ebpf"
+	case ModeNone:
+		return "none"
 	default:
 		return "unknown"
 	}
@@ -46,6 +53,9 @@ func (m EnforcerMode) String() string {
 // "ebpf" falls back to iptables with a warning if eBPF is unavailable.
 func SelectEnforcerMode(cfg *config.Config, tier string, logger *log.Logger) EnforcerMode {
 	switch cfg.EnforcerMode {
+	case "none":
+		logger.Info("policy enforcement disabled (source: explicit)")
+		return ModeNone
 	case "iptables":
 		logger.Info("policy enforcement backend: iptables (source: explicit)")
 		return ModeIPTables
@@ -61,6 +71,12 @@ func SelectEnforcerMode(cfg *config.Config, tier string, logger *log.Logger) Enf
 		logger.Warn("ebpf requested but unavailable, falling back to iptables")
 		return ModeIPTables
 	default: // "auto" or empty
+		// Apple platforms have no iptables/nftables: route-level enforcement
+		// via the Network Extension replaces kernel rules entirely.
+		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+			logger.Info("policy enforcement backend: none (platform has no kernel firewall hook)", "os", runtime.GOOS)
+			return ModeNone
+		}
 		if tier == "pro" {
 			if mode := selectEBPFAvailable(); mode == ModeEBPF {
 				logger.Info("policy enforcement backend: eBPF (source: auto)")

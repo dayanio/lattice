@@ -435,6 +435,8 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		switch enforcerMode {
 		case provision.ModeEBPF:
 			policyEnforcer = provision.NewEBPFEnforcer(node.Name, cfg.Logger)
+		case provision.ModeNone:
+			policyEnforcer = provision.NewNoopEnforcer(cfg.Logger)
 		default:
 			policyEnforcer = provision.NewIptablesEnforcer(cfg.Logger, node.Name)
 		}
@@ -646,6 +648,17 @@ func (c *Node) GetDeviceName() string {
 
 func (c *Node) GetPeerManager() *infra.PeerManager {
 	return c.manager.peerManager
+}
+
+// ConnectionStates snapshots per-peer connection lifecycle state from the
+// probe factory, keyed by remote AppID. "ice-ready" means a direct P2P
+// path, "lrp-ready" means traffic is being relayed. Used by embedded
+// engine clients (Apple Network Extension) to show connection quality.
+func (c *Node) ConnectionStates() map[string]string {
+	if c.probeFactory == nil {
+		return nil
+	}
+	return c.probeFactory.PeerConnectionStates()
 }
 
 // GetNetMap fetches the current network map from the control plane using the
