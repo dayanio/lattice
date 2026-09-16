@@ -244,27 +244,39 @@ struct ConnectionHero: View {
     }
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 14) {
             ZStack {
                 if state == .connecting {
                     Capsule()
                         .stroke(heroColor, lineWidth: 2)
-                        .frame(width: 158, height: 82)
-                        .scaleEffect(breathe ? 1.12 : 1.0)
-                        .opacity(breathe ? 0.15 : 0.55)
+                        .frame(width: 216, height: 104)
+                        .scaleEffect(breathe ? 1.08 : 1.0)
+                        .opacity(breathe ? 0.12 : 0.55)
                 }
                 Capsule()
-                    .fill(state == .connected ? heroColor.opacity(0.14) : Color.primary.opacity(0.06))
-                    .frame(width: 150, height: 74)
-                    .overlay(Capsule().stroke(heroColor, lineWidth: state == .disconnected ? 1.5 : 2.5))
-                HStack(spacing: 12) {
-                    HaloDot(color: heroColor, size: 14)
-                    Text(headline)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundColor(state == .disconnected ? .primary : heroColor)
+                    .fill(ovalFill)
+                    .frame(width: 200, height: 96)
+                HStack(spacing: 14) {
+                    HaloDot(color: isOn ? .white : heroColor, size: 18)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(headline)
+                            .font(.system(size: 22, weight: .bold))
+                            .foregroundColor(isOn ? .white : .primary)
+                        if isOn, let since = connectedSince {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Text(timerText(at: context.date))
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.white.opacity(0.85))
+                            }
+                        } else if state == .connecting {
+                            Text("正在建立隧道")
+                                .font(.system(size: 11))
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
             }
-            .frame(width: 150, height: 74)
+            .frame(width: 200, height: 96)
             .contentShape(Capsule())
             .accessibilityAddTraits(.isButton)
             .accessibilityLabel(state == .connected ? "断开连接" : "连接网络")
@@ -286,35 +298,52 @@ struct ConnectionHero: View {
                 }
             }
 
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(timerText(at: context.date))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.secondary)
-            }
-
-            VStack(spacing: 2) {
+            // 状态信息行：质量 + 本机地址（保持固定高度，避免状态切换跳动）。
+            HStack(spacing: 8) {
                 if !aggregateText.isEmpty {
-                    Text(aggregateText)
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay)
+                    QualityPill(
+                        text: aggregateText,
+                        color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
+                    )
                 }
                 if !selfAddress.isEmpty {
                     Text("本机 \(selfAddress)")
                         .font(.system(size: 12, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
-                if !errorText.isEmpty {
-                    Text(errorText)
-                        .font(.caption)
-                        .foregroundColor(LatticePalette.blocked)
-                        .multilineTextAlignment(.center)
-                }
+            }
+            .frame(minHeight: 20)
+
+            if !errorText.isEmpty {
+                Text(errorText)
+                    .font(.caption)
+                    .foregroundColor(LatticePalette.blocked)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 8)
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 18)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial))
+        .padding(.vertical, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        )
         .padding(.horizontal, 15)
+    }
+
+    private var isOn: Bool { state == .connected }
+
+    private var ovalFill: AnyShapeStyle {
+        switch state {
+        case .connected:
+            return AnyShapeStyle(LinearGradient(
+                colors: [LatticePalette.online, LatticePalette.online.opacity(0.72)],
+                startPoint: .top, endPoint: .bottom
+            ))
+        default:
+            return AnyShapeStyle(Color.primary.opacity(0.06))
+        }
     }
 
     private var headline: String {

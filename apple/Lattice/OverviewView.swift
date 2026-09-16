@@ -71,10 +71,15 @@ struct OverviewView: View {
                                 .foregroundColor(LatticePalette.blocked)
                                 .padding(.top, 30)
                         } else if filtered.isEmpty {
-                            Text(searchText.isEmpty ? "暂无节点" : "无匹配设备")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.top, 30)
+                            VStack(spacing: 8) {
+                                Image(systemName: "personalhotspot")
+                                    .font(.system(size: 34, weight: .light))
+                                    .foregroundColor(.secondary.opacity(0.6))
+                                Text(searchText.isEmpty ? "暂无节点" : "无匹配设备")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 30)
                         } else {
                             if !favoritePeers.isEmpty {
                                 SectionHead(title: "⭐ 收藏")
@@ -140,29 +145,41 @@ struct OverviewView: View {
 
     /// 未加入网络时的引导卡：扫码或手动输入，通往加入流程。
     private var joinPrompt: some View {
-        VStack(spacing: 10) {
-            Text("尚未加入网络")
-                .font(.system(.body, weight: .semibold))
-            Text("扫码或手动输入服务器信息，一键连回家。")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-            HStack(spacing: 10) {
+        VStack(spacing: 12) {
+            Image(systemName: "qrcode.viewfinder")
+                .font(.system(size: 42, weight: .light))
+                .foregroundColor(LatticePalette.accent)
+            VStack(spacing: 4) {
+                Text("尚未加入网络")
+                    .font(.system(.headline, weight: .semibold))
+                Text("扫码或手动输入服务器信息，一键连回家。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            VStack(spacing: 8) {
                 Button { showingJoin = true } label: {
                     Label("扫描二维码", systemImage: "qrcode.viewfinder")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
                 Button { showingJoin = true } label: {
                     Label("手动输入", systemImage: "keyboard")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
                 }
                 .buttonStyle(.bordered)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial))
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(.regularMaterial)
+                .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        )
         .padding(.horizontal, 15)
         .padding(.top, 6)
     }
