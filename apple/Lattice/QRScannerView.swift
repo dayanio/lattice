@@ -16,21 +16,24 @@ import AVFoundation
 import SwiftUI
 
 /// Live camera QR scanner for join codes (AVCaptureMetadataOutput detects QR
-/// natively — no Vision pass needed). Payload contract:
-/// lattice://join?server=<management-url>&token=<enrollment-token>
-struct CameraScannerView: NSViewRepresentable {
+/// natively — no Vision pass needed). Same payload contract as macOS's
+/// CameraScannerView: lattice://join?server=<url>&token=<token>, parsed by
+/// the shared JoinPayload type.
+struct QRScannerView: UIViewRepresentable {
     /// Called on the main queue with the first QR string detected.
     var onCode: (String) -> Void
     /// Called on the main queue when the camera cannot be used.
     var onError: (String) -> Void
 
-    func makeNSView(context: Context) -> NSView {
-        let view = NSView(frame: .zero)
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: .zero)
         context.coordinator.attach(to: view, onCode: onCode, onError: onError)
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.previewLayer?.frame = uiView.bounds
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -39,10 +42,11 @@ struct CameraScannerView: NSViewRepresentable {
         private var configured = false
         private var onCode: ((String) -> Void)?
         private var delivered = false
+        var previewLayer: AVCaptureVideoPreviewLayer?
 
-        func attach(to view: NSView, onCode: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
+        func attach(to view: UIView, onCode: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
             self.onCode = onCode
-            // makeNSView runs inside view update — SwiftUI state writes must
+            // makeUIView runs inside view update — SwiftUI state writes must
             // never happen synchronously here, so every callback defers.
             let safeOnError: (String) -> Void = { message in
                 DispatchQueue.main.async { onError(message) }
@@ -54,15 +58,15 @@ struct CameraScannerView: NSViewRepresentable {
                 AVCaptureDevice.requestAccess(for: .video) { granted in
                     DispatchQueue.main.async {
                         granted ? self.configure(view: view, onError: safeOnError)
-                                : safeOnError("相机权限被拒绝，请在系统设置中允许 Lattice 使用摄像头")
+                                : safeOnError("相机权限被拒绝，请在设置中允许 Lattice 使用摄像头")
                     }
                 }
             default:
-                safeOnError("相机权限未开启，请在系统设置 → 隐私与安全性 → 摄像头中允许 Lattice")
+                safeOnError("相机权限未开启，请在设置 → Lattice → 相机中允许访问")
             }
         }
 
-        private func configure(view: NSView, onError: @escaping (String) -> Void) {
+        private func configure(view: UIView, onError: @escaping (String) -> Void) {
             guard !configured else { return }
             configured = true
             guard let device = AVCaptureDevice.default(for: .video),
@@ -85,11 +89,9 @@ struct CameraScannerView: NSViewRepresentable {
 
             let preview = AVCaptureVideoPreviewLayer(session: session)
             preview.videoGravity = .resizeAspectFill
-            view.wantsLayer = true
-            view.layer?.addSublayer(preview)
-            DispatchQueue.main.async {
-                preview.frame = view.bounds
-            }
+            preview.frame = view.bounds
+            view.layer.addSublayer(preview)
+            previewLayer = preview
 
             DispatchQueue.global(qos: .userInitiated).async { [session] in
                 session.startRunning()
