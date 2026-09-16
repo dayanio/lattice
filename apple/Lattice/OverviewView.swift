@@ -22,6 +22,10 @@ struct OverviewView: View {
 
     private var selfName: String { UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "" }
     private var localPeer: PeerNode? { peers.first { $0.name == selfName } }
+    /// 服务器地址为空 = 未加入（退出网络会清掉它），此时只应引导加入。
+    private var joined: Bool { tunnel.isConfigured && !serverAddress.isEmpty }
+
+    private var serverAddress: String { UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "" }
 
     private var aggregateText: String {
         let states = peers.compactMap { tunnel.peerStates[$0.appID] }
@@ -56,7 +60,7 @@ struct OverviewView: View {
                         onToggle: { tunnel.connectedBinding.wrappedValue.toggle() }
                     )
 
-                    if !tunnel.isConfigured {
+                    if !joined {
                         joinPrompt
                     } else if authToken.isEmpty {
                         loginPrompt
