@@ -24,7 +24,7 @@ struct OverviewView: View {
     private var localPeer: PeerNode? { peers.first { $0.name == selfName } }
 
     private var aggregateText: String {
-        let states = peers.compactMap { tunnel.peerStates[$0.name] }
+        let states = peers.compactMap { tunnel.peerStates[$0.appID] }
         if states.contains("ice-ready") { return "直连" }
         if states.contains("lrp-ready") { return "经中继" }
         return ""
@@ -225,7 +225,7 @@ struct OverviewView: View {
 
     private func peerRow(_ peer: PeerNode) -> some View {
         NavigationLink {
-            PeerDetailView(peer: peer, quality: tunnel.peerStates[peer.name])
+            PeerDetailView(peer: peer, quality: tunnel.peerStates[peer.appID])
         } label: {
             HStack(spacing: 12) {
                 Group {
@@ -241,7 +241,7 @@ struct OverviewView: View {
                         Text(peer.address)
                             .font(.system(.caption, design: .monospaced))
                             .foregroundColor(.secondary)
-                        if let quality = tunnel.peerStates[peer.name],
+                        if let quality = tunnel.peerStates[peer.appID],
                            let pill = PeerActions.qualityPill(quality) {
                             QualityPill(text: pill.text, color: pill.color)
                         }
