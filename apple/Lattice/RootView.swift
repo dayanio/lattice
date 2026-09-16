@@ -22,7 +22,7 @@ struct RootView: View {
 
     var body: some View {
         TabView {
-            StatusView()
+            OverviewView()
                 .tabItem { Label("状态", systemImage: "network") }
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
@@ -34,6 +34,12 @@ struct RootView: View {
     }
 
     private func evaluateJoinState() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["LATTICE_DEBUG_SKIP_JOIN"] == "1" {
+            needsJoin = false
+            return
+        }
+        #endif
         needsJoin = !tunnel.isConfigured || !LatticeAPI.shared.isLoggedIn
     }
 }
