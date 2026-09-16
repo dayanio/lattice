@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0AD73FCA8E7C43D50ECBBD77 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69C9BB4813C7BE0DDF1AEDF0 /* KeychainStore.swift */; };
 		0EA5E5CBB4326784931378F2 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41AB017E0727000CB2743DF8 /* TunnelManager.swift */; };
 		0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D651343557480E291D4C242C /* QRScanner.swift */; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
@@ -111,6 +112,7 @@
 		4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		4E62B50BAE0776E6BE22EEA6 /* TunnelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelManager.swift; sourceTree = "<group>"; };
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		69C9BB4813C7BE0DDF1AEDF0 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		8287DD726BF401E4637ECBC7 /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A087BE65958F460FCF0CC468 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
 		A40878B1329E02B2C70EB9E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -226,6 +228,7 @@
 				3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */,
 				D08A030E138B74289B8E27C9 /* DesignComponents.swift */,
 				E73ACB07B695A778DE7339C3 /* Info.plist */,
+				69C9BB4813C7BE0DDF1AEDF0 /* KeychainStore.swift */,
 				C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */,
 				B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */,
 				FA822E36FCF84A5FB4C48F09 /* PeerDetailView.swift */,
@@ -298,6 +301,7 @@
 				5F0969FD2E4D62BB9AA00717 /* Frameworks */,
 				51C6EC670E7016A031DC9225 /* Embed Foundation Extensions */,
 				E7F47BAFEFDD976924B4449E /* Embed Frameworks */,
+				F5DE891952F2C2749F37A194 /* Restore LatticeCore engine binary */,
 			);
 			buildRules = (
 			);
@@ -378,6 +382,27 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		F5DE891952F2C2749F37A194 /* Restore LatticeCore engine binary */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Restore LatticeCore engine binary";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -e\nSRC_BIN=\"${SRCROOT}/Frameworks/MacOS/LatticeCore.xcframework/macos-arm64_x86_64/LatticeCore.framework/Versions/A/LatticeCore\"\nEMB_BIN=\"${BUILT_PRODUCTS_DIR}/LatticeMac.app/Contents/Frameworks/LatticeCore.framework/Versions/A/LatticeCore\"\nif [ -f \"${EMB_BIN}\" ] && ! cmp -s \"${SRC_BIN}\" \"${EMB_BIN}\"; then\n  cp -f \"${SRC_BIN}\" \"${EMB_BIN}\"\n  codesign --force --sign \"${CODE_SIGN_IDENTITY}\" \"${EMB_BIN%/LatticeCore}\"\n  codesign --force --sign \"${CODE_SIGN_IDENTITY}\" --entitlements \"${SRCROOT}/entitlements/LatticeMac.entitlements\" \"${BUILT_PRODUCTS_DIR}/LatticeMac.app\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		0225CDE037F22BF5B8A601E6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -407,6 +432,7 @@
 				3949790EF906AFA4A4AF9A91 /* ChatWindow.swift in Sources */,
 				70634B99C412A1430F456CB2 /* ContentView.swift in Sources */,
 				2B1375F9CCA6405BA20B101F /* DesignComponents.swift in Sources */,
+				0AD73FCA8E7C43D50ECBBD77 /* KeychainStore.swift in Sources */,
 				6A2DC249F454BC91FB65FC4A /* LatticeMacApp.swift in Sources */,
 				A8FEB6A60B7D5B4254818DCA /* NetworkPages.swift in Sources */,
 				60BD6805501BB1BEE557786E /* PeerDetailView.swift in Sources */,
@@ -478,6 +504,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = JN4AC4DDAU;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -648,6 +675,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = JN4AC4DDAU;
+				ENABLE_DEBUG_DYLIB = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;

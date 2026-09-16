@@ -15,6 +15,24 @@
 import NetworkExtension
 import LatticeCore
 
+/// Appends diagnostics to a file in the extension's sandbox — NSLog does not
+/// surface in the unified log from this process, which blinded debugging.
+enum TunnelLog {
+    static func write(_ message: String) {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        guard let path = dir?.appendingPathComponent("lattice-tunnel.log") else { return }
+        let stamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        let line = "[\(stamp)] \(message)\n"
+        if let handle = try? FileHandle(forWritingTo: path) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            handle.write(line.data(using: .utf8)!)
+        } else {
+            try? line.data(using: .utf8)!.write(to: path)
+        }
+    }
+}
+
 /// Runs the Lattice Go engine (WireGuard + signaling + netmap convergence)
 /// inside the Network Extension, bridging packets between NEPacketFlow and
 /// the engine via the gomobile-generated LatticeEngine bindings.
@@ -46,6 +64,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         guard let pc = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration,
               let serverURL = pc["serverURL"] as? String,
               let token = pc["token"] as? String else {
+            NSLog("[Lattice] startTunnel: missing serverURL/token in provider config")
             completionHandler(NSError(
                 domain: "io.lattice.tunnel",
                 code: 1,
@@ -54,18 +73,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         let name = (pc["name"] as? String) ?? (Host.current().localizedName ?? "lattice-mac")
+        TunnelLog.write("startTunnel: server=\(serverURL) token=\(token.count) chars name=\(name)")
         let config = EngineConfig(serverURL: serverURL, token: token, name: name, mtu: 1280)
 
         do {
             engine = try LatticeEngineEngine(config.jsonString, delegate: self)
+            TunnelLog.write("engine created")
         } catch {
+            NSLog("[Lattice] engine create FAILED: \(error)")
             completionHandler(error)
             return
         }
         pendingStart = completionHandler
         do {
             try engine?.start()
+            TunnelLog.write("engine start() returned")
         } catch {
+            TunnelLog.write("engine start FAILED: \(error)")
             pendingStart = nil
             completionHandler(error)
         }
@@ -164,7 +188,7 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
     }
 
     func onEvent(_ event: String!) {
-        NSLog("[Lattice] engine event: \(event ?? "")")
+        TunnelLog.write("engine event: \(event ?? "")")
         guard let event, event.hasPrefix("error: "), let pendingStart else { return }
         let message = String(event.dropFirst("error: ".count))
         self.pendingStart = nil
@@ -178,7 +202,7 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
     /// Registration finished and an overlay IP was assigned: install the
     /// network settings, then let the system proceed with the tunnel.
     func onTunnelUp(_ overlayIP: String!) {
-        NSLog("[Lattice] tunnel up, overlay IP \(overlayIP ?? "?")")
+        TunnelLog.write("tunnel up, overlay IP \(overlayIP ?? "?")")
         currentOverlayIP = overlayIP ?? "10.96.0.1"
         setTunnelNetworkSettings(makeSettings(overlayIP: currentOverlayIP, extraRoutes: latestExtraRoutes)) { [weak self] error in
             guard let self else { return }
@@ -193,6 +217,7 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
     /// Per-peer connection-quality snapshot changed (JSON: name → state).
     func onPeerStates(_ statesJSON: String!) {
         latestPeerStates = statesJSON ?? "{}"
+        TunnelLog.write("peer states: \(latestPeerStates)")
     }
 
     /// Extra CIDRs to route into the tunnel changed — reapply network

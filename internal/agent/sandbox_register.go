@@ -122,7 +122,15 @@ func fetchNetMap(
 			if json.Unmarshal(data, &msg) == nil && msg.Current != nil &&
 				msg.Current.Address != nil && *msg.Current.Address != "" {
 				peer := msg.Current
-				peer.PrivateKey = privKey.String() // inject locally-generated key
+				// The control plane owns the WireGuard keypair and returns the
+				// private key to its owner in the netmap — using it keeps the
+				// node's signaling identity (peerID = hash of public key) in
+				// sync with what the server announces to other peers. Only
+				// fall back to the locally generated key when the server did
+				// not provide one (legacy K8s netmaps).
+				if peer.PrivateKey == "" {
+					peer.PrivateKey = privKey.String()
+				}
 				if peer.AppID == "" {
 					peer.AppID = agentName
 				}
