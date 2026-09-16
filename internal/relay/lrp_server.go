@@ -149,12 +149,13 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 	}
 
 	fromId := uint64(header.ToID)
-	s.sessionMgr.Register(fromId, &Session{
+	sess := &Session{
 		ID:     fromId,
 		Stream: stream,
 		Type:   "TCP",
-	})
-	defer s.sessionMgr.Unregister(fromId)
+	}
+	s.sessionMgr.Register(fromId, sess)
+	defer s.sessionMgr.Unregister(fromId, sess)
 
 	_ = conn.SetReadDeadline(time.Time{})
 	s.log.Info("session registered", "from", fromId)
@@ -167,11 +168,10 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 
 		h, err := Unmarshal(headBuf)
 		if err != nil {
-			s.log.Error("invalid lrp header", err)
-			if h != nil && h.PayloadLen > 0 {
-				_, _ = io.CopyN(io.Discard, stream, int64(h.PayloadLen))
-			}
-			continue
+			// The stream is an opaque frame sequence — once a header is
+			// corrupt there is no way to resync, so close the session.
+			s.log.Error("invalid lrp header, closing session", err, "from", fromId)
+			break
 		}
 
 		switch h.Cmd {
@@ -180,6 +180,12 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 			s.log.Debug("keepalive received", "from", fromId)
 
 		case Forward, Probe:
+			if h.PayloadLen > MaxForwardPayload {
+				// Refuse to allocate on oversized frames: the claim is a
+				// protocol violation (or a DoS attempt), not traffic.
+				s.log.Warn("frame payload too large, closing session", "from", fromId, "bytes", h.PayloadLen)
+				return
+			}
 			frame := make([]byte, HeaderSize+int(h.PayloadLen))
 			copy(frame, headBuf)
 			if h.PayloadLen > 0 {

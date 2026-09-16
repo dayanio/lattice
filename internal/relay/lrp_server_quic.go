@@ -138,8 +138,8 @@ func (s *QUICServer) handleConn(conn *quic.Conn) {
 
 	fromId := uint64(h.ToID)
 	ctrlStream := &quicControlStream{stream: ctrl, conn: conn}
-	s.sessionMgr.RegisterQUIC(fromId, ctrlStream, conn)
-	defer s.sessionMgr.Unregister(fromId)
+	sess := s.sessionMgr.RegisterQUIC(fromId, ctrlStream, conn)
+	defer s.sessionMgr.Unregister(fromId, sess)
 
 	s.log.Info("QUIC session registered", "from", fromId)
 
@@ -196,6 +196,16 @@ func (s *QUICServer) handleControlStream(ctrl *quic.Stream, fromId uint64) {
 
 		if h.Cmd == KeepAlive {
 			s.log.Debug("keepalive received on control stream", "from", fromId)
+			// Drain any payload so the next read starts on a frame boundary.
+			if h.PayloadLen > 0 {
+				if h.PayloadLen > MaxForwardPayload {
+					s.log.Warn("keepalive payload too large, closing control stream", "from", fromId, "bytes", h.PayloadLen)
+					return
+				}
+				if _, err := io.CopyN(io.Discard, ctrl, int64(h.PayloadLen)); err != nil {
+					return
+				}
+			}
 		}
 	}
 }

@@ -48,11 +48,68 @@ func TestSessionManager_RegisterAndGet(t *testing.T) {
 
 func TestSessionManager_Unregister(t *testing.T) {
 	sm := NewSessionManager()
-	sm.Register(42, &Session{ID: 42, Stream: &mockStream{}, Type: "TCP"})
-	sm.Unregister(42)
+	sess := &Session{ID: 42, Stream: &mockStream{}, Type: "TCP"}
+	sm.Register(42, sess)
+	sm.Unregister(42, sess)
 
 	if sm.Get(42) != nil {
 		t.Error("session should be nil after unregister")
+	}
+}
+
+// TestSessionManager_ReRegisterRace covers the reconnect race: the old
+// connection's deferred Unregister must not delete the replacement
+// session that re-registered with the same ID.
+func TestSessionManager_ReRegisterRace(t *testing.T) {
+	sm := NewSessionManager()
+	old := &Session{ID: 42, Stream: &mockStream{}, Type: "TCP"}
+	sm.Register(42, old)
+
+	fresh := &Session{ID: 42, Stream: &mockStream{}, Type: "TCP"}
+	sm.Register(42, fresh)
+
+	// The stale connection dies after the new one registered.
+	sm.Unregister(42, old)
+
+	if sm.Get(42) != fresh {
+		t.Fatal("stale Unregister must not evict the re-registered session")
+	}
+
+	// Replaced sessions are closed so their handler goroutines exit.
+	if _, ok := old.Stream.(*mockStream); !ok {
+		t.Fatalf("unexpected stream type %T", old.Stream)
+	}
+
+	sm.Unregister(42, fresh)
+	if sm.Get(42) != nil {
+		t.Error("owner Unregister must evict the session")
+	}
+}
+
+// TestSessionManager_RelaySerializesWrites verifies that concurrent Relay
+// calls into the same TCP session are serialized (no interleaved writes).
+func TestSessionManager_RelaySerializesWrites(t *testing.T) {
+	sm := NewSessionManager()
+	stream := &mockStream{}
+	sm.Register(7, &Session{ID: 7, Stream: stream, Type: "TCP"})
+
+	var wg sync.WaitGroup
+	const goroutines, perG = 16, 50
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perG; i++ {
+				if err := sm.Relay(7, []byte("frame")); err != nil {
+					t.Errorf("relay: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if len(stream.written) != goroutines*perG {
+		t.Errorf("expected %d writes, got %d", goroutines*perG, len(stream.written))
 	}
 }
 
@@ -89,7 +146,7 @@ func TestSessionManager_ConcurrentAccess(t *testing.T) {
 		id := uint64(i)
 		go func() { defer wg.Done(); sm.Register(id, &Session{ID: id, Stream: &mockStream{}, Type: "TCP"}) }()
 		go func() { defer wg.Done(); sm.Get(id) }()
-		go func() { defer wg.Done(); sm.Unregister(id) }()
+		go func() { defer wg.Done(); sm.Unregister(id, nil) }()
 	}
 	wg.Wait()
 }
@@ -99,12 +156,14 @@ func TestSessionManager_ConnectedPeers(t *testing.T) {
 	if sm.ConnectedPeers() != 0 {
 		t.Error("expected 0 connected peers")
 	}
-	sm.Register(1, &Session{ID: 1, Stream: &mockStream{}, Type: "TCP"})
-	sm.Register(2, &Session{ID: 2, Stream: &mockStream{}, Type: "TCP"})
+	a := &Session{ID: 1, Stream: &mockStream{}, Type: "TCP"}
+	b := &Session{ID: 2, Stream: &mockStream{}, Type: "TCP"}
+	sm.Register(1, a)
+	sm.Register(2, b)
 	if sm.ConnectedPeers() != 2 {
 		t.Errorf("expected 2 connected peers, got %d", sm.ConnectedPeers())
 	}
-	sm.Unregister(1)
+	sm.Unregister(1, a)
 	if sm.ConnectedPeers() != 1 {
 		t.Errorf("expected 1 connected peer after unregister, got %d", sm.ConnectedPeers())
 	}
