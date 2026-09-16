@@ -111,7 +111,7 @@ func (p *Probe) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet 
 }
 
 // startLivenessTicker starts a background goroutine that polls the WireGuard
-// LastHandshakeTime every 60 s. If the handshake is stale (> 3 minutes), the
+// LastHandshakeTime every 15 s. If the handshake is stale (> 45 s), the
 // probe is restarted so that a new connection can be established.
 func (p *Probe) startLivenessTicker() {
 	if p.getHandshake == nil {
@@ -136,8 +136,8 @@ func (p *Probe) stopLivenessTicker() {
 	}
 }
 
-const livenessInterval = 60 * time.Second
-const livenessThreshold = 3 * time.Minute
+const livenessInterval = 15 * time.Second
+const livenessThreshold = 45 * time.Second
 
 func (p *Probe) runLiveness(ctx context.Context) {
 	ticker := time.NewTicker(livenessInterval)
