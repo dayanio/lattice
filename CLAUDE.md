@@ -70,9 +70,16 @@ The Makefile sets `BPF2GO_CC=/opt/homebrew/opt/llvm/bin/clang` on macOS to pick 
 
 - **Branches**: `master` (main), `dev` (development)
 - **Commits**: Conventional commits with scope: `feat(scope):`, `fix(scope):`, `refactor:`, `ci:`
-- **Commit grouping**: 同一功能点（相同 prefix，如 `feat(agent-isolation):`）的所有修改必须合并到**同一个 commit** 中，不要分散成多次提交。创建新 commit 前，先用 `git log --oneline -20` 检查最近提交，若已有相同 prefix 的 commit，使用 `git commit --amend` 追加到该 commit 而非新建。
-- **Commit flags**: Always use `git commit -s` (DCO sign-off)
-- **Commit author**: Always use the identity from `git config user.name` / `git config user.email` — never add `Co-Authored-By` trailers, 提交之前先跑一下'make lint'检查有没有lint errors,如果有直接提示并修复
+- **Git Commit Rules**（复制自 reflux 项目，提交规则以这里为准）:
+
+  - A feature should be a single commit. If the implementation spans multiple changes, stage them all together and make one commit at the end — do not commit incrementally.
+  - Always use `git commit -s` (Signed-off-by).
+  - Never add `Co-Authored-By` in commit messages.
+  - Do not amend or rebase existing commits. If a previous commit needs a fix, just make a new commit on top. Keep it simple and linear — no force-pushing, no history rewriting.
+  - After completing a design/plan and its implementation, automatically commit all changes without waiting for the user to ask.
+  - **Push after commit**: 所有修改提交完写了 commit 后，立即推送到远程（`git push`），不要把 commit 留在本地。
+
+- **Commit author**: Always use the identity from `git config user.name` / `git config user.email`, 提交之前先跑一下'make lint'检查有没有lint errors,如果有直接提示并修复
 - **PR triggers**: `run-docker`, `run-e2e`, `run-helm`, `run-readme`, `run-benchmark` labels (see `.github/PR_LABELS.md`)
 
 ## Code Patterns
