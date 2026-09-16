@@ -128,6 +128,10 @@ struct JoinView: View {
         }
         if let server = payload.serverURL { serverURL = server }
         if let token = payload.token { joinToken = token }
+        // 完整入网码（服务端地址 + 令牌都在）→ 直接继续，省去手输与再次点击。
+        if payload.serverURL != nil && payload.token != nil {
+            saveAndConnect()
+        }
     }
 
     private func saveAndConnect() {

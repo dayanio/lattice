@@ -5,7 +5,7 @@ import {
   useVueTable, getCoreRowModel, FlexRender, type ColumnDef,
 } from '@tanstack/vue-table'
 import {
-  Search, RefreshCw, MoreHorizontal, Trash2, KeyRound,
+  Search, RefreshCw, MoreHorizontal, Trash2, KeyRound, QrCode,
   ChevronLeft, ChevronRight, Plus, Copy, Check, Terminal,
   ShieldCheck, ShieldX, Infinity,
 } from 'lucide-vue-next'
@@ -25,6 +25,7 @@ import { listTokens, create, rmToken } from '@/api/token'
 import AppAlertDialog from '@/components/AlertDialog.vue'
 import { toast } from 'vue-sonner'
 import { useWorkspaceStore } from '@/stores/workspace'
+import QRCode from 'qrcode'
 
 definePage({
   meta: { titleKey: 'manage.tokens.title', descKey: 'manage.tokens.desc' },
@@ -55,6 +56,21 @@ const deleting = ref(false)
 const createDialogOpen = ref(false)
 const detailDialogOpen = ref(false)
 const deleteDialogOpen = ref(false)
+const serverOrigin = window.location.origin
+const qrDialogOpen = ref(false)
+const qrDataUrl = ref('')
+const qrTokenLabel = ref('')
+
+async function showJoinQR(token: TokenRow) {
+  const payload = `lattice://join?server=${window.location.origin}&token=${encodeURIComponent(token.token)}`
+  try {
+    qrDataUrl.value = await QRCode.toDataURL(payload, { width: 240, margin: 1 })
+  } catch {
+    qrDataUrl.value = ''
+  }
+  qrTokenLabel.value = token.token
+  qrDialogOpen.value = true
+}
 const selectedToken = ref<TokenRow | null>(null)
 const deleteTarget = ref<TokenRow | null>(null)
 const copiedKey = ref<string | null>(null)
@@ -354,6 +370,9 @@ const columns: ColumnDef<TokenRow>[] = [
             h(DropdownMenuItem, { onClick: () => copyText(token.token, `token-${token.token}`) }, () => [
               h(Copy, { class: 'mr-2 size-3.5' }), t('manage.tokens.menu.copyToken'),
             ]),
+            h(DropdownMenuItem, { onClick: () => showJoinQR(token) }, () => [
+              h(QrCode, { class: 'mr-2 size-3.5' }), t('manage.tokens.menu.joinQR'),
+            ]),
             h(DropdownMenuSeparator),
             h(DropdownMenuItem, {
               class: 'text-destructive focus:text-destructive',
@@ -565,6 +584,27 @@ function goToPage(p: number) {
         </Button>
       </div>
     </div>
+
+    <Dialog v-model:open="qrDialogOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2">
+            <QrCode class="size-4" /> {{ t('manage.tokens.qrDialog.title') }}
+          </DialogTitle>
+          <DialogDescription>
+            {{ t('manage.tokens.qrDialog.desc') }}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div class="flex flex-col items-center gap-3 py-2">
+          <img v-if="qrDataUrl" :src="qrDataUrl" alt="join QR" class="rounded-lg border bg-white p-2" />
+          <p class="text-xs text-muted-foreground text-center">
+            {{ t('manage.tokens.qrDialog.server') }} <code class="font-mono">{{ serverOrigin }}</code>
+          </p>
+        </div>
+      </DialogContent>
+
+    </Dialog>
 
     <AppAlertDialog
       v-model:open="deleteDialogOpen"

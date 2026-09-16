@@ -325,6 +325,7 @@
     "menu": {
       "viewDetail": "View Details",
       "copyToken": "Copy Token",
+      "joinQR": "Join QR Code",
       "delete": "Delete Token"
     },
     "empty": "No tokens",
@@ -354,6 +355,11 @@
       "createFailed": "Token creation failed",
       "deleted": "Token deleted",
       "deleteFailed": "Delete failed"
+    },
+    "qrDialog": {
+      "title": "Join QR Code",
+      "desc": "Scan with the Lattice iOS app's “Scan QR Code” to join this network",
+      "server": "Server address"
     }
   },
   "nodes": {
@@ -415,8 +421,8 @@
       "publicKey": "Public Key",
       "customName": "Custom Name",
       "nameHint": "Leave empty to use system default name.",
-"staticEndpoint": "Static Endpoint (Advanced)",
-"staticEndpointHint": "Manually pin this node's real reachable address (IP:port) for cases where automatic hole-punching fails, e.g. a container with a published port behind NAT. Leave blank to use automatic discovery.",
+      "staticEndpoint": "Static Endpoint (Advanced)",
+      "staticEndpointHint": "Manually pin this node's real reachable address (IP:port) for cases where automatic hole-punching fails, e.g. a container with a published port behind NAT. Leave blank to use automatic discovery.",
       "labels": "Labels",
       "noLabels": "No labels",
       "addLabel": "Add Label",
