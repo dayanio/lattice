@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status (2026-09-16):** Tasks 1-6 implemented, reviewed, and committed (3908a28b…3d696dfe + Task 7 verification). Device-only connection-state checks remain for a real iPhone (NetworkExtension cannot run in the iOS Simulator).
+
 **Goal:** Restyle the Lattice iOS app to reference Tailscale's iOS design — hero connection card with live timer and breathing animation, searchable favorites-grouped device list with platform icons, long-press actions, upgraded peer detail, Tailscale-style grouped settings with a theme picker — per `docs/superpowers/specs/2026-09-16-ios-tailscale-style-redesign-design.md`.
 
 **Architecture:** All changes are app-side only. Shared components (`DesignComponents.swift`, `TunnelManager.swift`) get additive-only changes so the macOS target keeps compiling; new iOS-only code (`OverviewView`, `FavoritesStore`, `PeerActions`) lives under `apple/Lattice/`. No backend calls change — `listPeers`/`renamePeer`/`setPeerDisabled` and the NE tunnel status are the only data sources.
@@ -34,7 +36,7 @@
   - `struct PlatformIcon: View` — `init(os: String, size: CGFloat = 30)`
   - `struct FavoriteStar: View` — `init(isOn: Bool, action: () -> Void)`
 
-- [ ] **Step 1: 追加组件实现**
+- [x] **Step 1: 追加组件实现**
 
 在 `apple/Shared/DesignComponents.swift` 末尾追加：
 
@@ -193,7 +195,7 @@ struct FavoriteStar: View {
 }
 ```
 
-- [ ] **Step 2: 双平台构建验证**
+- [x] **Step 2: 双平台构建验证**
 
 Run: `cd apple && xcodebuild -project LatticeApple.xcodeproj -scheme Lattice -destination 'generic/platform=iOS Simulator' -configuration Debug build 2>&1 | tail -3`
 Expected: `** BUILD SUCCEEDED **`
@@ -201,7 +203,7 @@ Expected: `** BUILD SUCCEEDED **`
 Run: `xcodebuild -project LatticeApple.xcodeproj -scheme LatticeMac -destination 'platform=macOS' -configuration Debug build 2>&1 | tail -3`
 Expected: `** BUILD SUCCEEDED **`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apple/Shared/DesignComponents.swift
@@ -221,7 +223,7 @@ git commit -m "feat(apple): connection hero, platform icon, favorite star compon
   - `@Published private(set) var connectedSince: Date?`
   - `var connectionState: ConnectionState`（计算属性，Task 4 首页消费）
 
-- [ ] **Step 1: 加属性**
+- [x] **Step 1: 加属性**
 
 在 `@Published private(set) var peerStates: [String: String] = [:]`（约 40 行）之后加：
 
@@ -231,7 +233,7 @@ git commit -m "feat(apple): connection hero, platform icon, favorite star compon
     @Published private(set) var connectedSince: Date?
 ```
 
-- [ ] **Step 2: 在 refreshStatus 中维护**
+- [x] **Step 2: 在 refreshStatus 中维护**
 
 `refreshStatus()` 改为：
 
@@ -264,11 +266,11 @@ git commit -m "feat(apple): connection hero, platform icon, favorite star compon
     }
 ```
 
-- [ ] **Step 3: 双平台构建验证**
+- [x] **Step 3: 双平台构建验证**
 
 同 Task 1 的两条构建命令。Expected: 均 `** BUILD SUCCEEDED **`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apple/Shared/TunnelManager.swift
@@ -285,7 +287,7 @@ git commit -m "feat(apple): expose connectedSince and connectionState on TunnelM
 **Interfaces:**
 - Produces: `final class FavoritesStore: ObservableObject` — `@Published private(set) var names: Set<String>`；`init()`；`func isFavorite(_ name: String) -> Bool`；`func toggle(_ name: String)`。UserDefaults key 固定 `lattice.favoritePeers`。
 
-- [ ] **Step 1: 实现**
+- [x] **Step 1: 实现**
 
 ```swift
 // Copyright 2026 The Lattice Authors, Inc.
@@ -327,12 +329,12 @@ final class FavoritesStore: ObservableObject {
 }
 ```
 
-- [ ] **Step 2: 注册进 Xcode 工程并构建**
+- [x] **Step 2: 注册进 Xcode 工程并构建**
 
 Run: `cd apple && xcodegen generate && xcodebuild -project LatticeApple.xcodeproj -scheme Lattice -destination 'generic/platform=iOS Simulator' -configuration Debug build 2>&1 | tail -3`
 Expected: `** BUILD SUCCEEDED **`（`sources: [Lattice, Shared]` 自动纳入新文件；macOS target 不含 `Lattice/` 目录，无需回归——但仍跑一次 macOS 构建确认无意外：Expected 同上）
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apple/Lattice/FavoritesStore.swift apple/LatticeApple.xcodeproj/project.pbxproj
@@ -352,7 +354,7 @@ git commit -m "feat(apple): favorites store with UserDefaults persistence"
 - Consumes: Task 1 组件、Task 2 `tunnel.connectionState`/`connectedSince`、Task 3 `FavoritesStore`、`LatticeAPI.listPeers/renamePeer/setPeerDisabled`、`PeerNode`（`TunnelCore.swift:25`）。
 - Produces: `struct OverviewView: View`；`enum PeerActions`（Task 5 详情页复用）：`static func copyToClipboard(_ text: String)`、`static func rename(_ peer: PeerNode, to newName: String) async throws`、`static func setDisabled(_ peer: PeerNode, _ disabled: Bool) async throws`、`static func qualityPill(_ state: String) -> (text: String, color: Color)?`（从现 StatusView 迁移）。
 
-- [ ] **Step 1: git mv 并写 PeerActions**
+- [x] **Step 1: git mv 并写 PeerActions**
 
 ```bash
 git mv apple/Lattice/StatusView.swift apple/Lattice/OverviewView.swift
@@ -393,7 +395,7 @@ enum PeerActions {
 }
 ```
 
-- [ ] **Step 2: 重写 OverviewView**
+- [x] **Step 2: 重写 OverviewView**
 
 `apple/Lattice/OverviewView.swift` 全文替换为：
 
@@ -572,7 +574,7 @@ struct OverviewView: View {
 }
 ```
 
-- [ ] **Step 3: RootView 改引用 + DEBUG 跳过加入**
+- [x] **Step 3: RootView 改引用 + DEBUG 跳过加入**
 
 `apple/Lattice/RootView.swift`：`StatusView()` 改为 `OverviewView()`（含 tabItem 不变）；`evaluateJoinState()` 改为：
 
@@ -588,7 +590,7 @@ struct OverviewView: View {
     }
 ```
 
-- [ ] **Step 4: 构建验证 + 模拟器冒烟**
+- [x] **Step 4: 构建验证 + 模拟器冒烟**
 
 Run: `cd apple && xcodegen generate && xcodebuild -project LatticeApple.xcodeproj -scheme Lattice -destination 'generic/platform=iOS Simulator' -configuration Debug build 2>&1 | tail -3`
 Expected: `** BUILD SUCCEEDED **`
@@ -608,7 +610,7 @@ xcrun simctl io A4BA97DA-DB8D-4D46-89E2-E229904CAED9 screenshot /tmp/lattice-ove
 
 Read `/tmp/lattice-overview.png`：应看到 hero 卡（未连接/灰）+ 搜索框 + 节点区（"暂无节点"或"加载失败"——模拟器未登录属预期），无崩溃。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apple/Lattice/OverviewView.swift apple/Lattice/PeerActions.swift apple/Lattice/RootView.swift apple/LatticeApple.xcodeproj/project.pbxproj
@@ -625,7 +627,7 @@ git commit -m "feat(apple): Tailscale-style overview with hero card, search, fav
 **Interfaces:**
 - Consumes: `PlatformIcon`/`FavoriteStar`（Task 1）、`FavoritesStore`（Task 3）、`PeerActions`（Task 4）、`LatticePalette`。
 
-- [ ] **Step 1: 全文替换**
+- [x] **Step 1: 全文替换**
 
 ```swift
 // Copyright 2026 The Lattice Authors, Inc.
@@ -734,11 +736,11 @@ struct PeerDetailView: View {
 
 **实现注意**：上面 `FavoriteStar-likeCopyButton` 是占位记号——落码时该处写 `Button { PeerActions.copyToClipboard(peer.address); copied = true; DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copied = false } } label: { Image(systemName: copied ? "checkmark" : "doc.on.doc").foregroundColor(LatticePalette.accent) }.buttonStyle(.plain)`；同时删除下方操作组里重复的"复制 IP"行内状态提示可自行取舍，两处都用 `copied` 态即可。若 `LabeledContent` 尾闭包形式编译器类型推断报错，改用 `HStack { Text("IP 地址"); Spacer(); Text(peer.address)...; copyButton }` 的手写布局。
 
-- [ ] **Step 2: 双平台构建验证**
+- [x] **Step 2: 双平台构建验证**
 
 同 Task 1 的两条构建命令。Expected: 均 `** BUILD SUCCEEDED **`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add apple/Lattice/PeerDetailView.swift
@@ -756,7 +758,7 @@ git commit -m "feat(apple): Tailscale-style peer detail with copy and actions"
 **Interfaces:**
 - Produces: `enum LatticeTheme: String, CaseIterable`（`system`/`light`/`dark`，UserDefaults key `lattice.theme` 经 `@AppStorage` 读写）。
 
-- [ ] **Step 1: 主题枚举 + 设置页 body 重组**
+- [x] **Step 1: 主题枚举 + 设置页 body 重组**
 
 `apple/Lattice/SettingsView.swift`：在 import 后加：
 
@@ -827,7 +829,7 @@ enum LatticeTheme: String, CaseIterable, Identifiable {
 
 （`leaveNetwork()`、`showingLeaveConfirm`、confirmationDialog 原样不动。）
 
-- [ ] **Step 2: LatticeApp 应用主题**
+- [x] **Step 2: LatticeApp 应用主题**
 
 `apple/Lattice/LatticeApp.swift` 全文替换为：
 
@@ -850,11 +852,11 @@ struct LatticeApp: App {
 }
 ```
 
-- [ ] **Step 3: 双平台构建验证**
+- [x] **Step 3: 双平台构建验证**
 
 同 Task 1 的两条构建命令。Expected: 均 `** BUILD SUCCEEDED **`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apple/Lattice/SettingsView.swift apple/Lattice/LatticeApp.swift
@@ -868,7 +870,7 @@ git commit -m "feat(apple): grouped settings with account header and theme picke
 **Files:**
 - Modify: `docs/superpowers/plans/2026-09-16-ios-tailscale-style-redesign.md`（回填 checkbox）
 
-- [ ] **Step 1: 干净全量双构建**
+- [x] **Step 1: 干净全量双构建**
 
 ```bash
 cd apple && xcodegen generate
@@ -877,7 +879,7 @@ xcodebuild -project LatticeApple.xcodeproj -scheme LatticeMac -destination 'plat
 ```
 Expected: 两条均 `** BUILD SUCCEEDED **`
 
-- [ ] **Step 2: 模拟器走查（DEBUG 跳过加入）**
+- [x] **Step 2: 模拟器走查（DEBUG 跳过加入）**
 
 ```bash
 xcrun simctl boot A4BA97DA-DB8D-4D46-89E2-E229904CAED9 2>/dev/null; true
@@ -889,11 +891,11 @@ xcrun simctl io A4BA97DA-DB8D-4D46-89E2-E229904CAED9 screenshot /tmp/lattice-red
 
 检查 `/tmp/lattice-redesign-light.png`：hero 卡（未连接/灰/椭圆）、搜索框、设备区空态文案，布局与 spec §三一致、无崩溃。再验证设置页与深色：用 System Events（`tell process "Simulator" to click ...`，同上午冒烟的 AX 驱动方式）切到设置 Tab，确认账户头/偏好/主题 Picker 存在；把主题切到"深色"后再截一张 `dark` 图，确认全屏变深。
 
-- [ ] **Step 3: 深浅色核对标准**
+- [x] **Step 3: 深浅色核对标准**
 
 light/dark 两图并排对照：hero 卡材质、文字对比度、pill 可读性；任何硬编码白底/黑字即为不合规（回到对应组件改语义色后重跑 Step 1）。
 
-- [ ] **Step 4: 回填 checkbox 并提交**
+- [x] **Step 4: 回填 checkbox 并提交**
 
 勾掉本计划已完成步骤，未覆盖项（真机连接态：计时/呼吸动画/直连中继聚合）保持未勾并在文件头加一行 Status 注明原因（同上午 iOS 计划的格式）。
 
