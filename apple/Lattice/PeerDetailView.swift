@@ -8,7 +8,7 @@ struct PeerDetailView: View {
     let peer: PeerNode
     let quality: String?
 
-    @StateObject private var favorites = FavoritesStore()
+    @ObservedObject private var favorites = FavoritesStore.shared
     @State private var currentDisabled: Bool
     @State private var showingRename = false
     @State private var renameText = ""
@@ -81,8 +81,12 @@ struct PeerDetailView: View {
                 }
                 Button(role: .destructive) {
                     Task {
-                        try? await PeerActions.setDisabled(peer, !currentDisabled)
-                        currentDisabled.toggle()
+                        do {
+                            try await PeerActions.setDisabled(peer, !currentDisabled)
+                            currentDisabled.toggle()
+                        } catch {
+                            // 服务器未变更时保持原状态；与全 App 静默错误约定一致，不弹窗
+                        }
                     }
                 } label: {
                     Label(currentDisabled ? "启用" : "停用", systemImage: currentDisabled ? "checkmark.circle" : "nosign")

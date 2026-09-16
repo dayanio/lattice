@@ -266,6 +266,9 @@ struct ConnectionHero: View {
             }
             .frame(width: 150, height: 74)
             .contentShape(Capsule())
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(state == .connected ? "断开连接" : "连接网络")
+            .accessibilityHint("切换 VPN 连接状态")
             .onTapGesture { onToggle() }
             .onChange(of: state) { _, newState in
                 breathe = false

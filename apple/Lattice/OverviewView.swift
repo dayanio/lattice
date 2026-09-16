@@ -6,7 +6,7 @@ import SwiftUI
 /// 首页：hero 连接卡 + 搜索 + ⭐收藏/全部设备两组（spec §三）。
 struct OverviewView: View {
     @StateObject private var tunnel = TunnelManager.shared
-    @StateObject private var favorites = FavoritesStore()
+    @ObservedObject private var favorites = FavoritesStore.shared
     @State private var peers: [PeerNode] = []
     @State private var searchText = ""
     @State private var isLoading = false

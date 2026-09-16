@@ -10,7 +10,9 @@ final class FavoritesStore: ObservableObject {
 
     private static let key = "lattice.favoritePeers"
 
-    init() { load() }
+    static let shared = FavoritesStore()
+
+    private init() { load() }
 
     func isFavorite(_ name: String) -> Bool { names.contains(name) }
 
