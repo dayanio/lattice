@@ -27,6 +27,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Latest per-peer connection-quality snapshot, served to the containing
     /// app via handleAppMessage (the app cannot read engine state directly).
     private var latestPeerStates = "{}"
+    /// Last fatal engine error ("error: " events). Surfaced to the containing
+    /// app over the handleAppMessage channel so the UI can show WHY the
+    /// tunnel is not connected instead of failing silently.
+    private var latestError = ""
     /// Latest extra-routes snapshot from the engine (JSON array of CIDRs),
     /// applied as NEIPv4Routes once the tunnel is up. Empty until the first
     /// OnRoutesChanged call.
@@ -35,7 +39,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         if String(data: messageData, encoding: .utf8) == "peerStates" {
-            completionHandler?(Data(latestPeerStates.utf8))
+            let snapshot: [String: String] = ["peerStates": latestPeerStates, "lastError": latestError]
+            completionHandler?(try? JSONSerialization.data(withJSONObject: snapshot))
             return
         }
         completionHandler?(nil)
@@ -149,6 +154,7 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
         NSLog("[Lattice] engine event: \(event ?? "")")
         guard let event, event.hasPrefix("error: ") else { return }
         let message = String(event.dropFirst("error: ".count))
+        latestError = message
         if let pendingStart {
             // Failure during start: surface the reason to NE (and thus to the
             // containing app) as a failed start.

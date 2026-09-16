@@ -172,6 +172,7 @@ final class TunnelManager: ObservableObject {
         status = manager?.connection.status ?? .invalid
         if status == .connected {
             if connectedSince == nil { connectedSince = Date() }
+            lastStartError = ""
             startStatePoller()
         } else {
             connectedSince = nil
@@ -210,16 +211,32 @@ final class TunnelManager: ObservableObject {
         statePoller = nil
     }
 
+    private struct ProviderSnapshot: Codable {
+        let peerStates: [String: String]
+        let lastError: String?
+    }
+
     /// Asks the tunnel process for its latest peer-state snapshot over the
     /// NE provider-message channel (see PacketTunnelProvider.handleAppMessage).
+    /// Polls while connecting too — a start-phase engine failure otherwise
+    /// dies silently and the UI would show 未连接 with no reason.
     private func pollPeerStates() {
         guard let connection = manager?.connection as? NETunnelProviderSession else { return }
         do {
             try connection.sendProviderMessage(Data("peerStates".utf8)) { [weak self] data in
-                guard let data,
-                      let states = try? JSONDecoder().decode([String: String].self, from: data) else { return }
                 DispatchQueue.main.async {
-                    self?.peerStates = states
+                    guard let self else { return }
+                    guard let data else {
+                        if self.status == .connecting {
+                            self.lastStartError = "隧道进程无响应，请重试连接或重启 App"
+                        }
+                        return
+                    }
+                    guard let snap = try? JSONDecoder().decode(ProviderSnapshot.self, from: data) else { return }
+                    self.peerStates = snap.peerStates
+                    if self.status != .connected, let err = snap.lastError, !err.isEmpty {
+                        self.lastStartError = err
+                    }
                 }
             }
         } catch {
