@@ -150,6 +150,7 @@ type peerItem struct {
 	labels           map[string]string
 	advertisedRoutes []string
 	disabled         bool
+	endpoint         string
 }
 
 func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error) {
@@ -229,6 +230,7 @@ func (p *peerService) listPeersStandalone(ctx context.Context, pageParam *dto.Pa
 			labels:           labels,
 			advertisedRoutes: advertisedRoutes,
 			disabled:         r.Disabled,
+			endpoint:         r.Endpoint,
 		})
 	}
 
@@ -278,6 +280,7 @@ func (p *peerService) renderPeerPage(ctx context.Context, workspace *models.Work
 			AdvertisedRoutes:     n.advertisedRoutes,
 			WorkspaceDisplayName: workspace.DisplayName,
 			Disabled:             n.disabled,
+			Endpoint:             n.endpoint,
 		}
 		if p.presence != nil {
 			status, lastSeen := p.presence.GetStatus(n.appId)
