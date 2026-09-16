@@ -31,7 +31,10 @@ targets:
     dependencies:
       - target: LatticeTunnel
       - framework: Frameworks/iOS/LatticeCore.xcframework
-        embed: true
+        # The iOS slice is a STATIC library (gomobile) — the engine is linked
+        # into LatticeTunnel at build time, so embedding the framework in the
+        # app only leaves an ar-archive that installd refuses to parse.
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios

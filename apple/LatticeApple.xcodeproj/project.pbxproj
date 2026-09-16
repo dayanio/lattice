@@ -34,6 +34,7 @@
 		7B013D63F49DB80AF2D745ED /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 		7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B18389E61765B68DB7CF7D /* DesignComponents.swift */; };
 		868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 960BD20764F178AA8EE601C2 /* ExitNodeView.swift */; };
+		9344D1373D11D2DE1F78F0C5 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47DACD8B5C4EBFE6CA33C972 /* LoginView.swift */; };
 		A8FEB6A60B7D5B4254818DCA /* NetworkPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */; };
 		B3C7A14C0465C3DF7DDEF3E2 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		B78ADF07D928BBC23F1C2C5A /* DesignComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B18389E61765B68DB7CF7D /* DesignComponents.swift */; };
@@ -44,7 +45,6 @@
 		CB573F157F641243D23A8271 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
 		E67E73C171D445673D559589 /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
 		E9FBD46E90777EBAFE9E1D3F /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
-		F2BACF87E8225658BC92E545 /* LatticeCore.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		F51064384E99E2A556DF23E5 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 		FAE77EC15F11A48CBAF6B894 /* FavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E5909331047D47021B484E /* FavoritesStore.swift */; };
 		FCF81D8DC792F9C1BC8000EF /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
@@ -77,17 +77,6 @@
 				1EB51D02EC978D6692E1ADD9 /* LatticeTunnelMac.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		678BE1D8FA86F98F715B7ACE /* Embed Frameworks */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 10;
-			files = (
-				F2BACF87E8225658BC92E545 /* LatticeCore.xcframework in Embed Frameworks */,
-			);
-			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		AF4933C2FFED306C5C6E4B2B /* Embed Foundation Extensions */ = {
@@ -128,6 +117,7 @@
 		3A96A5BA984924A4BE08A5B2 /* QRScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerView.swift; sourceTree = "<group>"; };
 		3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinPayload.swift; sourceTree = "<group>"; };
+		47DACD8B5C4EBFE6CA33C972 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
@@ -194,6 +184,7 @@
 				E3E5909331047D47021B484E /* FavoritesStore.swift */,
 				A2B465D56E6931B309FAEF61 /* JoinView.swift */,
 				A087BE65958F460FCF0CC468 /* LatticeApp.swift */,
+				47DACD8B5C4EBFE6CA33C972 /* LoginView.swift */,
 				F838CD20F6150A9C5E1F3402 /* OverviewView.swift */,
 				181438EF236ABFF41737E743 /* PeerActions.swift */,
 				293355084BBA1A64A7029EB5 /* PeerDetailView.swift */,
@@ -293,7 +284,6 @@
 				213515E5C1C93340C00A5C53 /* Sources */,
 				E0BFADCECA31C1061DB4CBE1 /* Frameworks */,
 				AF4933C2FFED306C5C6E4B2B /* Embed Foundation Extensions */,
-				678BE1D8FA86F98F715B7ACE /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -457,6 +447,7 @@
 				00140F5ED99BBE357CC1F951 /* KeychainStore.swift in Sources */,
 				616890BBE0D3865DDF79A5E8 /* LatticeAPI.swift in Sources */,
 				58B765388DE135282E31A3E0 /* LatticeApp.swift in Sources */,
+				9344D1373D11D2DE1F78F0C5 /* LoginView.swift in Sources */,
 				C57A26F25C649ED6C6B71FF5 /* OverviewView.swift in Sources */,
 				7277281C1F1B472AF67D241D /* PeerActions.swift in Sources */,
 				02AAD2A81C61D9265999E855 /* PeerDetailView.swift in Sources */,
