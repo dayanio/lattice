@@ -349,8 +349,8 @@ struct ContentView: View {
                         QualityPill(text: summary.text, color: summary.color)
                     }
                 }
-                if let err = tunnel.lastStartError, !err.isEmpty {
-                    Text(err).font(.caption2).foregroundColor(.red)
+                if !tunnel.lastStartError.isEmpty {
+                    Text(tunnel.lastStartError).font(.caption2).foregroundColor(.red)
                 } else if let host = URL(string: tunnel.serverURL ?? ""), let hostHeader = host.host {
                     Text(hostHeader)
                         .font(.caption2)

@@ -16,23 +16,33 @@ import Foundation
 import SwiftUI
 import NetworkExtension
 
-/// Owns the iOS VPN profile (NETunnelProviderManager) and its lifecycle.
-/// Mirrors LatticeMac/TunnelManager.swift; only the tunnel bundle id and the
-/// UI helpers differ. Profile recreation on join is load-bearing here too:
-/// macOS/iOS pin the provider's code requirement at profile-creation time.
+/// Owns the VPN profile (NETunnelProviderManager) and its lifecycle, shared
+/// between LatticeMac and Lattice (iOS) — the two platforms differ only in
+/// tunnel bundle ID. The tunnel itself runs inside the platform's extension
+/// (LatticeTunnelMac / LatticeTunnel); this class creates/updates the
+/// profile, toggles the connection, and polls the extension for per-peer
+/// connection quality over the NE provider-message channel.
 final class TunnelManager: ObservableObject {
     static let shared = TunnelManager()
+
+    #if os(macOS)
+    static let tunnelBundleID = "io.lattice.mac.tunnel"
+    #else
     static let tunnelBundleID = "io.lattice.ios.tunnel"
+    #endif
     static let profileName = "Lattice"
 
     @Published private(set) var isConfigured = false
     @Published private(set) var status: NEVPNStatus = .invalid
     @Published private(set) var lastStartError: String = ""
+    /// Per-peer connection quality from the tunnel process
+    /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
+    @Published private(set) var peerStates: [String: String] = [:]
 
-    private var manager: NETunnelProviderManager?
-    private var observer: NSObjectProtocol?
-
-    private init() {}
+    /// The management server this profile points at (panel subtitle).
+    var serverURL: String? {
+        (manager?.protocolConfiguration as? NETunnelProviderProtocol)?.serverAddress
+    }
 
     var statusText: String {
         switch status {
@@ -43,8 +53,8 @@ final class TunnelManager: ObservableObject {
         }
     }
 
-    /// Binding for the connect toggle: turning it on with no profile yet is
-    /// a no-op (the join form drives profile creation).
+    /// Binding for a connect toggle: turning it on with no profile yet is a
+    /// no-op (the join flow drives profile creation).
     var connectedBinding: Binding<Bool> {
         Binding(
             get: { self.status == .connected },
@@ -57,6 +67,12 @@ final class TunnelManager: ObservableObject {
             }
         )
     }
+
+    private var manager: NETunnelProviderManager?
+    private var observer: NSObjectProtocol?
+    private var statePoller: Timer?
+
+    private init() {}
 
     /// Loads (or reloads) the Lattice VPN profile and status from the system.
     func load(_ completion: (() -> Void)? = nil) {
@@ -73,9 +89,14 @@ final class TunnelManager: ObservableObject {
         }
     }
 
-    /// Removes any previous Lattice profile and saves a fresh one. The system
-    /// pins the provider's code requirement when the profile is first created,
-    /// so stale profiles would reject a rebuilt (correctly signed) extension.
+    /// Creates or updates the VPN profile with join parameters, then enables
+    /// it. Any previous Lattice profile is removed first: the OS pins the
+    /// provider's code requirement at profile-creation time, so a stale
+    /// profile would reject a rebuilt (correctly signed) extension forever.
+    /// - Parameters:
+    ///   - serverURL: management server base URL, e.g. http://172.20.10.4:8080
+    ///   - token: enrollment token issued by the control plane
+    ///   - name: stable node name (used as the peer identity)
     func saveJoin(serverURL: String, token: String, name: String, completion: ((String?) -> Void)? = nil) {
         NETunnelProviderManager.loadAllFromPreferences { managers, _ in
             let stale = (managers ?? []).filter {
@@ -112,6 +133,7 @@ final class TunnelManager: ObservableObject {
                     completion?(error.localizedDescription)
                     return
                 }
+                // Reload so `manager.connection` points at the saved profile.
                 self?.load {
                     completion?(nil)
                 }
@@ -135,6 +157,14 @@ final class TunnelManager: ObservableObject {
 
     private func refreshStatus() {
         status = manager?.connection.status ?? .invalid
+        if status == .connected {
+            startStatePoller()
+        } else {
+            stopStatePoller()
+            if peerStates.isEmpty == false {
+                peerStates = [:]
+            }
+        }
     }
 
     private func observeStatus() {
@@ -147,6 +177,38 @@ final class TunnelManager: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             self?.refreshStatus()
+        }
+    }
+
+    // MARK: - Connection quality (provider message channel)
+
+    private func startStatePoller() {
+        guard statePoller == nil else { return }
+        pollPeerStates()
+        statePoller = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            self?.pollPeerStates()
+        }
+    }
+
+    private func stopStatePoller() {
+        statePoller?.invalidate()
+        statePoller = nil
+    }
+
+    /// Asks the tunnel process for its latest peer-state snapshot over the
+    /// NE provider-message channel (see PacketTunnelProvider.handleAppMessage).
+    private func pollPeerStates() {
+        guard let connection = manager?.connection as? NETunnelProviderSession else { return }
+        do {
+            try connection.sendProviderMessage(Data("peerStates".utf8)) { [weak self] data in
+                guard let data,
+                      let states = try? JSONDecoder().decode([String: String].self, from: data) else { return }
+                DispatchQueue.main.async {
+                    self?.peerStates = states
+                }
+            }
+        } catch {
+            // Session not ready; the next tick retries.
         }
     }
 }

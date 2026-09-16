@@ -24,7 +24,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var engine: LatticeEngineEngine?
     private var pendingStart: ((Error?) -> Void)?
     private var pumping = false
+    /// Latest per-peer connection-quality snapshot, served to the containing
+    /// app via handleAppMessage (the app cannot read engine state directly).
     private var latestPeerStates = "{}"
+    /// Latest extra-routes snapshot from the engine (JSON array of CIDRs),
+    /// applied as NEIPv4Routes once the tunnel is up. Empty until the first
+    /// OnRoutesChanged call.
+    private var latestExtraRoutes: [String] = []
+    private var currentOverlayIP = "10.96.0.1"
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         if String(data: messageData, encoding: .utf8) == "peerStates" {
@@ -93,14 +100,43 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private func makeSettings(overlayIP: String) -> NEPacketTunnelNetworkSettings {
+    private func makeSettings(overlayIP: String, extraRoutes: [String]) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: overlayIP)
         settings.mtu = 1280
 
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
-        ipv4.includedRoutes = [NEIPv4Route(destinationAddress: "10.96.0.0", subnetMask: "255.255.255.0")]
+        var included = [NEIPv4Route(destinationAddress: "10.96.0.0", subnetMask: "255.255.255.0")]
+        var excluded: [NEIPv4Route] = []
+
+        for cidr in extraRoutes {
+            guard let route = Self.ipv4Route(fromCIDR: cidr) else { continue }
+            included.append(route)
+        }
+
+        if extraRoutes.contains("0.0.0.0/0"),
+           let serverURL = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration?["serverURL"] as? String,
+           let host = URL(string: serverURL)?.host,
+           let hostIP = Self.ipv4Route(fromCIDR: "\(host)/32") {
+            excluded.append(hostIP)
+        }
+
+        ipv4.includedRoutes = included
+        ipv4.excludedRoutes = excluded.isEmpty ? nil : excluded
         settings.ipv4Settings = ipv4
         return settings
+    }
+
+    private static func ipv4Route(fromCIDR cidr: String) -> NEIPv4Route? {
+        let parts = cidr.split(separator: "/")
+        guard parts.count == 2, let prefixLen = UInt8(parts[1]), prefixLen <= 32 else { return nil }
+        let address = String(parts[0])
+        let mask = prefixLen == 0 ? "0.0.0.0" : ipv4SubnetMask(prefixLength: prefixLen)
+        return NEIPv4Route(destinationAddress: address, subnetMask: mask)
+    }
+
+    private static func ipv4SubnetMask(prefixLength: UInt8) -> String {
+        let mask: UInt32 = prefixLength == 0 ? 0 : ~UInt32(0) << (32 - prefixLength)
+        return [24, 16, 8, 0].map { String((mask >> $0) & 0xFF) }.joined(separator: ".")
     }
 }
 
@@ -123,7 +159,8 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
 
     func onTunnelUp(_ overlayIP: String!) {
         NSLog("[Lattice] tunnel up, overlay IP \(overlayIP ?? "?")")
-        setTunnelNetworkSettings(makeSettings(overlayIP: overlayIP ?? "10.96.0.1")) { [weak self] error in
+        currentOverlayIP = overlayIP ?? "10.96.0.1"
+        setTunnelNetworkSettings(makeSettings(overlayIP: currentOverlayIP, extraRoutes: latestExtraRoutes)) { [weak self] error in
             guard let self else { return }
             self.pendingStart?(error)
             self.pendingStart = nil
@@ -135,6 +172,14 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
 
     func onPeerStates(_ statesJSON: String!) {
         latestPeerStates = statesJSON ?? "{}"
+    }
+
+    func onRoutesChanged(_ routesJSON: String!) {
+        guard let data = routesJSON?.data(using: .utf8),
+              let routes = try? JSONDecoder().decode([String].self, from: data) else { return }
+        latestExtraRoutes = routes
+        guard pendingStart == nil else { return }
+        setTunnelNetworkSettings(makeSettings(overlayIP: currentOverlayIP, extraRoutes: routes), completionHandler: nil)
     }
 }
 
