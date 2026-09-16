@@ -37,3 +37,4 @@ apple/Frameworks/iOS/LatticeCore.xcframework/
 .standalone-cfg/
 bin/
 lattice.db*
+apple/build/
