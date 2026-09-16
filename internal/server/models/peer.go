@@ -22,11 +22,14 @@ import "time"
 type Peer struct {
 	Model
 
-	WorkspaceID string     `gorm:"size:36;uniqueIndex:idx_peer_ws_name;not null" json:"workspace_id"`
-	Name        string     `gorm:"size:200;uniqueIndex:idx_peer_ws_name;not null" json:"name"`
-	AppID       string     `gorm:"size:200;index" json:"app_id,omitempty"`
-	Token       string     `gorm:"size:500" json:"-"` // registration credential; never serialized
-	PublicKey   string     `gorm:"size:100" json:"public_key,omitempty"`
+	WorkspaceID string `gorm:"size:36;uniqueIndex:idx_peer_ws_name;not null" json:"workspace_id"`
+	Name        string `gorm:"size:200;uniqueIndex:idx_peer_ws_name;not null" json:"name"`
+	AppID       string `gorm:"size:200;index" json:"app_id,omitempty"`
+	Token       string `gorm:"size:500" json:"-"` // registration credential; never serialized
+	PublicKey   string `gorm:"size:100" json:"public_key,omitempty"`
+	// PrivateKey is server-generated (wgtypes key, hex) and only ever
+	// leaves the registry inside the owning peer's own netmap message.
+	PrivateKey  string     `gorm:"size:100" json:"-"`
 	Address     string     `gorm:"size:64;index" json:"address,omitempty"` // overlay IP
 	Endpoint    string     `gorm:"size:200" json:"endpoint,omitempty"`
 	Hostname    string     `gorm:"size:200" json:"hostname,omitempty"`

@@ -30,6 +30,7 @@ import (
 	"github.com/alatticeio/lattice/internal/server/reconcilers"
 	"github.com/alatticeio/lattice/internal/server/resource"
 	"github.com/alatticeio/lattice/internal/server/vo"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gorm.io/gorm"
 	"strings"
 	"time"
@@ -131,7 +132,21 @@ func (p *peerService) UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (*vo
 	}, nil
 }
 
+type peerItem struct {
+	name        string
+	displayName string
+	appId       string
+	publicKey   string
+	namespace   string
+	address     *string
+	labels      map[string]string
+	disabled    bool
+}
+
 func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error) {
+	if p.client == nil {
+		return p.listPeersStandalone(ctx, pageParam)
+	}
 	var (
 		peerList v1alpha1.LatticePeerList
 		err      error
@@ -153,17 +168,6 @@ func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest)
 		return nil, err
 	}
 
-	type peerItem struct {
-		name        string
-		displayName string
-		appId       string
-		publicKey   string
-		namespace   string
-		address     *string
-		labels      map[string]string
-		disabled    bool
-	}
-
 	allPeers := make([]peerItem, 0, len(peerList.Items))
 	for _, n := range peerList.Items {
 		allPeers = append(allPeers, peerItem{
@@ -178,6 +182,51 @@ func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest)
 		})
 	}
 
+	return p.renderPeerPage(ctx, workspace, allPeers, pageParam)
+}
+
+// listPeersStandalone serves the peer list from the t_peer registry.
+func (p *peerService) listPeersStandalone(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error) {
+	workspaceV := ctx.Value(infra.WorkspaceKey)
+	var workspaceId string
+	if workspaceV != nil {
+		workspaceId = workspaceV.(string)
+	}
+
+	workspace, err := p.store.Workspaces().GetByID(ctx, workspaceId)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := p.store.Peers().ListByWorkspace(ctx, workspaceId)
+	if err != nil {
+		return nil, err
+	}
+
+	allPeers := make([]peerItem, 0, len(rows))
+	for _, r := range rows {
+		address := r.Address
+		var labels map[string]string
+		_ = json.Unmarshal([]byte(r.Labels), &labels)
+		allPeers = append(allPeers, peerItem{
+			name:        r.Name,
+			displayName: r.Description,
+			appId:       r.AppID,
+			publicKey:   r.PublicKey,
+			namespace:   workspace.Namespace,
+			address:     &address,
+			labels:      labels,
+			disabled:    r.Disabled,
+		})
+	}
+
+	return p.renderPeerPage(ctx, workspace, allPeers, pageParam)
+}
+
+// renderPeerPage applies keyword filtering, pagination and presence status
+// to a peer list. Shared by the K8s and standalone code paths so both
+// return identical VO shapes.
+func (p *peerService) renderPeerPage(ctx context.Context, workspace *models.Workspace, allPeers []peerItem, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error) {
 	filteredPeers := allPeers
 	if pageParam.Keyword != "" {
 		filteredPeers = filteredPeers[:0]
@@ -237,6 +286,9 @@ func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest)
 }
 
 func (p *peerService) CreateToken(ctx context.Context, tokenDto *dto.TokenDto) ([]byte, error) {
+	if p.client == nil {
+		return p.createTokenStandalone(ctx, tokenDto)
+	}
 	var token v1alpha1.LatticeEnrollmentToken
 	if err := p.client.Get(ctx, client.ObjectKey{Namespace: tokenDto.Namespace, Name: tokenDto.Name}, &token); err != nil {
 		if errors.IsNotFound(err) {
@@ -321,30 +373,30 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
 	}
 	if existingErr != nil {
-		if err := p.checkNodeLimitStandalone(ctx); err != nil {
-			return nil, err
+		if limitErr := p.checkNodeLimitStandalone(ctx); limitErr != nil {
+			return nil, limitErr
 		}
 	}
 	if tok.UsageLimit > 0 && existingErr != nil && tok.UsedCount >= tok.UsageLimit {
 		return nil, fmt.Errorf("token usage limit reached (%d)", tok.UsageLimit)
 	}
-	if err := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); err != nil {
-		return nil, err
+	if incErr := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); incErr != nil {
+		return nil, incErr
 	}
 
 	peer := existing
 	if peer == nil {
-		rows, err := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
-		if err != nil {
-			return nil, err
+		rows, listErr := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
+		if listErr != nil {
+			return nil, listErr
 		}
 		taken := make([]string, 0, len(rows))
 		for _, r := range rows {
 			taken = append(taken, r.Address)
 		}
-		address, err := reconcilers.AllocateAddress(taken)
-		if err != nil {
-			return nil, err
+		address, allocErr := reconcilers.AllocateAddress(taken)
+		if allocErr != nil {
+			return nil, allocErr
 		}
 		peer = &models.Peer{
 			WorkspaceID: tok.WorkspaceID,
@@ -354,7 +406,22 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 			Address:     address,
 		}
 	}
-	peer.PublicKey = dto.PublicKey
+	// The control plane owns the WireGuard keypair (same as the K8s path):
+	// generate on first enrollment, reuse on re-registration.
+	var key wgtypes.Key
+	if peer.PrivateKey != "" {
+		key, err = wgtypes.ParseKey(peer.PrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("parse stored key: %w", err)
+		}
+	} else {
+		key, err = wgtypes.GeneratePrivateKey()
+		if err != nil {
+			return nil, fmt.Errorf("generate key: %w", err)
+		}
+		peer.PrivateKey = key.String()
+	}
+	peer.PublicKey = key.PublicKey().String()
 	peer.Endpoint = dto.Endpoint
 	peer.Hostname = dto.Hostname
 	peer.Platform = dto.Platform
@@ -369,15 +436,16 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 
 	address := peer.Address
 	node := &infra.Peer{
-		Name:      peer.Name,
-		AppID:     peer.AppID,
-		Address:   &address,
-		Token:     peer.Token,
-		PublicKey: peer.PublicKey,
-		Endpoint:  peer.Endpoint,
-		Hostname:  peer.Hostname,
-		Platform:  peer.Platform,
-		NetworkId: peer.WorkspaceID,
+		Name:       peer.Name,
+		AppID:      peer.AppID,
+		Address:    &address,
+		Token:      peer.Token,
+		PrivateKey: peer.PrivateKey,
+		PublicKey:  peer.PublicKey,
+		Endpoint:   peer.Endpoint,
+		Hostname:   peer.Hostname,
+		Platform:   peer.Platform,
+		NetworkId:  peer.WorkspaceID,
 	}
 
 	// Look up enforcer_mode from the workspace owner's profile (best effort,
@@ -694,4 +762,30 @@ func (p *peerService) ensureDefaultNetwork(ctx context.Context, nsName string) e
 		}
 	}
 	return nil
+}
+
+// createTokenStandalone persists the workspace enrollment token in the
+// database (the DB equivalent of the LatticeEnrollmentToken CRD).
+func (p *peerService) createTokenStandalone(ctx context.Context, tokenDto *dto.TokenDto) ([]byte, error) {
+	if existing, err := p.store.EnrollmentTokens().GetByToken(ctx, tokenDto.Name); err == nil {
+		return []byte(existing.Token), nil // idempotent create
+	}
+	duration, err := time.ParseDuration(tokenDto.Expiry)
+	if err != nil {
+		return nil, fmt.Errorf("parse expiry: %w", err)
+	}
+	ws, err := p.store.Workspaces().GetByNamespace(ctx, tokenDto.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("workspace not found: %w", err)
+	}
+	tok := &models.EnrollmentToken{
+		Token:       tokenDto.Name,
+		WorkspaceID: ws.ID,
+		ExpiresAt:   time.Now().Add(duration),
+		UsageLimit:  tokenDto.Limit,
+	}
+	if err := p.store.EnrollmentTokens().Create(ctx, tok); err != nil {
+		return nil, err
+	}
+	return []byte(tok.Token), nil
 }

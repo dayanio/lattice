@@ -50,6 +50,13 @@ func (r *enrollmentTokenRepo) IncrementUsedCount(ctx context.Context, id string)
 		UpdateColumn("used_count", gorm.Expr("used_count + 1")).Error
 }
 
+// ListByWorkspace enumerates the workspace's enrollment tokens.
+func (r *enrollmentTokenRepo) ListByWorkspace(ctx context.Context, workspaceID string) ([]*models.EnrollmentToken, error) {
+	var rows []*models.EnrollmentToken
+	err := r.db.WithContext(ctx).Where("workspace_id = ?", workspaceID).Find(&rows).Error
+	return rows, err
+}
+
 func (r *enrollmentTokenRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.EnrollmentToken{}).Error
 }

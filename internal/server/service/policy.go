@@ -68,6 +68,7 @@ func (p *policyService) Submit(ctx context.Context, wsID, createdBy, createdByNa
 		Action:        policyDto.Action,
 		PolicyTypes:   string(typesBytes),
 		Spec:          string(specBytes),
+		ExpiresAt:     policyDto.ExpiresAt,
 		Status:        models.PolicyStatusPending,
 		CreatedBy:     createdBy,
 		CreatedByName: createdByName,
@@ -117,12 +118,16 @@ func (p *policyService) Apply(ctx context.Context, policyID string) error {
 		Spec: spec,
 	}
 
-	manager := client.FieldOwner("lattice-controller-manager")
-	if err := p.client.Patch(ctx, crd, client.Apply, manager); err != nil {
-		rec.Status = models.PolicyStatusFailed
-		rec.ErrorMessage = err.Error()
-		_ = p.store.Policies().Update(ctx, rec)
-		return err
+	// Standalone mode: the DB record is the source of truth — mark it
+	// active without any CRD patch.
+	if p.client != nil {
+		manager := client.FieldOwner("lattice-controller-manager")
+		if err := p.client.Patch(ctx, crd, client.Apply, manager); err != nil {
+			rec.Status = models.PolicyStatusFailed
+			rec.ErrorMessage = err.Error()
+			_ = p.store.Policies().Update(ctx, rec)
+			return err
+		}
 	}
 
 	rec.Status = models.PolicyStatusActive
@@ -164,9 +169,13 @@ func (p *policyService) ApplyDirect(ctx context.Context, wsID, operatorID, opera
 		Spec: spec,
 	}
 
-	manager := client.FieldOwner("lattice-controller-manager")
-	if err = p.client.Patch(ctx, crd, client.Apply, manager); err != nil {
-		return nil, err
+	// Standalone mode: the DB record below is the source of truth; skip
+	// the CRD patch entirely.
+	if p.client != nil {
+		manager := client.FieldOwner("lattice-controller-manager")
+		if err = p.client.Patch(ctx, crd, client.Apply, manager); err != nil {
+			return nil, err
+		}
 	}
 
 	// Upsert DB record.
@@ -187,6 +196,7 @@ func (p *policyService) ApplyDirect(ctx context.Context, wsID, operatorID, opera
 	existing.Action = policyDto.Action
 	existing.PolicyTypes = string(typesBytes)
 	existing.Spec = string(specBytes)
+	existing.ExpiresAt = policyDto.ExpiresAt
 	existing.Status = models.PolicyStatusActive
 	existing.ErrorMessage = ""
 	existing.UpdatedBy = operatorID

@@ -22,7 +22,9 @@ import (
 	"github.com/alatticeio/lattice/internal/server/dto"
 	"github.com/alatticeio/lattice/internal/server/resource"
 	"github.com/alatticeio/lattice/internal/server/vo"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -39,7 +41,67 @@ type networkService struct {
 	store  store.Store
 }
 
+// listTokensStandalone serves enrollment tokens from the DB registry.
+func (s *networkService) listTokensStandalone(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.TokenVo], error) {
+	workspaceV := ctx.Value(infra.WorkspaceKey)
+	var workspaceId string
+	if workspaceV != nil {
+		workspaceId = workspaceV.(string)
+	}
+	workspace, err := s.store.Workspaces().GetByID(ctx, workspaceId)
+	if err != nil {
+		empty := &dto.PageResult[vo.TokenVo]{List: []vo.TokenVo{}, Total: 0}
+		return empty, nil
+	}
+	rows, err := s.store.EnrollmentTokens().ListByWorkspace(ctx, workspaceId)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	allTokens := []*vo.TokenVo{}
+	for _, r := range rows {
+		allTokens = append(allTokens, &vo.TokenVo{
+			Token:                r.Token,
+			Namespace:            workspace.Namespace,
+			WorkspaceDisplayName: workspace.DisplayName,
+			UsageLimit:           r.UsageLimit,
+			Expiry:               metav1.NewTime(r.ExpiresAt),
+			UsedCount:            r.UsedCount,
+			IsExpired:            now.After(r.ExpiresAt),
+			Phase:                "active",
+		})
+	}
+
+	total := len(allTokens)
+	page := pageParam.Page
+	if page < 1 {
+		page = 1
+	}
+	start := (page - 1) * pageParam.PageSize
+	end := start + pageParam.PageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	vals := make([]vo.TokenVo, 0, len(allTokens[start:end]))
+	for _, tk := range allTokens[start:end] {
+		vals = append(vals, *tk)
+	}
+	return &dto.PageResult[vo.TokenVo]{
+		Page:     page,
+		PageSize: pageParam.PageSize,
+		Total:    int64(total),
+		List:     vals,
+	}, nil
+}
+
 func (s *networkService) ListTokens(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.TokenVo], error) {
+	if s.client == nil {
+		return s.listTokensStandalone(ctx, pageParam)
+	}
 	var (
 		tokenList latticev1alpha1.LatticeEnrollmentTokenList
 		err       error

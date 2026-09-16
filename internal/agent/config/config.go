@@ -248,15 +248,25 @@ func (cm *ConfigManager) load(cmd *cobra.Command) error {
 //   - Metrics/Probe   → MetricsAddr (default :8443)
 type Config struct {
 	// ── Base / Runtime ───────────────────────────────────────────
-	Listen        string `mapstructure:"listen"` // HTTP listen address, default :8080
-	Level         string `mapstructure:"level"`  // log level
-	Env           string `mapstructure:"env"`    // runtime environment: dev / prod
-	Debug         bool   `mapstructure:"debug"`
-	Auth          string `mapstructure:"auth"`
-	AppId         string `mapstructure:"app-id"`
-	Name          string `mapstructure:"name"` // display name shown in the UI (optional)
-	Token         string `mapstructure:"token"`
-	InterfaceName string `mapstructure:"interface-name"` // WireGuard interface name
+	Listen string `mapstructure:"listen"` // HTTP listen address, default :8080
+	// Standalone runs the control plane without Kubernetes: peer registry,
+	// netmaps, enrollment and TTL reconciliation are served from the
+	// embedded database. Default false (K8s controller mode).
+	Standalone bool `mapstructure:"standalone"`
+	// ResyncInterval is the standalone reconcile runner's resync period
+	// (e.g. "30s"). Shorter values converge faster at higher DB cost.
+	ResyncInterval string `mapstructure:"resync-interval"`
+	// NetmapPollInterval is how often a running agent re-fetches the
+	// network map (pull-based convergence). Default "30s"; "0" disables.
+	NetmapPollInterval string `mapstructure:"netmap-poll-interval"`
+	Level              string `mapstructure:"level"` // log level
+	Env                string `mapstructure:"env"`   // runtime environment: dev / prod
+	Debug              bool   `mapstructure:"debug"`
+	Auth               string `mapstructure:"auth"`
+	AppId              string `mapstructure:"app-id"`
+	Name               string `mapstructure:"name"` // display name shown in the UI (optional)
+	Token              string `mapstructure:"token"`
+	InterfaceName      string `mapstructure:"interface-name"` // WireGuard interface name
 
 	// ── Network / Address ─────────────────────────────────────────
 
@@ -599,6 +609,9 @@ func peekConfigDir(cmd *cobra.Command) string {
 //     This avoids the risk of "using the wrong environment" (e.g., accidentally connecting to a production MariaDB).
 func setDefaults(v *viper.Viper) {
 	v.SetDefault("listen", ":8080")
+	v.SetDefault("standalone", false)
+	v.SetDefault("resync-interval", "")
+	v.SetDefault("netmap-poll-interval", "30s")
 	v.SetDefault("level", "info")
 	v.SetDefault("env", "dev")
 
