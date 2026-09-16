@@ -218,3 +218,156 @@ extension View {
         )
     }
 }
+
+// MARK: - Connection hero (Tailscale-style)
+
+/// Hero 连接状态，从 NetworkExtension 解耦，便于预览与复用。
+enum ConnectionState { case disconnected, connecting, connected }
+
+/// 大号椭圆连接开关：未连接灰 / 连接中呼吸光环 / 已连接实心绿 + 实时计时。
+struct ConnectionHero: View {
+    let state: ConnectionState
+    let connectedSince: Date?
+    let aggregateText: String
+    var selfAddress: String = ""
+    var errorText: String = ""
+    let onToggle: () -> Void
+
+    @State private var breathe = false
+
+    private var heroColor: Color {
+        switch state {
+        case .connected: return LatticePalette.online
+        case .connecting: return LatticePalette.online.opacity(0.55)
+        case .disconnected: return LatticePalette.neutral
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ZStack {
+                if state == .connecting {
+                    Capsule()
+                        .stroke(heroColor, lineWidth: 2)
+                        .frame(width: 158, height: 82)
+                        .scaleEffect(breathe ? 1.12 : 1.0)
+                        .opacity(breathe ? 0.15 : 0.55)
+                }
+                Capsule()
+                    .fill(state == .connected ? heroColor.opacity(0.14) : Color.primary.opacity(0.06))
+                    .frame(width: 150, height: 74)
+                    .overlay(Capsule().stroke(heroColor, lineWidth: state == .disconnected ? 1.5 : 2.5))
+                HStack(spacing: 12) {
+                    HaloDot(color: heroColor, size: 14)
+                    Text(headline)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundColor(state == .disconnected ? .primary : heroColor)
+                }
+            }
+            .frame(width: 150, height: 74)
+            .contentShape(Capsule())
+            .onTapGesture { onToggle() }
+            .onChange(of: state) { _, newState in
+                breathe = false
+                if newState == .connecting {
+                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                        breathe = true
+                    }
+                }
+            }
+            .onAppear {
+                if state == .connecting {
+                    withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                        breathe = true
+                    }
+                }
+            }
+
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(timerText(at: context.date))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+
+            VStack(spacing: 2) {
+                if !aggregateText.isEmpty {
+                    Text(aggregateText)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay)
+                }
+                if !selfAddress.isEmpty {
+                    Text("本机 \(selfAddress)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                if !errorText.isEmpty {
+                    Text(errorText)
+                        .font(.caption)
+                        .foregroundColor(LatticePalette.blocked)
+                        .multilineTextAlignment(.center)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial))
+        .padding(.horizontal, 15)
+    }
+
+    private var headline: String {
+        switch state {
+        case .connected: return "已连接"
+        case .connecting: return "连接中…"
+        case .disconnected: return "未连接"
+        }
+    }
+
+    /// 计时语义（见 spec §六）：connectedSince 是本 App 会话内发现连接的时刻。
+    private func timerText(at now: Date) -> String {
+        guard state == .connected, let since = connectedSince else { return "" }
+        let secs = max(0, Int(now.timeIntervalSince(since)))
+        let h = secs / 3600, m = (secs % 3600) / 60, s = secs % 60
+        return h > 0 ? String(format: "%02d:%02d:%02d", h, m, s) : String(format: "%02d:%02d", m, s)
+    }
+}
+
+/// peer 平台图标：os 字符串（前缀、不区分大小写）→ SF Symbol。
+struct PlatformIcon: View {
+    let os: String
+    var size: CGFloat = 30
+
+    private var symbol: String {
+        let o = os.lowercased()
+        if o.hasPrefix("ios") || o.hasPrefix("iphone") || o.hasPrefix("ipad") { return "iphone" }
+        if o.hasPrefix("macos") || o.hasPrefix("darwin") || o.hasPrefix("mac") { return "laptopcomputer" }
+        if o.hasPrefix("windows") { return "pc" }
+        if o.hasPrefix("linux") || o.hasPrefix("android") { return "desktopcomputer" }
+        return "questionmark.circle"
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: size * 0.24)
+            .fill(LatticePalette.accent.opacity(0.14))
+            .frame(width: size, height: size)
+            .overlay(
+                Image(systemName: symbol)
+                    .font(.system(size: size * 0.48, weight: .semibold))
+                    .foregroundColor(LatticePalette.accent)
+            )
+    }
+}
+
+/// 行尾/菜单共用的收藏星标。
+struct FavoriteStar: View {
+    let isOn: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: isOn ? "star.fill" : "star")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(isOn ? LatticePalette.relay : .secondary)
+        }
+        .buttonStyle(.plain)
+    }
+}
