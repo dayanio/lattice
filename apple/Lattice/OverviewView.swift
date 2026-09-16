@@ -3,7 +3,8 @@
 
 import SwiftUI
 
-/// 首页：hero 连接卡 + 搜索 + ⭐收藏/全部设备两组（spec §三）。
+/// 首页 = 连接页，永远是启动后的落地页。三态：
+/// 未加入网络 → 引导卡；已加入未登录 → 登录提示；已加入已登录 → 设备列表。
 struct OverviewView: View {
     @StateObject private var tunnel = TunnelManager.shared
     @ObservedObject private var favorites = FavoritesStore.shared
@@ -14,6 +15,9 @@ struct OverviewView: View {
     @State private var renamingPeer: PeerNode?
     @State private var renameText = ""
     @State private var disablingPeer: PeerNode?
+    @State private var showingJoin = false
+    @State private var showingLogin = false
+    @AppStorage("lattice.authToken") private var authToken = ""
     @Environment(\.scenePhase) private var scenePhase
 
     private var selfName: String { UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "" }
@@ -51,27 +55,34 @@ struct OverviewView: View {
                         errorText: tunnel.lastStartError,
                         onToggle: { tunnel.connectedBinding.wrappedValue.toggle() }
                     )
-                    PanelSearchField(text: $searchText)
 
-                    if isLoading && peers.isEmpty {
-                        ProgressView().padding(.top, 30)
-                    } else if !errorMsg.isEmpty {
-                        Text(errorMsg)
-                            .font(.caption)
-                            .foregroundColor(LatticePalette.blocked)
-                            .padding(.top, 30)
-                    } else if filtered.isEmpty {
-                        Text(searchText.isEmpty ? "暂无节点" : "无匹配设备")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .padding(.top, 30)
+                    if !tunnel.isConfigured {
+                        joinPrompt
+                    } else if authToken.isEmpty {
+                        loginPrompt
                     } else {
-                        if !favoritePeers.isEmpty {
-                            SectionHead(title: "⭐ 收藏")
-                            ForEach(favoritePeers) { peerRow($0) }
+                        PanelSearchField(text: $searchText)
+
+                        if isLoading && peers.isEmpty {
+                            ProgressView().padding(.top, 30)
+                        } else if !errorMsg.isEmpty {
+                            Text(errorMsg)
+                                .font(.caption)
+                                .foregroundColor(LatticePalette.blocked)
+                                .padding(.top, 30)
+                        } else if filtered.isEmpty {
+                            Text(searchText.isEmpty ? "暂无节点" : "无匹配设备")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .padding(.top, 30)
+                        } else {
+                            if !favoritePeers.isEmpty {
+                                SectionHead(title: "⭐ 收藏")
+                                ForEach(favoritePeers) { peerRow($0) }
+                            }
+                            SectionHead(title: "全部设备")
+                            ForEach(otherPeers) { peerRow($0) }
                         }
-                        SectionHead(title: "全部设备")
-                        ForEach(otherPeers) { peerRow($0) }
                     }
                 }
                 .padding(.bottom, 12)
@@ -81,6 +92,15 @@ struct OverviewView: View {
             .task { await loadPeers() }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active { Task { await loadPeers() } }
+            }
+            .sheet(isPresented: $showingJoin) {
+                JoinView(onFinished: {
+                    showingJoin = false
+                    Task { await loadPeers() }
+                })
+            }
+            .sheet(isPresented: $showingLogin) {
+                LoginView(onFinished: { Task { await loadPeers() } })
             }
             .alert("重命名设备", isPresented: .init(
                 get: { renamingPeer != nil },
@@ -116,6 +136,63 @@ struct OverviewView: View {
                 }
             }
         }
+    }
+
+    /// 未加入网络时的引导卡：扫码或手动输入，通往加入流程。
+    private var joinPrompt: some View {
+        VStack(spacing: 10) {
+            Text("尚未加入网络")
+                .font(.system(.body, weight: .semibold))
+            Text("扫码或手动输入服务器信息，一键连回家。")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 10) {
+                Button { showingJoin = true } label: {
+                    Label("扫描二维码", systemImage: "qrcode.viewfinder")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+                Button { showingJoin = true } label: {
+                    Label("手动输入", systemImage: "keyboard")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
+        .background(RoundedRectangle(cornerRadius: 16).fill(.regularMaterial))
+        .padding(.horizontal, 15)
+        .padding(.top, 6)
+    }
+
+    /// 已加入但未登录管理后台：隧道可用，仅设备列表/管理功能需要登录。
+    private var loginPrompt: some View {
+        Button { showingLogin = true } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "person.crop.circle.badge.exclamationmark")
+                    .font(.system(size: 22))
+                    .foregroundColor(LatticePalette.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("登录后可查看与管理设备")
+                        .font(.system(.body, weight: .medium))
+                    Text("隧道连接不受影响，点击登录管理后台")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Color.primary.opacity(0.05)))
+            .padding(.horizontal, 15)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 6)
     }
 
     private func peerRow(_ peer: PeerNode) -> some View {

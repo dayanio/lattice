@@ -14,11 +14,11 @@
 
 import SwiftUI
 
-/// App root: a Status/Settings tab bar once joined + logged in, otherwise
-/// the full-screen join flow (see JoinView, Task 7).
+/// App root: the connection page is always the landing tab. Joining and
+/// admin login are optional flows reached from the overview's empty states
+/// or Settings — never a launch-blocking gate.
 struct RootView: View {
     @StateObject private var tunnel = TunnelManager.shared
-    @State private var needsJoin = true
 
     var body: some View {
         TabView {
@@ -27,19 +27,6 @@ struct RootView: View {
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }
-        .onAppear { tunnel.load { evaluateJoinState() } }
-        .fullScreenCover(isPresented: $needsJoin) {
-            JoinView(onFinished: { needsJoin = false })
-        }
-    }
-
-    private func evaluateJoinState() {
-        #if DEBUG
-        if ProcessInfo.processInfo.environment["LATTICE_DEBUG_SKIP_JOIN"] == "1" {
-            needsJoin = false
-            return
-        }
-        #endif
-        needsJoin = !tunnel.isConfigured || !LatticeAPI.shared.isLoggedIn
+        .onAppear { tunnel.load() }
     }
 }

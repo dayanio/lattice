@@ -14,20 +14,13 @@
 
 import SwiftUI
 
-/// Two-step full-screen join flow:
-///   1. Server URL + enrollment token (scan or paste) + device name → creates
-///      the VPN profile (TunnelManager.saveJoin) and connects.
-///   2. Admin username/password → LatticeAPI.shared.login. Required because
-///      the peer-list API needs an admin Bearer token, not the enrollment
-///      token (confirmed against the live backend — this is a real backend
-///      constraint, not a design choice).
+/// Join-network flow (scan or manual entry): server URL + enrollment token +
+/// device name → creates the VPN profile (TunnelManager.saveJoin) and
+/// connects. Admin login is a separate optional step (LoginView) — the
+/// tunnel itself only needs the enrollment token.
 struct JoinView: View {
     var onFinished: () -> Void
 
-    private enum Step { case network, login }
-    @State private var step: Step = .network
-
-    // Step 1 state
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
     @State private var joinToken = ""
     @State private var deviceName = UIDevice.current.name
@@ -36,18 +29,9 @@ struct JoinView: View {
     @State private var showingScanner = false
     @State private var scannerError = ""
 
-    // Step 2 state
-    @State private var username = "admin"
-    @State private var password = ""
-    @State private var isLoggingIn = false
-    @State private var loginError = ""
-
     var body: some View {
         NavigationStack {
-            switch step {
-            case .network: networkStep
-            case .login: loginStep
-            }
+            networkStep
         }
     }
 
@@ -148,51 +132,7 @@ struct JoinView: View {
             }
             joinToken = ""
             TunnelManager.shared.connect()
-            step = .login
-        }
-    }
-
-    private var loginStep: some View {
-        Form {
-            Section("登录管理面板") {
-                Text("查看节点列表需要管理员账号。")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                TextField("用户名", text: $username)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                SecureField("密码", text: $password)
-            }
-
-            if !loginError.isEmpty {
-                Text(loginError).font(.caption).foregroundColor(.red)
-            }
-
-            Section {
-                Button {
-                    Task { await login() }
-                } label: {
-                    if isLoggingIn {
-                        ProgressView()
-                    } else {
-                        Text("登录")
-                    }
-                }
-                .disabled(username.isEmpty || password.isEmpty || isLoggingIn)
-            }
-        }
-        .navigationTitle("登录")
-    }
-
-    private func login() async {
-        isLoggingIn = true
-        loginError = ""
-        defer { isLoggingIn = false }
-        do {
-            try await LatticeAPI.shared.login(user: username, pass: password)
             onFinished()
-        } catch {
-            loginError = "登录失败: \(error.localizedDescription)"
         }
     }
 }

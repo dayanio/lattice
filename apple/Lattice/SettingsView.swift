@@ -37,30 +37,46 @@ enum LatticeTheme: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @StateObject private var tunnel = TunnelManager.shared
     @State private var showingLeaveConfirm = false
+    @State private var showingLogin = false
+    @State private var showingJoin = false
     @AppStorage("lattice.theme") private var theme = LatticeTheme.system.rawValue
+    @AppStorage("lattice.authToken") private var authToken = ""
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    HStack(spacing: 12) {
-                        Image(systemName: "person.crop.circle.fill")
-                            .font(.system(size: 40))
-                            .foregroundColor(LatticePalette.accent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin")
-                                .font(.system(.body, weight: .semibold))
-                            Text(tunnel.serverURL ?? "—")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.secondary)
+                    if authToken.isEmpty {
+                        Button { showingLogin = true } label: {
+                            Label("登录管理后台", systemImage: "person.crop.circle.badge.plus")
                         }
+                    } else {
+                        HStack(spacing: 12) {
+                            Image(systemName: "person.crop.circle.fill")
+                                .font(.system(size: 40))
+                                .foregroundColor(LatticePalette.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin")
+                                    .font(.system(.body, weight: .semibold))
+                                Text(tunnel.serverURL ?? "—")
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        Button("退出登录") { logout() }
                     }
-                    .padding(.vertical, 4)
                 }
 
                 Section("网络") {
-                    NavigationLink("退出节点") { ExitNodeView() }
-                    LabeledContent("本机节点", value: UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "—")
+                    if tunnel.isConfigured {
+                        NavigationLink("退出节点") { ExitNodeView() }
+                        LabeledContent("本机节点", value: UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "—")
+                    } else {
+                        Button { showingJoin = true } label: {
+                            Label("加入网络", systemImage: "qrcode.viewfinder")
+                        }
+                    }
                 }
 
                 Section("偏好") {
@@ -75,11 +91,19 @@ struct SettingsView: View {
                     LabeledContent("版本", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—")
                 }
 
-                Section {
-                    Button("退出网络", role: .destructive) { showingLeaveConfirm = true }
+                if tunnel.isConfigured {
+                    Section {
+                        Button("退出网络", role: .destructive) { showingLeaveConfirm = true }
+                    }
                 }
             }
             .navigationTitle("设置")
+            .sheet(isPresented: $showingLogin) {
+                LoginView(onFinished: {})
+            }
+            .sheet(isPresented: $showingJoin) {
+                JoinView(onFinished: {})
+            }
             .confirmationDialog(
                 "退出网络？",
                 isPresented: $showingLeaveConfirm,
@@ -91,6 +115,13 @@ struct SettingsView: View {
                 Text("需要重新扫码或输入 token 才能再次加入。")
             }
         }
+    }
+
+    /// 退出管理会话：只清除登录态，保留加入信息与 VPN 配置。
+    private func logout() {
+        UserDefaults.standard.removeObject(forKey: "lattice.authToken")
+        UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
+        KeychainStore.delete("lattice.password")
     }
 
     private func leaveNetwork() {
