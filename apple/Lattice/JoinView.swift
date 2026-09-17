@@ -61,7 +61,6 @@ struct JoinView: View {
             QRScannerView(
                 onCode: { code in
                     handleScanned(code)
-                    useScanner = false
                 },
                 onError: { message in
                     scannerError = message
@@ -69,6 +68,18 @@ struct JoinView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea(edges: .bottom)
+
+            if isSavingNetwork {
+                VStack(spacing: 10) {
+                    ProgressView().tint(.white)
+                    Text("正在加入网络…")
+                        .font(.caption)
+                        .foregroundColor(.white)
+                }
+                .padding(16)
+                .background(.black.opacity(0.6))
+                .cornerRadius(12)
+            }
 
             VStack(spacing: 10) {
                 if !scannerError.isEmpty {
@@ -145,15 +156,19 @@ struct JoinView: View {
         }
         if let server = payload.serverURL { serverURL = server }
         if let token = payload.token { joinToken = token }
-        // 完整入网码（服务端地址 + 令牌都在）→ 直接继续，省去手输与再次点击。
-        if payload.serverURL != nil && payload.token != nil {
-            saveAndConnect()
+        // 完整入网码（服务端地址 + 令牌都在）→ 直接继续，省去手输与再次点击；
+        // 停留在扫码页展示加入进度/报错，不要在异步结果出来前就跳走。
+        guard payload.serverURL != nil, payload.token != nil else {
+            useScanner = false
+            return
         }
+        saveAndConnect()
     }
 
     private func saveAndConnect() {
         isSavingNetwork = true
         networkError = ""
+        scannerError = ""
         let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
         UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
         UserDefaults.standard.set(deviceName, forKey: "lattice.nodeName")
@@ -161,6 +176,7 @@ struct JoinView: View {
             isSavingNetwork = false
             if let err {
                 networkError = err
+                scannerError = err
                 return
             }
             joinToken = ""
