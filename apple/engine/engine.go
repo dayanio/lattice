@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -208,8 +209,14 @@ func (e *Engine) run(ctx context.Context) {
 
 	// Register via NATS: enrollment token + public key → identity (JWT) and
 	// overlay address. Re-registers are idempotent per name, so reconnects
-	// keep the same overlay IP.
-	privKey, err := wgtypes.GeneratePrivateKey()
+	// keep the same overlay IP — but only if the key itself is stable too:
+	// the server rejects a re-registration under the same name with a
+	// different key ("public key mismatch ... requires re-enrollment").
+	// Every engine start used to call GeneratePrivateKey() fresh, so any NE
+	// process restart (crash, OS jetsam, a transient error tearing the
+	// extension down) rotated identity and locked itself out. Persisting
+	// the key to disk keeps it stable across restarts.
+	privKey, err := loadOrCreatePrivateKey()
 	if err != nil {
 		e.emitError(fmt.Errorf("generate key: %w", err))
 		return
@@ -409,4 +416,49 @@ func (e *Engine) emitRoutesChanged(routesJSON string) {
 	if e.delegate != nil {
 		e.delegate.OnRoutesChanged(routesJSON)
 	}
+}
+
+// wgIdentityDir resolves the extension's writable, non-purgeable storage
+// directory for the persisted WireGuard identity — CFFIXED_USER_HOME is the
+// sandboxed container's Data directory on Apple platforms (falls back to
+// the process home dir when unset, e.g. under `go test`). Empty return
+// means persistence is unavailable; callers fall back to an ephemeral key.
+func wgIdentityDir() string {
+	home := os.Getenv("CFFIXED_USER_HOME")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, "Library", "Application Support", "Lattice")
+}
+
+// loadOrCreatePrivateKey returns this device's stable WireGuard identity,
+// generating and persisting one on first run. The server keys peer identity
+// on (name, public key) and rejects a same-name registration under a
+// different key, so a fresh key every engine start (Network Extension
+// restarts are frequent and often outside app control) permanently locks
+// the device out until the stale server-side record is cleared.
+func loadOrCreatePrivateKey() (wgtypes.Key, error) {
+	dir := wgIdentityDir()
+	path := ""
+	if dir != "" {
+		path = filepath.Join(dir, "wg-identity.key")
+		if data, err := os.ReadFile(path); err == nil {
+			if key, err := wgtypes.ParseKey(strings.TrimSpace(string(data))); err == nil {
+				return key, nil
+			}
+		}
+	}
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		return wgtypes.Key{}, err
+	}
+	if dir != "" {
+		if err := os.MkdirAll(dir, 0700); err == nil {
+			_ = os.WriteFile(path, []byte(key.String()), 0600)
+		}
+	}
+	return key, nil
 }
