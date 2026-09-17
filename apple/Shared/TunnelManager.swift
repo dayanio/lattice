@@ -38,6 +38,11 @@ final class TunnelManager: ObservableObject {
     /// Per-peer connection quality from the tunnel process
     /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
     @Published private(set) var peerStates: [String: String] = [:]
+    /// This device's own WireGuard public key, polled from the running
+    /// extension — "" until the engine has loaded/generated its identity.
+    @Published private(set) var localPublicKey: String = ""
+    /// This device's overlay IP, polled from the running extension.
+    @Published private(set) var localOverlayIP: String = ""
 
     /// 本 App 会话内连接建立的时刻（spec §六：冷启动无法取回系统真实起点，
     /// 用"发现连接的时刻"作为计时起点，离开 connected 即清空）。
@@ -110,7 +115,9 @@ final class TunnelManager: ObservableObject {
     ///   - serverURL: management server base URL, e.g. http://172.20.10.4:8080
     ///   - token: enrollment token issued by the control plane
     ///   - name: stable node name (used as the peer identity)
-    func saveJoin(serverURL: String, token: String, name: String, completion: ((String?) -> Void)? = nil) {
+    ///   - resetIdentity: when true, the extension regenerates the engine's
+    ///     WireGuard identity instead of reusing the stored one
+    func saveJoin(serverURL: String, token: String, name: String, resetIdentity: Bool = false, completion: ((String?) -> Void)? = nil) {
         NETunnelProviderManager.loadAllFromPreferences { managers, _ in
             let stale = (managers ?? []).filter {
                 ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.tunnelBundleID
@@ -121,7 +128,7 @@ final class TunnelManager: ObservableObject {
                 manager.removeFromPreferences { _ in group.leave() }
             }
             group.notify(queue: .main) {
-                self.createProfile(serverURL: serverURL, token: token, name: name, completion: completion)
+                self.createProfile(serverURL: serverURL, token: token, name: name, resetIdentity: resetIdentity, completion: completion)
             }
         }
     }
@@ -150,15 +157,19 @@ final class TunnelManager: ObservableObject {
         }
     }
 
-    private func createProfile(serverURL: String, token: String, name: String, completion: ((String?) -> Void)? = nil) {
+    private func createProfile(serverURL: String, token: String, name: String, resetIdentity: Bool = false, completion: ((String?) -> Void)? = nil) {
         let proto = NETunnelProviderProtocol()
         proto.providerBundleIdentifier = Self.tunnelBundleID
         proto.serverAddress = serverURL
-        proto.providerConfiguration = [
+        var config: [String: Any] = [
             "serverURL": serverURL,
             "token": token,
             "name": name,
         ]
+        if resetIdentity {
+            config["resetIdentity"] = true
+        }
+        proto.providerConfiguration = config
 
         let mgr = NETunnelProviderManager()
         mgr.protocolConfiguration = proto
@@ -238,6 +249,8 @@ final class TunnelManager: ObservableObject {
     private struct ProviderSnapshot: Codable {
         let peerStates: [String: String]
         let lastError: String?
+        let publicKey: String?
+        let overlayIP: String?
     }
 
     /// Asks the tunnel process for its latest peer-state snapshot over the
@@ -258,6 +271,13 @@ final class TunnelManager: ObservableObject {
                     }
                     guard let snap = try? JSONDecoder().decode(ProviderSnapshot.self, from: data) else { return }
                     self.peerStates = snap.peerStates
+                    if let publicKey = snap.publicKey, !publicKey.isEmpty {
+                        self.localPublicKey = publicKey
+                    }
+                    // "10.96.0.1" is the providers' pre-connect fallback, not a real assignment.
+                    if let overlayIP = snap.overlayIP, !overlayIP.isEmpty, overlayIP != "10.96.0.1" {
+                        self.localOverlayIP = overlayIP
+                    }
                     if self.status != .connected, let err = snap.lastError, !err.isEmpty {
                         self.lastStartError = err
                     }
