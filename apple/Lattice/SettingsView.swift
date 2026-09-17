@@ -39,8 +39,17 @@ struct SettingsView: View {
     @State private var showingLeaveConfirm = false
     @State private var showingLogin = false
     @State private var showingJoin = false
+    @State private var pendingIdentityReset = false
+    @State private var showingResetIdentityConfirm = false
+    @State private var showedCopiedFeedback = false
     @AppStorage("lattice.theme") private var theme = LatticeTheme.system.rawValue
     @AppStorage("lattice.authToken") private var authToken = ""
+
+    private var truncatedPublicKey: String {
+        let key = tunnel.localPublicKey
+        guard key.count > 16 else { return key }
+        return "\(key.prefix(8))…\(key.suffix(8))"
+    }
 
     var body: some View {
         NavigationStack {
@@ -79,6 +88,34 @@ struct SettingsView: View {
                     }
                 }
 
+                if tunnel.isConfigured {
+                    Section("设备身份") {
+                        Button {
+                            PeerActions.copyToClipboard(tunnel.localPublicKey)
+                            showedCopiedFeedback = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                showedCopiedFeedback = false
+                            }
+                        } label: {
+                            HStack {
+                                Text("公钥")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text(showedCopiedFeedback ? "已复制" : truncatedPublicKey)
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        LabeledContent("Overlay IP", value: tunnel.localOverlayIP)
+                        Text("私钥已在本机安全存储，不会显示或导出。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Button("重新生成密钥", role: .destructive) {
+                            showingResetIdentityConfirm = true
+                        }
+                    }
+                }
+
                 Section("偏好") {
                     Picker("主题", selection: $theme) {
                         ForEach(LatticeTheme.allCases) { t in
@@ -102,7 +139,10 @@ struct SettingsView: View {
                 LoginView(onFinished: { showingLogin = false })
             }
             .sheet(isPresented: $showingJoin) {
-                JoinView(onFinished: { showingJoin = false }, mode: .scan)
+                JoinView(onFinished: {
+                    showingJoin = false
+                    pendingIdentityReset = false
+                }, mode: .scan, initialResetIdentity: pendingIdentityReset)
             }
             .confirmationDialog(
                 "退出网络？",
@@ -113,6 +153,16 @@ struct SettingsView: View {
                 Button("取消", role: .cancel) {}
             } message: {
                 Text("需要重新扫码或输入 token 才能再次加入。")
+            }
+            .confirmationDialog(
+                "重新生成密钥？",
+                isPresented: $showingResetIdentityConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("重新生成", role: .destructive) { startIdentityReset() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("这会清除当前设备身份，需要重新扫码或输入令牌入网。仅在怀疑密钥泄露时使用。")
             }
         }
     }
@@ -134,6 +184,23 @@ struct SettingsView: View {
             UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
             KeychainStore.delete("lattice.password")
             tunnel.load()
+        }
+    }
+
+    /// 重新生成密钥：清空当前入网状态后弹出加入页面，这一次的加入请求会带上
+    /// resetIdentity，让隧道进程先删掉本地持久化的私钥文件再重新注册。
+    private func startIdentityReset() {
+        tunnel.disconnect()
+        tunnel.removeProfile {
+            UserDefaults.standard.removeObject(forKey: "lattice.serverURL")
+            UserDefaults.standard.removeObject(forKey: "lattice.nodeName")
+            UserDefaults.standard.removeObject(forKey: "lattice.authToken")
+            UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
+            UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
+            KeychainStore.delete("lattice.password")
+            tunnel.load()
+            pendingIdentityReset = true
+            showingJoin = true
         }
     }
 }
