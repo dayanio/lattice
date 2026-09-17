@@ -15,9 +15,8 @@ struct OverviewView: View {
     @State private var renamingPeer: PeerNode?
     @State private var renameText = ""
     @State private var disablingPeer: PeerNode?
-    @State private var showingJoin = false
+    @State private var showingJoin: JoinMode?
     @State private var showingLogin = false
-    @State private var joinMode: JoinMode = .manual
     @AppStorage("lattice.authToken") private var authToken = ""
     @Environment(\.scenePhase) private var scenePhase
 
@@ -99,11 +98,14 @@ struct OverviewView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active { Task { await loadPeers() } }
             }
-            .sheet(isPresented: $showingJoin) {
+            .sheet(item: $showingJoin) { mode in
+                // sheet(item:) 让加入模式与呈现原子绑定：点"扫描二维码"
+                // 直接进相机、点"手动输入"直接进表单，不再出现落到
+                // 默认表单页的竞态。
                 JoinView(onFinished: {
-                    showingJoin = false
+                    showingJoin = nil
                     Task { await loadPeers() }
-                }, mode: joinMode)
+                }, mode: mode)
             }
             .sheet(isPresented: $showingLogin) {
                 LoginView(onFinished: { Task { await loadPeers() } })
@@ -159,14 +161,14 @@ struct OverviewView: View {
                     .multilineTextAlignment(.center)
             }
             VStack(spacing: 8) {
-                Button { joinMode = .scan; showingJoin = true } label: {
+                Button { showingJoin = .scan } label: {
                     Label("扫描二维码", systemImage: "qrcode.viewfinder")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
-                Button { joinMode = .manual; showingJoin = true } label: {
+                Button { showingJoin = .manual } label: {
                     Label("手动输入", systemImage: "keyboard")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)

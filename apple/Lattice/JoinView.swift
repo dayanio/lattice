@@ -15,9 +15,13 @@
 import SwiftUI
 
 /// 加入入口模式：.scan 出现即打开摄像头；.manual 停留在表单。
-enum JoinMode {
+/// Identifiable：供 OverviewView 的 sheet(item:) 原子传递，避免两个
+/// @State 同事务变更时 sheet 拿到旧 mode 的竞态。
+enum JoinMode: Identifiable {
     case scan
     case manual
+
+    var id: Self { self }
 }
 
 /// Join-network flow (scan or manual entry): server URL + enrollment token +
