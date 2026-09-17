@@ -1,6 +1,6 @@
 # ADR-0003: Peer Enrollment Approval Gate and Client-Side Key Generation
 
-- **Status**: Proposed
+- **Status**: Adopted (standalone path, Release-N scope — client keygen + opt-in approval gate, API + CLI; K8s CRD path, dashboard UI and audit actor wiring remain follow-ups)
 - **Date**: 2026-09-17
 - **Related**: ADR-0004 (LRP per-peer authentication — transport plane), 2026-09-17 codebase review (docs/reviews/2026-09-17-codebase-review.md)
 
