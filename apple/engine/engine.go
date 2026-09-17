@@ -97,6 +97,7 @@ type Engine struct {
 	cfg      engineConfig
 	delegate EngineDelegate
 	tun      *packetTUN
+	privKey  wgtypes.Key
 
 	mu       sync.Mutex
 	running  bool
@@ -221,6 +222,9 @@ func (e *Engine) run(ctx context.Context) {
 		e.emitError(fmt.Errorf("generate key: %w", err))
 		return
 	}
+	e.mu.Lock()
+	e.privKey = privKey
+	e.mu.Unlock()
 	peer, err := latticeagent.RegisterSandboxViaNATS(ctx, e.cfg.ServerURL, e.cfg.Token, e.cfg.Name, privKey)
 	if err != nil {
 		e.emitError(fmt.Errorf("enroll: %w", err))
@@ -432,6 +436,37 @@ func wgIdentityDir() string {
 		return ""
 	}
 	return filepath.Join(home, "Library", "Application Support", "Lattice")
+}
+
+// PublicKey returns this engine's current WireGuard public key as a base64
+// string, or "" if the engine hasn't loaded/generated its identity yet
+// (before run() reaches the key-loading step, or Start was never called).
+func (e *Engine) PublicKey() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var zero wgtypes.Key
+	if e.privKey == zero {
+		return ""
+	}
+	return e.privKey.PublicKey().String()
+}
+
+// ResetIdentity deletes the persisted WireGuard identity file, if any, so
+// the next engine Start generates and persists a brand-new one. It is a
+// package-level function, not an Engine method, because it must be
+// callable before any Engine exists — the Swift side calls this ahead of
+// constructing a fresh Engine for a user-initiated identity reset (see
+// PacketTunnelProvider.startTunnel's resetIdentity flag handling).
+func ResetIdentity() error {
+	dir := wgIdentityDir()
+	if dir == "" {
+		return nil
+	}
+	path := filepath.Join(dir, "wg-identity.key")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 // loadOrCreatePrivateKey returns this device's stable WireGuard identity,
