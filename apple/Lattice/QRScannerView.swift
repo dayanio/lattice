@@ -67,21 +67,56 @@ struct QRScannerView: UIViewRepresentable {
         }
 
         private func configure(view: UIView, onError: @escaping (String) -> Void) {
+            configure(view: view, onError: onError, attempt: 1)
+        }
+
+        /// 会话装配偶发失败（权限授予瞬间的竞争、相机被占用）会自动重试一次。
+        private func configure(view: UIView, onError: @escaping (String) -> Void, attempt: Int) {
             guard !configured else { return }
             configured = true
-            guard let device = AVCaptureDevice.default(for: .video),
-                  let input = try? AVCaptureDeviceInput(device: device) else {
+            guard let device = AVCaptureDevice.default(for: .video) else {
                 onError("未找到可用摄像头")
                 return
             }
-            session.beginConfiguration()
-            session.addInput(input)
-            let output = AVCaptureMetadataOutput()
-            guard session.canAddOutput(output), session.canAddInput(input) else {
-                session.commitConfiguration()
-                onError("摄像头初始化失败")
+            let input: AVCaptureDeviceInput
+            do {
+                input = try AVCaptureDeviceInput(device: device)
+            } catch {
+                // 权限被拒时这里会失败——给出可操作的指引而不是泛化错误。
+                onError("无法访问摄像头（\(error.localizedDescription)）。"
+                        + "请在 设置 → Lattice → 相机 中允许访问")
                 return
             }
+            session.beginConfiguration()
+            var setupError: String?
+            if session.canAddInput(input) {
+                session.addInput(input)
+            } else {
+                setupError = "摄像头输入不可用"
+            }
+            let output = AVCaptureMetadataOutput()
+            if setupError == nil {
+                if session.canAddOutput(output) {
+                    session.addOutput(output)
+                } else {
+                    setupError = "摄像头输出不可用"
+                }
+            }
+            if let setupError {
+                session.commitConfiguration()
+                configured = false
+                if attempt < 2 {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                        self?.configure(view: view, onError: onError, attempt: attempt + 1)
+                    }
+                } else {
+                    onError("\(setupError)，请重试")
+                }
+                return
+            }
+            output.setMetadataObjectsDelegate(self, queue: .main)
+            output.metadataObjectTypes = [.qr]
+            session.commitConfiguration()
             session.addOutput(output)
             output.setMetadataObjectsDelegate(self, queue: .main)
             output.metadataObjectTypes = [.qr]

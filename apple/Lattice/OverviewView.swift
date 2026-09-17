@@ -17,6 +17,7 @@ struct OverviewView: View {
     @State private var disablingPeer: PeerNode?
     @State private var showingJoin = false
     @State private var showingLogin = false
+    @State private var joinMode: JoinMode = .manual
     @AppStorage("lattice.authToken") private var authToken = ""
     @Environment(\.scenePhase) private var scenePhase
 
@@ -102,7 +103,7 @@ struct OverviewView: View {
                 JoinView(onFinished: {
                     showingJoin = false
                     Task { await loadPeers() }
-                })
+                }, mode: joinMode)
             }
             .sheet(isPresented: $showingLogin) {
                 LoginView(onFinished: { Task { await loadPeers() } })
@@ -158,14 +159,14 @@ struct OverviewView: View {
                     .multilineTextAlignment(.center)
             }
             VStack(spacing: 8) {
-                Button { showingJoin = true } label: {
+                Button { joinMode = .scan; showingJoin = true } label: {
                     Label("扫描二维码", systemImage: "qrcode.viewfinder")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
-                Button { showingJoin = true } label: {
+                Button { joinMode = .manual; showingJoin = true } label: {
                     Label("手动输入", systemImage: "keyboard")
                         .font(.system(size: 14, weight: .semibold))
                         .frame(maxWidth: .infinity)

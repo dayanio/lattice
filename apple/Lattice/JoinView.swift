@@ -18,8 +18,15 @@ import SwiftUI
 /// device name → creates the VPN profile (TunnelManager.saveJoin) and
 /// connects. Admin login is a separate optional step (LoginView) — the
 /// tunnel itself only needs the enrollment token.
+enum JoinMode {
+    case scan
+    case manual
+}
+
 struct JoinView: View {
     var onFinished: () -> Void
+    /// .scan：出现即打开摄像头；.manual：停留在手动输入表单。
+    var mode: JoinMode = .manual
 
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
     @State private var joinToken = ""
@@ -32,6 +39,9 @@ struct JoinView: View {
     var body: some View {
         NavigationStack {
             networkStep
+        }
+        .onAppear {
+            if mode == .scan { showingScanner = true }
         }
     }
 
