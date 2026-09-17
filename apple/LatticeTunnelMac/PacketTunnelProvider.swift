@@ -84,7 +84,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         if pc["resetIdentity"] as? Bool == true {
-            _ = LatticeEngineResetIdentity(nil)
+            if !LatticeEngineResetIdentity(nil) {
+                TunnelLog.write("startTunnel: resetIdentity failed")
+            }
         }
         let name = (pc["name"] as? String) ?? (Host.current().localizedName ?? "lattice-mac")
         TunnelLog.write("startTunnel: server=\(serverURL) token=\(token.count) chars name=\(name)")

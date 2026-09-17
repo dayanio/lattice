@@ -90,6 +90,16 @@ final class TunnelManager: ObservableObject {
     private var observer: NSObjectProtocol?
     private var statePoller: Timer?
 
+    /// Nonce recorded when the last join was a reset-join (createProfile wrote
+    /// "resetIdentity" into the persisted provider configuration). The reset
+    /// itself is applied by the extension on that session's startTunnel; the
+    /// flag must then be stripped from the persisted profile after the first
+    /// connected observation, or every later system-initiated restart (reboot,
+    /// VPN toggle, jetsam kill+restart) would regenerate the identity again —
+    /// same node name, different key — which the server rejects, locking the
+    /// device out.
+    private var pendingProfileResetNonce: String?
+
     private init() {}
 
     /// Loads (or reloads) the Lattice VPN profile and status from the system.
@@ -168,6 +178,12 @@ final class TunnelManager: ObservableObject {
         ]
         if resetIdentity {
             config["resetIdentity"] = true
+            // Fresh nonce per reset-join: marks this profile copy as armed so
+            // the flag can be consumed exactly once (see pendingProfileResetNonce);
+            // a later genuine reset always re-arms with a new value.
+            let nonce = UUID().uuidString
+            config["resetNonce"] = nonce
+            pendingProfileResetNonce = nonce
         }
         proto.providerConfiguration = config
 
@@ -209,6 +225,7 @@ final class TunnelManager: ObservableObject {
             if connectedSince == nil { connectedSince = Date() }
             lastStartError = ""
             startStatePoller()
+            consumeProfileResetFlagIfNeeded()
         } else {
             connectedSince = nil
             stopStatePoller()
@@ -228,6 +245,34 @@ final class TunnelManager: ObservableObject {
             queue: .main
         ) { [weak self] _ in
             self?.refreshStatus()
+        }
+    }
+
+    /// Consume-once for the reset-join flag: on the first .connected
+    /// observation after a reset-join, rewrite the persisted profile WITHOUT
+    /// "resetIdentity"/"resetNonce". The extension already applied the reset
+    /// during that session's startTunnel, so the rewrite only prevents
+    /// SUBSEQUENT system-initiated restarts from re-resetting. Save-only (no
+    /// enable/disable churn — a one-time session re-save is acceptable);
+    /// the pending nonce is cleared immediately on the main queue in all
+    /// paths so repeated connected observations or a failed save can't loop.
+    private func consumeProfileResetFlagIfNeeded() {
+        guard pendingProfileResetNonce != nil else { return }
+        pendingProfileResetNonce = nil
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            DispatchQueue.main.async {
+                guard let mgr = managers?.first(where: {
+                    ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.tunnelBundleID
+                }),
+                let proto = mgr.protocolConfiguration as? NETunnelProviderProtocol,
+                let config = proto.providerConfiguration,
+                config["resetIdentity"] != nil else { return }
+                var cleaned = config
+                cleaned.removeValue(forKey: "resetIdentity")
+                cleaned.removeValue(forKey: "resetNonce")
+                proto.providerConfiguration = cleaned
+                mgr.saveToPreferences { _ in }
+            }
         }
     }
 
