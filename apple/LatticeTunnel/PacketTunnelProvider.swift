@@ -42,7 +42,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // latestPeerStates 本身是 map 的 JSON 字符串——先解成对象再装进
             // 信封，避免把整个 map 当字符串二次编码（App 端会解码失败）。
             let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: String] ?? [:]
-            let snapshot: [String: Any] = ["peerStates": states, "lastError": latestError]
+            let snapshot: [String: Any] = [
+                "peerStates": states,
+                "lastError": latestError,
+                "publicKey": engine?.publicKey() ?? "",
+                "overlayIP": currentOverlayIP,
+            ]
             completionHandler?(try? JSONSerialization.data(withJSONObject: snapshot))
             return
         }
@@ -62,6 +67,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 userInfo: [NSLocalizedDescriptionKey: "缺少 serverURL 或 token 配置"]
             ))
             return
+        }
+        if pc["resetIdentity"] as? Bool == true {
+            _ = LatticeEngineResetIdentity(nil)
         }
         let name = (pc["name"] as? String) ?? (UIDevice.current.name)
         let config = EngineConfig(serverURL: serverURL, token: token, name: name, mtu: 1280)
