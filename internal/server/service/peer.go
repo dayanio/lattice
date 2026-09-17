@@ -589,6 +589,8 @@ func (p *peerService) checkNodeLimitStandalone(ctx context.Context) error {
 // SetPeerApproval transitions a peer between approved/revoked (ADR-0003).
 // Approving a pending peer allocates its overlay address, making it part
 // of the mesh; revoking keeps the row but the netmap gates exclude it.
+// Approving a peer also clears Disabled (re-enabling a peer an admin
+// disabled directly); revoking sets it.
 // The peers repository has no by-name lookup, so the workspace's rows are
 // listed once and filtered by name (same pattern as standalonePeerByName).
 func (p *peerService) SetPeerApproval(ctx context.Context, namespace, name, status string) error {

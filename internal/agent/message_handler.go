@@ -144,6 +144,14 @@ func (h *MessageHandler) ApplyFullConfig(ctx context.Context, msg *infra.Message
 
 // applyFullConfig is the lock-free body; callers must hold applyMu.
 func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message) error {
+	// A pending peer's netmap carries Current with an Address that is a
+	// pointer to an empty string (not nil) and no ComputedPeers — there is
+	// nothing to apply until an administrator approves the registration.
+	if msg.Current == nil || msg.Current.Address == nil || *msg.Current.Address == "" {
+		h.logger.Info("netmap empty: peer is awaiting administrator approval")
+		return nil
+	}
+
 	h.logger.Debug("reconciling full config", "version", msg.ConfigVersion)
 	var err error
 
