@@ -25,8 +25,21 @@ struct QRScannerView: UIViewRepresentable {
     /// Called on the main queue when the camera cannot be used.
     var onError: (String) -> Void
 
+    /// SwiftUI's updateUIView isn't reliably re-invoked on pure layout/size
+    /// changes when none of the represented view's inputs changed, so the
+    /// preview layer used to get stuck at the .zero frame it was created
+    /// with — camera running, nothing visible. Resizing it from UIKit's own
+    /// layoutSubviews guarantees it tracks the view's real bounds.
+    final class ContainerView: UIView {
+        weak var previewLayer: AVCaptureVideoPreviewLayer?
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            previewLayer?.frame = bounds
+        }
+    }
+
     func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+        let view = ContainerView(frame: .zero)
         context.coordinator.attach(to: view, onCode: onCode, onError: onError)
         return view
     }
@@ -123,6 +136,7 @@ struct QRScannerView: UIViewRepresentable {
             preview.frame = view.bounds
             view.layer.addSublayer(preview)
             previewLayer = preview
+            (view as? ContainerView)?.previewLayer = preview
 
             DispatchQueue.global(qos: .userInitiated).async { [session] in
                 session.startRunning()
