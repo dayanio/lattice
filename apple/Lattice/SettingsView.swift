@@ -102,7 +102,7 @@ struct SettingsView: View {
                 LoginView(onFinished: {})
             }
             .sheet(isPresented: $showingJoin) {
-                JoinView(onFinished: {})
+                JoinView(onFinished: {}, mode: .scan)
             }
             .confirmationDialog(
                 "退出网络？",

@@ -67,6 +67,7 @@ struct JoinView: View {
                     scannerError = message
                 }
             )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea(edges: .bottom)
 
             VStack(spacing: 10) {
