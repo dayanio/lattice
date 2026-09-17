@@ -435,6 +435,13 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if time.Now().After(tok.ExpiresAt) {
 		return nil, fmt.Errorf("token is expired")
 	}
+	// ADR-0003: approval gating is a per-workspace flag. Legacy deployments
+	// may have no workspace row for the token — they keep the open
+	// registration behavior; real store failures stay fatal.
+	workspace, wsErr := p.store.Workspaces().GetByID(ctx, tok.WorkspaceID)
+	if wsErr != nil && !stderrors.Is(wsErr, gorm.ErrRecordNotFound) {
+		return nil, wsErr
+	}
 	// Re-registration always resumes, regardless of the usage limit.
 	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
 	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
@@ -457,24 +464,34 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 
 	peer := existing
 	if peer == nil {
-		rows, listErr := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
-		if listErr != nil {
-			return nil, listErr
-		}
-		taken := make([]string, 0, len(rows))
-		for _, r := range rows {
-			taken = append(taken, r.Address)
-		}
-		address, allocErr := reconcilers.AllocateAddress(taken)
-		if allocErr != nil {
-			return nil, allocErr
-		}
 		peer = &models.Peer{
 			WorkspaceID: tok.WorkspaceID,
 			Name:        cmp.Or(dto.Name, dto.AppID), // agents may register without a display name
 			AppID:       dto.AppID,
 			Token:       dto.Token, // K8s semantics: the agent polls GetNetMap with its enrollment token
-			Address:     address,
+			// ADR-0003: peers are approved unless the workspace opts into
+			// approval gating (checked below).
+			ApprovalStatus: models.ApprovalApproved,
+		}
+		if workspace != nil && workspace.RequirePeerApproval {
+			// Address allocation is deferred to approval time (ADR-0003);
+			// the empty address also hides the peer from every netmap via
+			// the existing "still enrolling" skip.
+			peer.ApprovalStatus = models.ApprovalPending
+		} else {
+			rows, listErr := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
+			if listErr != nil {
+				return nil, listErr
+			}
+			taken := make([]string, 0, len(rows))
+			for _, r := range rows {
+				taken = append(taken, r.Address)
+			}
+			address, allocErr := reconcilers.AllocateAddress(taken)
+			if allocErr != nil {
+				return nil, allocErr
+			}
+			peer.Address = address
 		}
 	}
 	// ADR-0003: agents generate their WireGuard keypair locally and submit
@@ -520,11 +537,9 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	}
 	p.notifyWorkspacePeers(ctx, tok.WorkspaceID, peer.AppID)
 
-	address := peer.Address
 	node := &infra.Peer{
 		Name:       peer.Name,
 		AppID:      peer.AppID,
-		Address:    &address,
 		Token:      peer.Token,
 		PrivateKey: peer.PrivateKey,
 		PublicKey:  peer.PublicKey,
@@ -532,6 +547,14 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		Hostname:   peer.Hostname,
 		Platform:   peer.Platform,
 		NetworkId:  peer.WorkspaceID,
+		// ADR-0003: tells the agent whether the peer is usable yet.
+		ApprovalStatus: peer.ApprovalStatus,
+	}
+	if peer.Address != "" {
+		address := peer.Address
+		node.Address = &address
+		// Pending peers have no overlay address yet: a nil Address signals
+		// "awaiting approval" instead of an unusable empty IP.
 	}
 
 	// Look up enforcer_mode from the workspace owner's profile (best effort,

@@ -248,6 +248,35 @@ func TestRegisterStandalone_KeyMismatchRejected(t *testing.T) {
 	assert.Empty(t, peer.PrivateKey)
 }
 
+// ADR-0003: workspaces with approval gating enroll new peers as 'pending'
+// with no overlay address; the register response carries approvalStatus so
+// the agent can show "awaiting approval".
+func TestRegisterStandalone_PendingWhenWorkspaceRequiresApproval(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "ws1", DisplayName: "Dev", CreatedBy: "owner-1",
+	}))
+
+	workspace, err := st.Workspaces().GetByID(ctx, "ws1")
+	require.NoError(t, err)
+	workspace.RequirePeerApproval = true
+	require.NoError(t, st.Workspaces().Update(ctx, workspace))
+
+	node, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-p", AppID: "device-p", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalPending, node.ApprovalStatus)
+	assert.Nil(t, node.Address, "pending peer must not receive an overlay address")
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-p")
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalPending, peer.ApprovalStatus)
+	assert.Empty(t, peer.Address)
+}
+
 func mustPubKey(t *testing.T) string {
 	t.Helper()
 	key, err := wgtypes.GeneratePrivateKey()
