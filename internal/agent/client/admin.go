@@ -308,6 +308,17 @@ func (c *Client) PeerLabel(namespace, peerName string, labels map[string]string)
 	return w.Flush()
 }
 
+// SetPeerApproval approves or revokes a peer (ADR-0003).
+func (c *Client) SetPeerApproval(namespace, name, status string) error {
+	wsID, err := c.resolveWorkspaceID(namespace)
+	if err != nil {
+		return err
+	}
+	return c.do(context.Background(), http.MethodPut,
+		"/api/v1/peers/"+name+"/approval", wsID,
+		map[string]string{"status": status}, nil)
+}
+
 // ImportPolicies uploads a YAML policy bundle to the management API.
 // dryRun=true validates only; false applies every valid policy.
 func (c *Client) ImportPolicies(namespace, content string, dryRun bool) error {
