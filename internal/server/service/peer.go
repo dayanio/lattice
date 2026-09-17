@@ -495,6 +495,14 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 			peer.Address = address
 		}
 	}
+	// Defense-in-depth (ADR-0003): a peer enrolled with a client-generated
+	// key (PublicKey stored, PrivateKey empty) must never fall through to the
+	// server-side generation branch below — silently rotating its keypair
+	// would break every handshake for the peer until restart. A registration
+	// that omits the public key is refused instead.
+	if dto.PublicKey == "" && peer.PublicKey != "" && peer.PrivateKey == "" {
+		return nil, fmt.Errorf("peer %q was enrolled with a client-generated key; registration must present the matching public key", peer.AppID)
+	}
 	// ADR-0003: agents generate their WireGuard keypair locally and submit
 	// only the public key. Legacy agents (no PublicKey in the request)
 	// keep the server-side generation path during the compat window.
@@ -589,8 +597,9 @@ func (p *peerService) checkNodeLimitStandalone(ctx context.Context) error {
 // SetPeerApproval transitions a peer between approved/revoked (ADR-0003).
 // Approving a pending peer allocates its overlay address, making it part
 // of the mesh; revoking keeps the row but the netmap gates exclude it.
-// Approving a peer also clears Disabled (re-enabling a peer an admin
-// disabled directly); revoking sets it.
+// Revoking sets Disabled; approving lifts it only when the disable came
+// from that prior revocation — an admin's direct DisablePeer stays in
+// force across an idempotent re-approve.
 // The peers repository has no by-name lookup, so the workspace's rows are
 // listed once and filtered by name (same pattern as standalonePeerByName).
 func (p *peerService) SetPeerApproval(ctx context.Context, namespace, name, status string) error {
@@ -623,13 +632,18 @@ func (p *peerService) SetPeerApproval(ctx context.Context, namespace, name, stat
 	}
 
 	now := time.Now()
-	peer.ApprovalStatus = status
-	peer.ApprovedAt = &now
+	prevStatus := peer.ApprovalStatus
 	if status == models.ApprovalRevoked {
 		peer.Disabled = true
 	}
-	if status == models.ApprovalApproved {
+	if status == models.ApprovalApproved && prevStatus == models.ApprovalRevoked {
+		// Only a revocation-set disable is lifted by approval; an admin's
+		// direct DisablePeer stays in force.
 		peer.Disabled = false
+	}
+	peer.ApprovalStatus = status
+	peer.ApprovedAt = &now
+	if status == models.ApprovalApproved {
 		if peer.Address == "" {
 			taken := make([]string, 0, len(rows))
 			for _, r := range rows {
@@ -645,7 +659,10 @@ func (p *peerService) SetPeerApproval(ctx context.Context, namespace, name, stat
 	if err := p.store.Peers().Update(ctx, peer); err != nil {
 		return err
 	}
-	p.notifyWorkspacePeers(ctx, workspace.ID, peer.AppID)
+	// Include the transitioning peer — its last applied state was the
+	// pending stub, so it needs the netmap-changed push too (the agent's
+	// ConfigVersion-skip guard keeps this safe for everyone else).
+	p.notifyWorkspacePeers(ctx, workspace.ID, "")
 	return nil
 }
 

@@ -563,13 +563,17 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// The handler reads GetNetworkMap at call time (not at setup time), so it
 	// works even though GetNetworkMap is assigned externally after NewAgent returns.
 	//
+	// The re-register always presents the device key's public key (same as the
+	// initial registration): an empty key would make the server rotate a
+	// client-key peer's keypair, breaking handshakes until restart.
+	//
 	// Sandbox nodes (cfg.CurrentPeer != nil) skip NATS re-registration: they
 	// pre-registered via HTTP and their identity does not change on reconnect.
 	skipRegister := cfg.CurrentPeer != nil
 	natsSignalService.SetReconnectedHandler(func() {
 		rctx := context.Background()
 		if !skipRegister {
-			peer, rErr := node.ctrClient.Register(rctx, node.token, node.Name, "")
+			peer, rErr := node.ctrClient.Register(rctx, node.token, node.Name, node.devicePrivateKey.PublicKey().String())
 			if rErr != nil {
 				node.logger.Error("NATS reconnect: re-register failed", rErr)
 				return

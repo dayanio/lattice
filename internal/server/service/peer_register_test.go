@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/store"
 	"github.com/alatticeio/lattice/internal/db/gormstore"
 	"github.com/alatticeio/lattice/internal/license"
@@ -246,6 +247,61 @@ func TestRegisterStandalone_KeyMismatchRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, peer.PublicKey)
 	assert.Empty(t, peer.PrivateKey)
+}
+
+// Regression (final review): re-registering a client-key peer WITHOUT a
+// public key must be refused — falling through to server-side generation
+// would silently rotate the peer's keypair and break handshakes until
+// restart (e.g. the NATS-reconnect re-register path).
+func TestRegisterStandalone_ClientKeyPeerRequiresPublicKeyOnReregister(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	pubKey := mustPubKey(t)
+	_, err := svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token", PublicKey: pubKey})
+	require.NoError(t, err)
+
+	_, err = svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token"})
+	require.ErrorContains(t, err, "client-generated key")
+
+	// The stored keypair must be untouched by the refused attempt.
+	peer, err := st.Peers().GetByAppID(ctx, "device-a")
+	require.NoError(t, err)
+	assert.Equal(t, pubKey, peer.PublicKey)
+	assert.Empty(t, peer.PrivateKey)
+}
+
+// Approving a peer an admin disabled directly (DisablePeer) must not
+// re-enable it on an idempotent re-approve; a revoke→approve round-trip
+// must lift the disable the revocation itself set.
+func TestSetPeerApproval_ApprovePreservesDirectDisable(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	seedApprovalWorkspace(t, st)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-d", AppID: "device-d", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalApproved))
+	// DisablePeer resolves the peer by name from the workspace-scoped context.
+	wsCtx := context.WithValue(ctx, infra.WorkspaceKey, "ws1")
+	require.NoError(t, svc.DisablePeer(wsCtx, "ws1", "device-d"))
+
+	// Idempotent re-approve: the admin's direct disable stays in force.
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalApproved))
+	peer, err := st.Peers().GetByAppID(ctx, "device-d")
+	require.NoError(t, err)
+	assert.True(t, peer.Disabled, "re-approving must not lift a direct admin disable")
+
+	// Revoke → approve: the revocation-set disable is lifted by approval.
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalRevoked))
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalApproved))
+	peer, err = st.Peers().GetByAppID(ctx, "device-d")
+	require.NoError(t, err)
+	assert.False(t, peer.Disabled, "approve after revoke must lift the revocation-set disable")
 }
 
 // ADR-0003: workspaces with approval gating enroll new peers as 'pending'

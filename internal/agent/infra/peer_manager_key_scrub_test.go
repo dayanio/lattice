@@ -15,7 +15,7 @@ func TestPeerManagerAddPeer_ScrubsPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer := &Peer{AppID: "self", PublicKey: key.PublicKey().String(), PrivateKey: key.String()}
+	peer := &Peer{AppID: "self", PublicKey: key.PublicKey().String(), PrivateKey: key.String(), PresharedKey: "psk-material"}
 
 	pm.AddPeer("self", peer)
 
@@ -26,6 +26,9 @@ func TestPeerManagerAddPeer_ScrubsPrivateKey(t *testing.T) {
 	if got.PrivateKey != "" {
 		t.Fatal("stored peer must not carry the private key")
 	}
+	if got.PresharedKey != "" {
+		t.Fatal("stored peer must not carry the preshared key")
+	}
 	if got.PublicKey != peer.PublicKey {
 		t.Fatal("public key must be preserved")
 	}
@@ -35,6 +38,9 @@ func TestPeerManagerAddPeer_ScrubsPrivateKey(t *testing.T) {
 	}
 	// The CALLER's struct is not mutated (the key lives on there by design).
 	if peer.PrivateKey == "" {
+		t.Fatal("caller's own struct must be left untouched")
+	}
+	if peer.PresharedKey == "" {
 		t.Fatal("caller's own struct must be left untouched")
 	}
 }
