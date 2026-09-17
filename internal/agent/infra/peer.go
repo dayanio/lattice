@@ -82,13 +82,27 @@ func NewPeerManager() *PeerManager {
 	}
 }
 
+// AddPeer stores a peer under its AppID (primary index) and WireGuard public
+// key (secondary index). If the incoming peer carries a private key, a copy
+// with it cleared is stored instead: peers held by this manager are serialized
+// into signaling payloads sent to remote peers (SYN/ACK PeerInfo, OFFER
+// Current via json.Marshal), so any key material stored here would be
+// broadcast on the wire. The caller's own struct is never mutated — the local
+// node legitimately holds its private key there; it just must not live in the
+// shared, serialized cache.
 func (p *PeerManager) AddPeer(appId string, peer *Peer) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.peers[appId] = peer
-	if peer.PublicKey != "" {
-		if key, err := wgtypes.ParseKey(peer.PublicKey); err == nil {
-			p.byID[FromKey(key)] = peer
+	stored := peer
+	if peer != nil && peer.PrivateKey != "" {
+		scrubbed := *peer
+		scrubbed.PrivateKey = ""
+		stored = &scrubbed
+	}
+	p.peers[appId] = stored
+	if stored.PublicKey != "" {
+		if key, err := wgtypes.ParseKey(stored.PublicKey); err == nil {
+			p.byID[FromKey(key)] = stored
 		}
 	}
 }

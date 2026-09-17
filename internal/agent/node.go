@@ -143,6 +143,14 @@ type Node struct {
 	current   *infra.Peer
 	lrpClient infra.Lrp
 
+	// devicePrivateKey is the resolved WireGuard private key for this node,
+	// captured on every resolution path in NewNode (sandbox parse, local
+	// device key, legacy server key). Start() configures the device from it;
+	// the in-memory current peer record must stay key-free because peers in
+	// the PeerManager are serialized into signaling payloads sent to remote
+	// peers (SYN/ACK PeerInfo, OFFER Current).
+	devicePrivateKey wgtypes.Key
+
 	token          string
 	callback       func(message *infra.Message) error // nolint
 	messageHandler Handler
@@ -336,6 +344,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		node.devicePrivateKey = privateKey
 	} else {
 		pub := ""
 		var deviceKey *wgtypes.Key
@@ -356,15 +365,13 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 				log.GetLogger("node").Warn("server returned a private key; ignoring it (client-side key generation active)")
 			}
 			privateKey = *deviceKey
-			// Keep the in-memory peer record in sync with the key actually
-			// in use: Node.Start configures the WireGuard device from
-			// current.PrivateKey (same contract as the sandbox path).
-			node.current.PrivateKey = privateKey.String()
+			node.devicePrivateKey = privateKey
 		} else {
 			privateKey, err = utils.ParseKey(node.current.PrivateKey)
 			if err != nil {
 				return nil, err
 			}
+			node.devicePrivateKey = privateKey
 		}
 	}
 
@@ -602,7 +609,7 @@ func (c *Node) Start(ctx context.Context) error {
 	}
 
 	if err := c.provisioner.SetupInterface(&infra.DeviceConfig{
-		PrivateKey: c.current.PrivateKey,
+		PrivateKey: c.devicePrivateKey.String(),
 	}); err != nil {
 		return err
 	}
