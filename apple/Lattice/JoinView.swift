@@ -34,6 +34,10 @@ enum JoinMode: Identifiable {
 struct JoinView: View {
     var onFinished: () -> Void
     var mode: JoinMode = .manual
+    /// When true, a successful join also discards this device's persisted
+    /// WireGuard identity first (see SettingsView's "重新生成密钥" action).
+    /// Every other call site omits this and gets ordinary rejoin behavior.
+    var initialResetIdentity: Bool = false
 
     @State private var useScanner: Bool
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
@@ -43,9 +47,10 @@ struct JoinView: View {
     @State private var networkError = ""
     @State private var scannerError = ""
 
-    init(onFinished: @escaping () -> Void, mode: JoinMode = .manual) {
+    init(onFinished: @escaping () -> Void, mode: JoinMode = .manual, initialResetIdentity: Bool = false) {
         self.onFinished = onFinished
         self.mode = mode
+        self.initialResetIdentity = initialResetIdentity
         _useScanner = State(initialValue: mode == .scan)
     }
 
@@ -176,7 +181,7 @@ struct JoinView: View {
         let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
         UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
         UserDefaults.standard.set(deviceName, forKey: "lattice.nodeName")
-        TunnelManager.shared.saveJoin(serverURL: trimmed, token: joinToken, name: deviceName) { err in
+        TunnelManager.shared.saveJoin(serverURL: trimmed, token: joinToken, name: deviceName, resetIdentity: initialResetIdentity) { err in
             isSavingNetwork = false
             if let err {
                 networkError = err
