@@ -29,6 +29,7 @@ import (
 	"github.com/nats-io/nats.go"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // The full zero-K8s control-plane loop: user → workspace → enrollment
@@ -98,9 +99,14 @@ var _ = Describe("Standalone control plane", Ordered, func() {
 	})
 
 	It("registers a peer over NATS and returns its overlay identity", func() {
+		// ADR-0003: the server validates client-submitted public keys, so
+		// the fixture must carry a real WireGuard public key (any valid
+		// key works — the spec asserts deterministic address allocation).
+		deviceKey, err := wgtypes.GeneratePrivateKey()
+		Expect(err).NotTo(HaveOccurred())
 		payload, _ := json.Marshal(dto.PeerDto{
 			Name: "e2e-node", AppID: "e2e-node-1", Token: joinToken,
-			Platform: "linux", Hostname: "e2e-host", PublicKey: "pub-key-e2e",
+			Platform: "linux", Hostname: "e2e-host", PublicKey: deviceKey.PublicKey().String(),
 		})
 		raw, err := nc.Request("lattice.signals.peer.register", payload, 10*time.Second)
 		Expect(err).NotTo(HaveOccurred(), "register request failed")
