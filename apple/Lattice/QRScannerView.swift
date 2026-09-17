@@ -37,6 +37,10 @@ struct QRScannerView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.stop()
+    }
+
     final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         private let session = AVCaptureSession()
         private var configured = false

@@ -14,42 +14,95 @@
 
 import SwiftUI
 
-/// Join-network flow (scan or manual entry): server URL + enrollment token +
-/// device name → creates the VPN profile (TunnelManager.saveJoin) and
-/// connects. Admin login is a separate optional step (LoginView) — the
-/// tunnel itself only needs the enrollment token.
+/// 加入入口模式：.scan 出现即打开摄像头；.manual 停留在表单。
 enum JoinMode {
     case scan
     case manual
 }
 
+/// Join-network flow (scan or manual entry): server URL + enrollment token +
+/// device name → creates the VPN profile (TunnelManager.saveJoin) and
+/// connects. Admin login is a separate optional step (LoginView) — the
+/// tunnel itself only needs the enrollment token.
+///
+/// 扫码器直接内嵌为本视图的一个形态（scannerStep），不再作为二级 sheet
+/// 弹出——sheet 套 sheet 曾导致二次点击无效与闪退。
 struct JoinView: View {
     var onFinished: () -> Void
-    /// .scan：出现即打开摄像头；.manual：停留在手动输入表单。
     var mode: JoinMode = .manual
 
+    @State private var useScanner: Bool
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
     @State private var joinToken = ""
     @State private var deviceName = UIDevice.current.name
     @State private var isSavingNetwork = false
     @State private var networkError = ""
-    @State private var showingScanner = false
     @State private var scannerError = ""
+
+    init(onFinished: @escaping () -> Void, mode: JoinMode = .manual) {
+        self.onFinished = onFinished
+        self.mode = mode
+        _useScanner = State(initialValue: mode == .scan)
+    }
 
     var body: some View {
         NavigationStack {
-            networkStep
-        }
-        .onAppear {
-            if mode == .scan { showingScanner = true }
+            if useScanner {
+                scannerStep
+            } else {
+                networkStep
+            }
         }
     }
 
+    /// 摄像头取景全屏形态。
+    private var scannerStep: some View {
+        ZStack(alignment: .bottom) {
+            QRScannerView(
+                onCode: { code in
+                    handleScanned(code)
+                    useScanner = false
+                },
+                onError: { message in
+                    scannerError = message
+                }
+            )
+            .ignoresSafeArea(edges: .bottom)
+
+            VStack(spacing: 10) {
+                if !scannerError.isEmpty {
+                    Text(scannerError)
+                        .font(.caption)
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(.black.opacity(0.6))
+                        .cornerRadius(8)
+                }
+                Button {
+                    useScanner = false
+                } label: {
+                    Label("改用手动输入", systemImage: "keyboard")
+                        .font(.system(size: 13, weight: .semibold))
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.bottom, 24)
+        }
+        .navigationTitle("扫描二维码")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("取消") { onFinished() }
+            }
+        }
+    }
+
+    /// 表单形态：手动输入为主，保留切换到扫码的入口。
     private var networkStep: some View {
         Form {
-            Section("扫码加入") {
+            Section {
                 Button {
-                    showingScanner = true
+                    useScanner = true
                 } label: {
                     Label("扫描二维码", systemImage: "qrcode.viewfinder")
                 }
@@ -82,37 +135,6 @@ struct JoinView: View {
             }
         }
         .navigationTitle("加入网络")
-        .sheet(isPresented: $showingScanner) {
-            NavigationStack {
-                ZStack(alignment: .bottom) {
-                    QRScannerView(
-                        onCode: { code in
-                            handleScanned(code)
-                            showingScanner = false
-                        },
-                        onError: { message in
-                            scannerError = message
-                        }
-                    )
-                    if !scannerError.isEmpty {
-                        Text(scannerError)
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(8)
-                            .background(.black.opacity(0.6))
-                            .cornerRadius(8)
-                            .padding(.bottom, 24)
-                    }
-                }
-                .navigationTitle("扫描二维码")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showingScanner = false }
-                    }
-                }
-            }
-        }
     }
 
     private func handleScanned(_ code: String) {
