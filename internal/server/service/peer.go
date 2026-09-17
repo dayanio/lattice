@@ -67,6 +67,7 @@ type PeerService interface {
 	DisablePeer(ctx context.Context, namespace, name string) error
 	EnablePeer(ctx context.Context, namespace, name string) error
 	DeletePeer(ctx context.Context, namespace, name string) error
+	SetPeerApproval(ctx context.Context, namespace, name, status string) error
 	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
 	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
 	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
@@ -445,7 +446,7 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	// Re-registration always resumes, regardless of the usage limit.
 	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
 	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
-		return nil, err
+		return nil, existingErr
 	}
 	if existingErr == nil && existing.WorkspaceID != tok.WorkspaceID {
 		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
@@ -582,6 +583,67 @@ func (p *peerService) checkNodeLimitStandalone(ctx context.Context) error {
 		return fmt.Errorf("node limit reached (%d/%d) — upgrade at https://alattice.io/pro",
 			count, lic.Limits.MaxNodes)
 	}
+	return nil
+}
+
+// SetPeerApproval transitions a peer between approved/revoked (ADR-0003).
+// Approving a pending peer allocates its overlay address, making it part
+// of the mesh; revoking keeps the row but the netmap gates exclude it.
+// The peers repository has no by-name lookup, so the workspace's rows are
+// listed once and filtered by name (same pattern as standalonePeerByName).
+func (p *peerService) SetPeerApproval(ctx context.Context, namespace, name, status string) error {
+	switch status {
+	case models.ApprovalApproved, models.ApprovalRevoked:
+	default:
+		return fmt.Errorf("invalid approval status %q", status)
+	}
+	if p.netmapBuilder == nil {
+		return stderrors.New("peer approval is not supported in K8s mode yet")
+	}
+
+	workspace, err := p.store.Workspaces().GetByNamespace(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	rows, err := p.store.Peers().ListByWorkspace(ctx, workspace.ID)
+	if err != nil {
+		return err
+	}
+	var peer *models.Peer
+	for _, r := range rows {
+		if r.Name == name {
+			peer = r
+			break
+		}
+	}
+	if peer == nil {
+		return fmt.Errorf("peer %q not found", name)
+	}
+
+	now := time.Now()
+	peer.ApprovalStatus = status
+	peer.ApprovedAt = &now
+	if status == models.ApprovalRevoked {
+		peer.Disabled = true
+	}
+	if status == models.ApprovalApproved {
+		peer.Disabled = false
+		if peer.Address == "" {
+			taken := make([]string, 0, len(rows))
+			for _, r := range rows {
+				taken = append(taken, r.Address)
+			}
+			address, allocErr := reconcilers.AllocateAddress(taken)
+			if allocErr != nil {
+				return allocErr
+			}
+			peer.Address = address
+		}
+	}
+	if err := p.store.Peers().Update(ctx, peer); err != nil {
+		return err
+	}
+	p.notifyWorkspacePeers(ctx, workspace.ID, peer.AppID)
 	return nil
 }
 

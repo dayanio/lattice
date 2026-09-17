@@ -277,6 +277,97 @@ func TestRegisterStandalone_PendingWhenWorkspaceRequiresApproval(t *testing.T) {
 	assert.Empty(t, peer.Address)
 }
 
+// seedApprovalWorkspace seeds workspace "ws1" (namespace "ws1") with
+// RequirePeerApproval=true, matching the token's WorkspaceID.
+func seedApprovalWorkspace(t *testing.T, st store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "ws1", DisplayName: "Dev", CreatedBy: "owner-1",
+	}))
+	workspace, err := st.Workspaces().GetByID(ctx, "ws1")
+	require.NoError(t, err)
+	workspace.RequirePeerApproval = true
+	require.NoError(t, st.Workspaces().Update(ctx, workspace))
+}
+
+// ADR-0003: approving a pending peer allocates its overlay address, making
+// it part of the mesh. (ApprovedBy stays empty for now — actor identity
+// wiring is a documented follow-up.)
+func TestSetPeerApproval_ApproveAllocatesAddress(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	seedApprovalWorkspace(t, st)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-p", AppID: "device-p", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-p", models.ApprovalApproved))
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-p")
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalApproved, peer.ApprovalStatus)
+	assert.NotEmpty(t, peer.Address, "approval must allocate the overlay address")
+}
+
+// ADR-0003: revoking a peer keeps the row but flips Disabled, which the
+// netmap builder treats as a hard error for the peer itself and excludes it
+// from every other peer's mesh view.
+func TestSetPeerApproval_RevokeDisablesPeer(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	seedApprovalWorkspace(t, st)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-p", AppID: "device-p", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-p", models.ApprovalApproved))
+
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-p", models.ApprovalRevoked))
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-p")
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalRevoked, peer.ApprovalStatus)
+	assert.True(t, peer.Disabled, "revocation must disable the peer")
+}
+
+func TestSetPeerApproval_RejectsUnknownStatus(t *testing.T) {
+	svc, _ := newRegisterService(t, &fakeVerifier{})
+
+	err := svc.SetPeerApproval(context.Background(), "ws1", "x", "maybe")
+	assert.Error(t, err, "unknown status must be rejected")
+}
+
+// Regression: a genuine store failure during registerStandalone's
+// duplicate-AppID lookup must surface as an error (and must not consume a
+// token use) — not be swallowed by returning (nil, nil).
+func TestRegisterStandalone_StoreFailureSurfaces(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Peer{}, &models.EnrollmentToken{}, &models.Workspace{}, &models.UserProfile{},
+	))
+	st, err := gormstore.New(db)
+	require.NoError(t, err)
+	svc := service.NewPeerService(nil, st, nil, &fakeVerifier{valid: false}, nil)
+	ctx := context.Background()
+	tok := seedEnrollmentToken(t, st, nil)
+	// Force a non-NotFound failure in Peers().GetByAppID: remove its table.
+	require.NoError(t, db.Exec("DROP TABLE t_peer").Error)
+
+	_, err = svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: tok.Token})
+	require.Error(t, err, "a store failure must surface, not be swallowed")
+
+	enr, err := st.EnrollmentTokens().GetByToken(ctx, tok.Token)
+	require.NoError(t, err)
+	assert.Equal(t, 0, enr.UsedCount, "a failed registration must not consume a token use")
+}
+
 func mustPubKey(t *testing.T) string {
 	t.Helper()
 	key, err := wgtypes.GeneratePrivateKey()
