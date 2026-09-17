@@ -177,11 +177,16 @@ git push origin new_dev
 - Consumes: `ensureDeviceKey()` (Task 1).
 - Produces: `NewNode` registers with the device public key and prefers the device private key over any server-returned one. Sandbox path (`cfg.CurrentPeer != nil`) unchanged.
 
-- [ ] **Step 1: Modify NewNode.** Replace the register + key-parse block:
+- [ ] **Step 1: Modify NewNode.** Replace the register + key-parse block (the whole `if cfg.CurrentPeer != nil {...} else {...}` plus the `privateKey, err = utils.ParseKey(...)` lines that follow it) with:
 
 ```go
 	if cfg.CurrentPeer != nil {
 		node.current = cfg.CurrentPeer
+		// Sandbox path: the pre-registered peer carries its own key.
+		privateKey, err = utils.ParseKey(node.current.PrivateKey)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		pub := ""
 		var deviceKey *wgtypes.Key
@@ -211,16 +216,7 @@ git push origin new_dev
 	}
 ```
 
-Then DELETE the now-dead original lines below the block:
-
-```go
-	privateKey, err = utils.ParseKey(node.current.PrivateKey)
-	if err != nil {
-		return nil, err
-	}
-```
-
-(`wgtypes` is already imported in node.go; `utils` remains used by the sandbox path.)
+(The original `privateKey, err = utils.ParseKey(node.current.PrivateKey)` lines below the block are replaced by the above — nothing left to delete.)
 
 - [ ] **Step 2: Build + full agent tests** — `go build ./... && go test -race ./internal/agent/...` → PASS (NewNode itself is integration-heavy; behavior is covered end-to-end by Task 3's server tests + manual `lattice up`).
 
@@ -844,16 +840,16 @@ func TestApplyFullConfig_PendingPeerIsNoop(t *testing.T) {
 
 Note: check `provision.NewNoopEnforcer`'s exact signature first (`grep -n "func NewNoopEnforcer" internal/agent/provision/`); the apply path for a nil/empty address must not reach the provisioner — if the existing code already guards (`msg.Current.Address != nil`), the test passes unchanged; if it panics on nil deviceManager, guard order in applyFullConfig puts the address check first (Step 2 does that).
 
-- [ ] **Step 2: Implement** — top of `applyFullConfig` in `message_handler.go`:
+- [ ] **Step 2: Implement** — top of `applyFullConfig` in `message_handler.go` (the pending message's Address is a pointer to an EMPTY string, not nil — guard both):
 
 ```go
-	if msg.Current == nil || msg.Current.Address == nil {
+	if msg.Current == nil || msg.Current.Address == nil || *msg.Current.Address == "" {
 		h.logger.Info("netmap empty: peer is awaiting administrator approval")
 		return nil
 	}
 ```
 
-(early return replaces the fallthrough into ApplyIP for the nil-address case — the existing body already guarded with `msg.Current != nil && msg.Current.Address != nil`, so this only adds the log + explicit no-op.)
+(early return replaces the fallthrough into ApplyIP for the address-less case — the existing body already guarded with `msg.Current != nil && msg.Current.Address != nil`, so this only adds the empty-string case, the log + explicit no-op.)
 
 - [ ] **Step 3: Run** — `go test -race ./internal/agent/ -run TestApplyFullConfig` → PASS; then full `go test -race ./internal/agent/...`.
 
