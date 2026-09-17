@@ -46,6 +46,7 @@ type PeerController interface {
 	UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (*vo.PeerVo, error)
 	DisablePeer(ctx context.Context, namespace, name string) error
 	EnablePeer(ctx context.Context, namespace, name string) error
+	SetPeerApproval(ctx context.Context, namespace, name, status string) error
 	DeletePeer(ctx context.Context, namespace, name string) error
 	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
 	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
@@ -112,6 +113,10 @@ func (p *peerController) DisablePeer(ctx context.Context, namespace, name string
 
 func (p *peerController) EnablePeer(ctx context.Context, namespace, name string) error {
 	return p.peerService.EnablePeer(ctx, namespace, name)
+}
+
+func (p *peerController) SetPeerApproval(ctx context.Context, namespace, name, status string) error {
+	return p.peerService.SetPeerApproval(ctx, namespace, name, status)
 }
 
 func (p *peerController) DeletePeer(ctx context.Context, namespace, name string) error {
