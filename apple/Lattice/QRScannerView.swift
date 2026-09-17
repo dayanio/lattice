@@ -91,22 +91,17 @@ struct QRScannerView: UIViewRepresentable {
                         + "请在 设置 → Lattice → 相机 中允许访问")
                 return
             }
+            NSLog("LATTICE-QR configure attempt %d", attempt)
             session.beginConfiguration()
             var setupError: String?
-            if session.canAddInput(input) {
-                session.addInput(input)
-            } else {
-                setupError = "摄像头输入不可用"
-            }
+            let canIn = session.canAddInput(input)
+            NSLog("LATTICE-QR canAddInput=%@", canIn ? "YES" : "NO")
+            if canIn { session.addInput(input) }
             let output = AVCaptureMetadataOutput()
-            if setupError == nil {
-                if session.canAddOutput(output) {
-                    session.addOutput(output)
-                } else {
-                    setupError = "摄像头输出不可用"
-                }
-            }
-            if let setupError {
+            let canOut = session.canAddOutput(output)
+            NSLog("LATTICE-QR canAddOutput=%@", canOut ? "YES" : "NO")
+            if canOut { session.addOutput(output) }
+            if !canIn || !canOut {
                 session.commitConfiguration()
                 configured = false
                 if attempt < 2 {
@@ -114,17 +109,14 @@ struct QRScannerView: UIViewRepresentable {
                         self?.configure(view: view, onError: onError, attempt: attempt + 1)
                     }
                 } else {
-                    onError("\(setupError)，请重试")
+                    onError("摄像头会话装配失败（\(canIn ? "输入" : "输出")不可用），请重试")
                 }
                 return
             }
             output.setMetadataObjectsDelegate(self, queue: .main)
             output.metadataObjectTypes = [.qr]
             session.commitConfiguration()
-            session.addOutput(output)
-            output.setMetadataObjectsDelegate(self, queue: .main)
-            output.metadataObjectTypes = [.qr]
-            session.commitConfiguration()
+            NSLog("LATTICE-QR session configured")
 
             let preview = AVCaptureVideoPreviewLayer(session: session)
             preview.videoGravity = .resizeAspectFill
@@ -134,6 +126,7 @@ struct QRScannerView: UIViewRepresentable {
 
             DispatchQueue.global(qos: .userInitiated).async { [session] in
                 session.startRunning()
+                NSLog("LATTICE-QR camera running")
             }
         }
 
