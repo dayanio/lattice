@@ -28,6 +28,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gorm.io/gorm"
 )
 
@@ -81,7 +82,7 @@ func TestPeerService_RegisterStandalone_CreatesPeer(t *testing.T) {
 
 	node, err := svc.Register(ctx, &dto.PeerDto{
 		Name: "api", AppID: "app-1", Token: "enr-test-token",
-		PublicKey: "pub-1", Endpoint: "1.2.3.4:51820", Platform: "linux",
+		Endpoint: "1.2.3.4:51820", Platform: "linux",
 	})
 	require.NoError(t, err)
 
@@ -202,4 +203,54 @@ func TestPeerService_RegisterStandalone_EnforcerModeFromWorkspaceOwner(t *testin
 	node, err := svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-test-token"})
 	require.NoError(t, err)
 	assert.Equal(t, "enforce", node.EnforcerMode)
+}
+
+// ADR-0003: agents that generate their WireGuard keypair locally submit only
+// the public key; the control plane stores it and never issues a private key.
+func TestRegisterStandalone_ClientPublicKey(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	pubKey := mustPubKey(t)
+	node, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-a", AppID: "device-a", Token: "enr-test-token", PublicKey: pubKey,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, pubKey, node.PublicKey)
+	assert.Empty(t, node.PrivateKey, "private key must never be returned to client-key agents")
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-a")
+	require.NoError(t, err)
+	assert.Equal(t, pubKey, peer.PublicKey)
+	assert.Empty(t, peer.PrivateKey)
+}
+
+// ADR-0003: re-registering an existing client-key peer with a different
+// public key is a takeover attempt and must be rejected.
+func TestRegisterStandalone_KeyMismatchRejected(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	// First registration seeds a client-key peer for "device-a".
+	_, err := svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token", PublicKey: mustPubKey(t)})
+	require.NoError(t, err)
+
+	// Same AppID, different key → takeover attempt.
+	_, err = svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token", PublicKey: mustPubKey(t)})
+	require.ErrorContains(t, err, "public key mismatch")
+
+	// The stored key must still be the one from the first registration.
+	peer, err := st.Peers().GetByAppID(ctx, "device-a")
+	require.NoError(t, err)
+	assert.NotEmpty(t, peer.PublicKey)
+	assert.Empty(t, peer.PrivateKey)
+}
+
+func mustPubKey(t *testing.T) string {
+	t.Helper()
+	key, err := wgtypes.GeneratePrivateKey()
+	require.NoError(t, err)
+	return key.PublicKey().String()
 }

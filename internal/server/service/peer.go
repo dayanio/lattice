@@ -477,22 +477,36 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 			Address:     address,
 		}
 	}
-	// The control plane owns the WireGuard keypair (same as the K8s path):
-	// generate on first enrollment, reuse on re-registration.
-	var key wgtypes.Key
-	if peer.PrivateKey != "" {
-		key, err = wgtypes.ParseKey(peer.PrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("parse stored key: %w", err)
+	// ADR-0003: agents generate their WireGuard keypair locally and submit
+	// only the public key. Legacy agents (no PublicKey in the request)
+	// keep the server-side generation path during the compat window.
+	switch {
+	case dto.PublicKey != "":
+		if _, pErr := wgtypes.ParseKey(dto.PublicKey); pErr != nil {
+			return nil, fmt.Errorf("invalid public key: %w", pErr)
 		}
-	} else {
-		key, err = wgtypes.GeneratePrivateKey()
-		if err != nil {
-			return nil, fmt.Errorf("generate key: %w", err)
+		if peer.PublicKey != "" && peer.PublicKey != dto.PublicKey {
+			if peer.PrivateKey != "" {
+				// Legacy peer migrating to a client key: the old key was
+				// server-generated, rotating to the client key is a strict
+				// improvement — accept once.
+				p.logger.Warn("peer migrated from server-side to client-side key", "app_id", peer.AppID)
+			} else {
+				return nil, fmt.Errorf("public key mismatch for peer %q; key rotation requires re-enrollment", peer.AppID)
+			}
+		}
+		peer.PublicKey = dto.PublicKey
+		peer.PrivateKey = ""
+	case peer.PrivateKey != "":
+		// Legacy resume: server-side key already stored.
+	default:
+		key, kErr := wgtypes.GeneratePrivateKey()
+		if kErr != nil {
+			return nil, fmt.Errorf("generate key: %w", kErr)
 		}
 		peer.PrivateKey = key.String()
+		peer.PublicKey = key.PublicKey().String()
 	}
-	peer.PublicKey = key.PublicKey().String()
 	peer.Endpoint = dto.Endpoint
 	peer.Hostname = dto.Hostname
 	peer.Platform = dto.Platform

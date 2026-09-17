@@ -109,7 +109,7 @@ func TestRegisterStandalone_NormalizesAppID(t *testing.T) {
 
 	node, err := svc.Register(context.Background(), &dto.PeerDto{
 		Name: "MacBook Pro", AppID: "MacBook Pro 16", Token: "enr-norm",
-		PublicKey: "pub-norm",
+		PublicKey: "ePcj1OOpgncNTUmYPqpzg58L5DvDjfU7cltRoALF2Rs=",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "MacBook-Pro-16", node.AppID, "AppID must be normalized to a NATS-safe token")
