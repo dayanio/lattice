@@ -99,10 +99,10 @@ struct SettingsView: View {
             }
             .navigationTitle("设置")
             .sheet(isPresented: $showingLogin) {
-                LoginView(onFinished: {})
+                LoginView(onFinished: { showingLogin = false })
             }
             .sheet(isPresented: $showingJoin) {
-                JoinView(onFinished: {}, mode: .scan)
+                JoinView(onFinished: { showingJoin = false }, mode: .scan)
             }
             .confirmationDialog(
                 "退出网络？",
