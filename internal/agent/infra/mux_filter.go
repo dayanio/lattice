@@ -34,6 +34,12 @@ type PassThroughPacket struct {
 	Addr *net.UDPAddr
 }
 
+// droppedCounter counts pass-through packets dropped because the channel
+// was full. Registered once per PROCESS: NewNode constructs two mux
+// instances (v4 + v6) and VictoriaMetrics panics on duplicate names, so
+// the registration must not live inside the per-instance constructor.
+var droppedCounter = metrics.NewCounter(`lattice_agent_udpmux_passthrough_dropped_total`)
+
 // FilteringUDPMux wraps UniversalUDPMuxDefault and becomes the sole reader of
 // the shared UDP socket. It classifies every incoming packet:
 //
@@ -56,7 +62,6 @@ type FilteringUDPMux struct {
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
 	droppedCount atomic.Uint64 // count of dropped pass-through packets
-	dropped      metrics.Counter
 }
 
 // NewFilteringUDPMux constructs the wrapper. realConn is the shared UDP socket.
@@ -78,7 +83,6 @@ func NewFilteringUDPMux(realConn net.PacketConn, logger logging.LeveledLogger) *
 		chanConn: chanConn,
 		realConn: realConn,
 		stopCh:   make(chan struct{}),
-		dropped:  metrics.NewCounter(`lattice_agent_udpmux_passthrough_dropped_total`),
 	}
 }
 
@@ -141,7 +145,7 @@ func (f *FilteringUDPMux) readLoop() {
 				default:
 					// Channel full: drop rather than block the sole reader.
 					f.droppedCount.Add(1)
-					f.dropped.Inc()
+					droppedCounter.Inc()
 				}
 			}
 	}
