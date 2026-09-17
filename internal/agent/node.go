@@ -324,15 +324,47 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	}
 
 	// Register announces this node to the control plane and receives back the
-	// assigned WireGuard private key, allocated IP, and LRP relay URL.
+	// allocated IP and LRP relay URL. Since ADR-0003 the WireGuard keypair is
+	// generated locally (ensureDeviceKey) and only its public key is sent;
+	// any private key the server still returns is ignored.
 	// The sandbox skips this call: it pre-registers via HTTP and passes
 	// CurrentPeer with identity information already filled in.
 	if cfg.CurrentPeer != nil {
 		node.current = cfg.CurrentPeer
-	} else {
-		node.current, err = node.ctrClient.Register(ctx, cfg.Token, node.Name, "")
+		// Sandbox path: the pre-registered peer carries its own key.
+		privateKey, err = utils.ParseKey(node.current.PrivateKey)
 		if err != nil {
 			return nil, err
+		}
+	} else {
+		pub := ""
+		var deviceKey *wgtypes.Key
+		if dk, derr := ensureDeviceKey(); derr == nil {
+			deviceKey = &dk
+			pub = dk.PublicKey().String()
+		} else {
+			log.GetLogger("node").Warn("device key generation failed; falling back to server-side key", "err", derr)
+		}
+		node.current, err = node.ctrClient.Register(ctx, cfg.Token, node.Name, pub)
+		if err != nil {
+			return nil, err
+		}
+		if deviceKey != nil {
+			// ADR-0003: the key is generated here and never leaves the
+			// device; ignore anything the server still sends back.
+			if node.current.PrivateKey != "" {
+				log.GetLogger("node").Warn("server returned a private key; ignoring it (client-side key generation active)")
+			}
+			privateKey = *deviceKey
+			// Keep the in-memory peer record in sync with the key actually
+			// in use: Node.Start configures the WireGuard device from
+			// current.PrivateKey (same contract as the sandbox path).
+			node.current.PrivateKey = privateKey.String()
+		} else {
+			privateKey, err = utils.ParseKey(node.current.PrivateKey)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -347,10 +379,6 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		config.Conf.EnforcerMode = "auto"
 	}
 
-	privateKey, err = utils.ParseKey(node.current.PrivateKey)
-	if err != nil {
-		return nil, err
-	}
 	// KeyManager holds the WireGuard private key and exposes it to the Bind
 	// layer so it can perform AEAD peer matching during the handshake.
 	node.manager.keyManager = infra.NewKeyManager(privateKey)
