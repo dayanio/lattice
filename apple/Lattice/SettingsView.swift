@@ -138,7 +138,9 @@ struct SettingsView: View {
             .sheet(isPresented: $showingLogin) {
                 LoginView(onFinished: { showingLogin = false })
             }
-            .sheet(isPresented: $showingJoin) {
+            .sheet(isPresented: $showingJoin, onDismiss: {
+                pendingIdentityReset = false
+            }) {
                 JoinView(onFinished: {
                     showingJoin = false
                     pendingIdentityReset = false
