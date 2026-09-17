@@ -136,8 +136,14 @@ func (p *Probe) stopLivenessTicker() {
 	}
 }
 
+// Liveness thresholds must clear WireGuard's own rekey cadence: with no
+// payload traffic the handshake only refreshes when the initiator rekeys
+// (REKEY_AFTER_TIME ≈ 120 s), so a 45 s threshold declared healthy probes
+// stale every ~45 s and restart-looped idle peers forever (observed live:
+// ice-ready → failed every 45.0 s). 180 s covers the rekey window with
+// margin while still catching genuinely dead peers within ~3 min.
 const livenessInterval = 15 * time.Second
-const livenessThreshold = 45 * time.Second
+const livenessThreshold = 180 * time.Second
 
 func (p *Probe) runLiveness(ctx context.Context) {
 	ticker := time.NewTicker(livenessInterval)
