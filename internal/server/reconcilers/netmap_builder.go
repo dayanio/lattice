@@ -97,6 +97,11 @@ func (b *NetmapBuilder) BuildForAppID(ctx context.Context, appID, token string) 
 	if peer.Disabled {
 		return nil, errors.New("netmap: peer " + peer.Name + " is disabled")
 	}
+	if peer.ApprovalStatus != "" && peer.ApprovalStatus != models.ApprovalApproved {
+		// Not an error: the agent polls this endpoint and must keep its
+		// heartbeat/poll loop alive while awaiting approval (ADR-0003).
+		return b.pendingMessage(peer), nil
+	}
 	return b.BuildForPeer(ctx, peer)
 }
 
@@ -134,6 +139,9 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 
 	computedPeers := make([]*infra.Peer, 0, len(rows))
 	for _, row := range rows {
+		if row.ApprovalStatus != "" && row.ApprovalStatus != models.ApprovalApproved {
+			continue // pending/revoked peers are invisible to the mesh
+		}
 		if row.Address == "" {
 			continue // still enrolling; not part of the mesh yet
 		}
@@ -212,19 +220,30 @@ func parseAdvertisedRoutes(raw string) []string {
 	return valid
 }
 
+// pendingMessage returns the minimal netmap shown to a peer that has not
+// been approved yet: its own identity, no address, no mesh peers.
+func (b *NetmapBuilder) pendingMessage(peer *models.Peer) *infra.Message {
+	addr := ""
+	current := dbToInfraPeer(peer)
+	current.Address = &addr
+	current.PrivateKey = peer.PrivateKey // legacy agents need their key back
+	return &infra.Message{Current: current}
+}
+
 // dbToInfraPeer converts the registry record into its wire form.
 func dbToInfraPeer(p *models.Peer) *infra.Peer {
 	ip := new(string)
 	*ip = p.Address
 	peer := &infra.Peer{
-		Name:      p.Name,
-		AppID:     p.AppID,
-		Address:   ip,
-		Endpoint:  p.Endpoint,
-		Hostname:  p.Hostname,
-		Platform:  p.Platform,
-		NetworkId: p.WorkspaceID,
-		PublicKey: p.PublicKey,
+		Name:           p.Name,
+		AppID:          p.AppID,
+		Address:        ip,
+		Endpoint:       p.Endpoint,
+		Hostname:       p.Hostname,
+		Platform:       p.Platform,
+		NetworkId:      p.WorkspaceID,
+		PublicKey:      p.PublicKey,
+		ApprovalStatus: p.ApprovalStatus,
 	}
 	if p.Labels != "" {
 		_ = json.Unmarshal([]byte(p.Labels), &peer.Labels)
