@@ -3,7 +3,7 @@ name: Unit Test
 on:
   pull_request:
   push:
-    branches: [master, dev]
+    branches: [master, dev, new_dev]
 
 jobs:
   test:
@@ -16,5 +16,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run unit tests
-        run: go test ./internal/... ./pkg/... -count=1 -timeout 5m
+      - name: Run unit tests (race)
+        run: go test -race ./internal/... ./pkg/... ./cmd/... -count=1 -timeout 10m
+
+  e2e-standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # 真实 NATS + latticed 二进制的端到端注册/netmap 套件
+      # （需要独占 4222，与 unit 测试分开跑）
+      - name: Run standalone E2E
+        run: go test ./test/e2e_standalone/... -timeout 10m

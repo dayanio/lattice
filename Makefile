@@ -609,3 +609,26 @@ build-docs:
 test-docs:
 	cd docs && pnpm docs:build --outDir /tmp/lattice-docs-test
 	@echo "Docs build successful"
+
+## ── 流水线门禁（pipeline gates）─────────────────────────────────────────────
+
+.PHONY: verify
+verify: lint ## 一体化门禁：lint + build + vet + race 测试（不含需独占 4222 的 e2e）
+	go build ./...
+	go vet ./...
+	go test -race ./internal/... ./pkg/... ./cmd/... -count=1 -timeout 10m
+
+.PHONY: verify-e2e
+verify-e2e: ## standalone E2E（真实 NATS + latticed；需本机 4222 空闲——先停测试环境）
+	go test ./test/e2e_standalone/... -timeout 10m
+
+.PHONY: verify-all
+verify-all: verify verify-e2e ## verify + verify-e2e 全量门禁
+
+.PHONY: deploy-test
+deploy-test: ## 重新部署本机测试环境（服务端 + 容器 agent 群）并跑 mesh 断言
+	bash hack/deploy-test.sh
+
+.PHONY: verify-mesh
+verify-mesh: ## 对当前测试环境跑连通性断言
+	bash hack/verify-mesh.sh
