@@ -109,6 +109,13 @@ First time? Run "lattice init" to set up your config interactively.`,
 			if mode, _ := cmd.Flags().GetString("enforcer-mode"); mode != "" {
 				config.Conf.EnforcerMode = mode
 			}
+			// ADR-0003: the enrollment token must reach the register
+			// request. --token is also persisted to the config dir so
+			// re-runs (lattice up without flags) keep the same identity.
+			if tk, _ := cmd.Flags().GetString("token"); tk != "" {
+				config.Conf.Token = tk
+				config.GetManager().Viper().Set("token", tk)
+			}
 
 			return agent.Start(ctx, config.Conf)
 		},
