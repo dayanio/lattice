@@ -43,7 +43,6 @@ type packetTUN struct {
 	events   chan tun.Event
 	closedCh chan struct{}
 	mu       sync.Mutex
-	closed   bool
 	once     sync.Once
 
 	// dropped counts packets discarded because a queue was full.

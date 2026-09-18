@@ -305,10 +305,10 @@ type Config struct {
 	// server and agents must both be new enough. Default false.
 	LrpRequirePeerAuth bool   `mapstructure:"lrp-require-peer-auth"`
 	StunServerURL      string `mapstructure:"stun-url"` // STUN server address for ICE NAT traversal
-	PublicIP          string `mapstructure:"public-ip"`
-	Port              int    `mapstructure:"port"`          // STUN service port, default 3478
-	WgPort            int    `mapstructure:"wg-port"`       // WireGuard/ICE UDP listen port, default 51820
-	EnforcerMode      string `mapstructure:"enforcer-mode"` // "auto", "iptables", "ebpf"
+	PublicIP           string `mapstructure:"public-ip"`
+	Port               int    `mapstructure:"port"`          // STUN service port, default 3478
+	WgPort             int    `mapstructure:"wg-port"`       // WireGuard/ICE UDP listen port, default 51820
+	EnforcerMode       string `mapstructure:"enforcer-mode"` // "auto", "iptables", "ebpf"
 
 	// ── Feature flags ─────────────────────────────────────────────
 	EnableLrp    bool `mapstructure:"enable-lrp"`

@@ -135,19 +135,19 @@ func (f *FilteringUDPMux) readLoop() {
 		if stun.IsMessage(pkt) {
 			// STUN: inject into the mux so connWorker can dispatch by ufrag.
 			f.chanConn.inject(pkt, addr)
-			} else if f.passThroughCh != nil {
-				// Non-STUN (WireGuard encrypted): forward to DefaultBind.
-				// Allocate a fresh buffer; buf is reused on the next iteration.
-				data := make([]byte, n)
-				copy(data, pkt)
-				select {
-				case f.passThroughCh <- PassThroughPacket{Data: data, Addr: udpAddr}:
-				default:
-					// Channel full: drop rather than block the sole reader.
-					f.droppedCount.Add(1)
-					droppedCounter.Inc()
-				}
+		} else if f.passThroughCh != nil {
+			// Non-STUN (WireGuard encrypted): forward to DefaultBind.
+			// Allocate a fresh buffer; buf is reused on the next iteration.
+			data := make([]byte, n)
+			copy(data, pkt)
+			select {
+			case f.passThroughCh <- PassThroughPacket{Data: data, Addr: udpAddr}:
+			default:
+				// Channel full: drop rather than block the sole reader.
+				f.droppedCount.Add(1)
+				droppedCounter.Inc()
 			}
+		}
 	}
 }
 

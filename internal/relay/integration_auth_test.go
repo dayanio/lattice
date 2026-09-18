@@ -59,6 +59,7 @@ func dialUpgrade(t *testing.T, ts *httptest.Server) (net.Conn, *bufio.Reader) {
 		t.Fatal(err)
 	}
 	reader := bufio.NewReader(conn)
+	//nolint:bodyclose // resp.Body wraps the raw conn; the test owns the conn for LRP framing
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		conn.Close() //nolint:errcheck

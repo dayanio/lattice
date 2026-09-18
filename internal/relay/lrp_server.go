@@ -200,10 +200,10 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 
 	var pending *relayChallenge
 	if challengePub, ch, chErr := newChallenge(); chErr == nil {
-		if err := sendFrame(stream, AuthChallenge, challengePub[:]); err == nil {
+		if sendErr := sendFrame(stream, AuthChallenge, challengePub[:]); sendErr == nil {
 			pending = ch
 		} else if s.requirePeerAuth {
-			s.log.Error("failed to send auth challenge", err, "from", fromId)
+			s.log.Error("failed to send auth challenge", sendErr, "from", fromId)
 			return
 		}
 	} else if s.requirePeerAuth {
