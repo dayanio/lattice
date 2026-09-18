@@ -763,15 +763,47 @@ func (i *ICETransport) Type() infra.TransportType {
 
 // stunURIs parses the stun-url config value (host:port) into a pion stun.URI slice.
 // Falls back to the default public STUN server if the config is empty or malformed.
+// 默认 STUN 列表：自有服务器优先，其后为公共备用（国内可达 + 全球双栈）。
+// 多服务器并发采集以提升 srflx 候选（含 IPv6）成功率。
+var defaultSTUNServers = []struct {
+	host string
+	port int
+}{
+	{"stun.alattice.io", 3478},
+	{"stun.miwifi.com", 3478},     // 国内公共
+	{"stun.cloudflare.com", 3478}, // 全球双栈（AAAA），v6 反射候选依赖它
+}
+
+// stunURIs builds the STUN server list: the configured server first (if any),
+// then the defaults, deduplicated.
 func stunURIs() []*stun.URI {
-	addr := agentconfig.Conf.StunServerURL
-	host, portStr, err := net.SplitHostPort(addr)
-	if err != nil || host == "" {
-		return []*stun.URI{{Scheme: stun.SchemeTypeSTUN, Host: "stun.alattice.io", Port: 3478}}
+	var uris []*stun.URI
+	add := func(host string, port int) {
+		if host == "" {
+			return
+		}
+		for _, u := range uris {
+			if u.Host == host && u.Port == port {
+				return
+			}
+		}
+		uris = append(uris, &stun.URI{Scheme: stun.SchemeTypeSTUN, Host: host, Port: port})
 	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port <= 0 {
-		port = 3478
+
+	if addr := agentconfig.Conf.StunServerURL; addr != "" {
+		host, portStr, err := net.SplitHostPort(addr)
+		if err == nil && host != "" {
+			port, perr := strconv.Atoi(portStr)
+			if perr == nil && port > 0 {
+				add(host, port)
+			}
+		}
 	}
-	return []*stun.URI{{Scheme: stun.SchemeTypeSTUN, Host: host, Port: port}}
+	for _, d := range defaultSTUNServers {
+		add(d.host, d.port)
+	}
+	if len(uris) == 0 {
+		add("stun.alattice.io", 3478)
+	}
+	return uris
 }
