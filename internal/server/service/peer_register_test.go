@@ -140,6 +140,10 @@ func TestPeerService_RegisterStandalone_ReRegistrationResumes(t *testing.T) {
 	got, err := st.Peers().GetByAppID(ctx, "app-1")
 	require.NoError(t, err)
 	assert.Equal(t, "5.6.7.8:51820", got.Endpoint, "endpoint refreshed on resume")
+
+	enr, err := st.EnrollmentTokens().GetByToken(ctx, "enr-test-token")
+	require.NoError(t, err)
+	assert.Equal(t, 1, enr.UsedCount, "re-registration must not consume another seat")
 }
 
 func TestPeerService_RegisterStandalone_ExpiredTokenRejected(t *testing.T) {
