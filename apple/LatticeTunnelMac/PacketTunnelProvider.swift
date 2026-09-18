@@ -148,6 +148,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: overlayIP)
         settings.mtu = 1280
 
+        // LatticeDNS: 只有 *.lattice 的 DNS 查询进隧道（由引擎内置应答器解析），
+        // 其余域名的解析走系统默认 DNS。
+        let dns = NEDNSSettings(servers: ["10.96.0.1"])
+        dns.matchDomains = ["lattice"]
+        settings.dnsSettings = dns
+
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
         // Route the overlay range into the tunnel always. No default route
         // unless a selected Exit Node advertises 0.0.0.0/0 (handled below):
