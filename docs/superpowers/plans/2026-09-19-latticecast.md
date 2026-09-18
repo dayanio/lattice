@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 仓库：全部代码进新仓库 `github.com/alatticeio/lattice-cast`；lattice 主仓库仅 Task 15 一个文档任务（零代码）。
+- 仓库：全部代码进新仓库 `github.com/alatticeio/lattice-cast`；**本地检出于 `/Users/francis/workspc/lattice-cast`（与 lattice 仓库平级），严禁嵌套进 lattice 仓库内部**；lattice 主仓库仅 Task 15 一个文档任务（零代码）。
 - License：Apache-2.0（对齐主仓库）。
 - Go 版本：1.26（对齐主仓库 CI）。
 - 端口约定：MCP `7800`、媒体 HTTP `7810`、渲染端 `7822`（APK 内可改）。
@@ -36,6 +36,7 @@
 - [ ] **Step 1: 建仓并克隆**
 
 ```bash
+cd /Users/francis/workspc   # 与 lattice 仓库平级；严禁克隆进 lattice 内部
 gh repo create alatticeio/lattice-cast --public --description "LatticeCast — one-sentence casting for the Lattice mesh" --license apache-2.0 --clone
 cd lattice-cast
 git checkout -b feat/v1-agent
