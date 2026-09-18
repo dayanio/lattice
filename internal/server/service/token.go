@@ -95,7 +95,14 @@ func (t *tokenService) Create(ctx context.Context, req *dto.TokenDto) (string, e
 		}
 	}
 
-	if _, err = t.peerService.CreateToken(ctx, &tokenDto); err != nil {
+	// Return the token that was actually persisted: CreateToken stores Name
+	// (caller-supplied, or the generated tokenStr when empty) and hands back
+	// the stored value. Returning tokenStr unconditionally gave out a random
+	// string that never existed in the registry whenever a name was supplied,
+	// so every join with the issued token failed "token not exists"
+	// (cloud test host, 2026-09-19).
+	stored, err := t.peerService.CreateToken(ctx, &tokenDto)
+	if err != nil {
 		return "", err
 	}
 
@@ -107,7 +114,7 @@ func (t *tokenService) Create(ctx context.Context, req *dto.TokenDto) (string, e
 		return "", err
 	}
 
-	return tokenStr, nil
+	return string(stored), nil
 }
 
 func NewTokenService(client *resource.Client, st store.Store) TokenService {
