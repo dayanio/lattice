@@ -52,7 +52,7 @@ cast-agent（Go，家里常开节点，经家里 lattice agent 入网，普通 m
 电视（主动拉流播放）
 ```
 
-代码落位（现有 monorepo）：`cmd/lattice-cast/` + `internal/cast/{discovery,dlna,chromecast,resolve,mcp}`。
+**仓库策略（双仓库）**：cast 侧实现放**新仓库** `lattice-cast`（`github.com/alatticeio/lattice-cast`），结构 `cmd/lattice-cast/` + `internal/cast/{discovery,dlna,chromecast,resolve,mcp}`。理由：依赖画像不同（yt-dlp、投屏协议库等消费级依赖，不进核心 Go 代码树）、发布节奏独立（真机兼容列表持续滚动）、不稀释 lattice 核心的"网络编排 + agent 沙箱"叙事。cast-agent 是宿主节点上的普通进程，网络面由宿主 lattice agent 透明承载，对 lattice 的依赖仅限控制面 API（DNS 别名注册）与 agent JWT 校验模式。**lattice 主仓库只承担一个小控制面改动：LatticeDNS 别名记录类型**（见第八节），随本特性出独立 PR。
 
 **配置**（YAML，单一来源）：NAS 媒体库路径列表、设备→房间映射、协议偏好顺序（多协议设备的降级次序）、MCP 监听地址。房间映射在设备首次被发现时自动生成待确认模板（设备友好名/UDN → 房间），人工确认一次后固化——"归位"永远以配置为准，不靠猜测。
 
@@ -120,7 +120,7 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效、维
 - **策略**：LatticePolicy default-deny，仅放行两类流量——
   - ingress：`role=voice-assistant` 的 agent 身份 → 网关节点 MCP 端口（TCP）；
   - egress：网关节点 → 电视投屏端口（DLNA 8200/49152+、Chromecast 8008/8009、SSDP 1900/UDP、mDNS 5353/UDP）；
-- **命名**：LatticeDNS 注册别名记录（`bedroom-tv.lattice` → 网关 overlay IP）。电视本身不是 mesh peer，属于网关后的"虚拟设备"——需要 LatticeDNS 增加**别名记录类型**（小扩展，随本特性交付）；
+- **命名**：LatticeDNS 注册别名记录（`bedroom-tv.lattice` → 网关 overlay IP）。电视本身不是 mesh peer，属于网关后的"虚拟设备"——需要 LatticeDNS 增加**别名记录类型**。此改动属于 lattice 主仓库控制面（独立小 PR，非 lattice-cast 仓库范围）；
 - **审计**：每次 MCP 工具调用落 tool_spans（traceID/agentID/tool/status/durationMs，已有），投屏历史可查询。
 
 这是消费级投屏方案（小爱、米家）不具备的企业级信任层，是本特性对 lattice 叙事的核心差异化。
@@ -136,9 +136,8 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效、维
 ## 十、分期规划
 
 ### v1（本次实现范围）
-- `lattice-cast`：Discovery（SSDP+mDNS）、CastAdapter（DLNA + Chromecast，现成库）、MediaResolver（NAS 目录扫描 + 直链 + YouTube）、MCP 四件套 + search_media；
-- LatticeDNS 别名记录类型；
-- 策略模板（voice-assistant 角色的放行规则示例）；
+- **新仓库 `lattice-cast`**：Discovery（SSDP+mDNS）、CastAdapter（DLNA + Chromecast，现成库）、MediaResolver（NAS 目录扫描 + 直链 + YouTube）、MCP 四件套 + search_media；
+- **lattice 主仓库（独立小 PR）**：LatticeDNS 别名记录类型；策略模板（voice-assistant 角色的放行规则示例）；
 - 文字入口：任意现有 MCP 客户端（Claude Desktop / Cursor 等）经 mesh 使用。
 - **验收**：在外的手机上说一句"把 NAS 里的 xx 投到卧室电视"，电视播出来。
 
