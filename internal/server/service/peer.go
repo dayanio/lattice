@@ -459,9 +459,6 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if tok.UsageLimit > 0 && existingErr != nil && tok.UsedCount >= tok.UsageLimit {
 		return nil, fmt.Errorf("token usage limit reached (%d)", tok.UsageLimit)
 	}
-	if incErr := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); incErr != nil {
-		return nil, incErr
-	}
 
 	peer := existing
 	if peer == nil {
@@ -543,6 +540,15 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	peer.LastSeenAt = &now
 	if err := p.store.Peers().Update(ctx, peer); err != nil {
 		return nil, err
+	}
+	// A seat is consumed only by a persisted first enrollment: re-registrations
+	// (which bypass the limit check) and failed creates must not burn quota —
+	// every agent restart used to increment the counter until the token
+	// showed "exhausted" while still serving its own peer (cloud test, 2026-09-19).
+	if existing == nil {
+		if incErr := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); incErr != nil {
+			return nil, incErr
+		}
 	}
 	p.notifyWorkspacePeers(ctx, tok.WorkspaceID, peer.AppID)
 
@@ -904,6 +910,19 @@ func (p *peerService) ListRouteSelections(ctx context.Context, consumerName stri
 func (p *peerService) Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
 	p.logger.Info("Received peer", "info", dto)
 
+	node, err := p.register(ctx, dto)
+	if err != nil {
+		// Token/limit rejections otherwise leave no server-side trace: the
+		// reason only shows up in the agent's log, which made the cloud
+		// deployment's "join silently fails" incident needlessly hard to
+		// diagnose (2026-09-19).
+		p.logger.Warn("peer register rejected", "app_id", dto.AppID, "err", err)
+		return nil, err
+	}
+	return node, nil
+}
+
+func (p *peerService) register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
 	if p.netmapBuilder != nil {
 		return p.registerStandalone(ctx, dto)
 	}
