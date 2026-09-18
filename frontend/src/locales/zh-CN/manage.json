@@ -325,6 +325,7 @@
     "menu": {
       "viewDetail": "查看详情",
       "copyToken": "复制 Token",
+      "joinQR": "入网二维码",
       "delete": "删除 Token"
     },
     "empty": "暂无 Token 数据",
@@ -354,6 +355,11 @@
       "createFailed": "Token 创建失败",
       "deleted": "Token 已删除",
       "deleteFailed": "删除 Token 失败"
+    },
+    "qrDialog": {
+      "title": "入网二维码",
+      "desc": "用 Lattice iOS App 的「扫描二维码」加入此网络",
+      "server": "服务器地址"
     }
   },
   "nodes": {
@@ -415,6 +421,8 @@
       "publicKey": "公钥",
       "customName": "自定义名称",
       "nameHint": "留空则显示系统默认名称",
+      "staticEndpoint": "静态地址（高级）",
+      "staticEndpointHint": "手动指定该节点的真实可达地址（IP:端口），用于自动打洞失败的场景，如 NAT 网络中已发布端口的容器。留空则走自动探测。",
       "labels": "标签",
       "noLabels": "暂无标签",
       "addLabel": "添加标签",

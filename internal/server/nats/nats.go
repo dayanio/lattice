@@ -44,6 +44,10 @@ func (n *noopSignalService) Send(_ context.Context, _ infra.PeerID, _ []byte) er
 	return nil
 }
 
+func (n *noopSignalService) Publish(_ context.Context, _ string, _ []byte) error {
+	return nil
+}
+
 func (n *noopSignalService) Request(_ context.Context, _, _ string, _ []byte) ([]byte, error) {
 	return nil, fmt.Errorf("nats: not connected (noop service)")
 }
@@ -163,8 +167,22 @@ func (s *NatsSignalService) Flush() error {
 	return s.nc.Flush()
 }
 
+// SubscribeRaw subscribes to subject with no payload parsing — for simple
+// control-plane notifications (like netmap-changed pings) that aren't
+// signal.SignalPacket-shaped.
+func (s *NatsSignalService) SubscribeRaw(subject string, onMessage func()) error {
+	_, err := s.nc.Subscribe(subject, func(_ *natsgo.Msg) {
+		onMessage()
+	})
+	return err
+}
+
 func (s *NatsSignalService) Send(_ context.Context, peerId infra.PeerID, data []byte) error {
 	subject := fmt.Sprintf("lattice.signals.peers.%s", peerId)
+	return s.nc.Publish(subject, data)
+}
+
+func (s *NatsSignalService) Publish(_ context.Context, subject string, data []byte) error {
 	return s.nc.Publish(subject, data)
 }
 

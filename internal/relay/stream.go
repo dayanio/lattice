@@ -14,7 +14,10 @@
 
 package relay
 
-import "net"
+import (
+	"net"
+	"sync"
+)
 
 // Stream abstract the exact transport protocol
 type Stream interface {
@@ -28,4 +31,12 @@ type Session struct {
 	ID     uint64
 	Stream Stream
 	Type   string // TCP / QUIC / KCP
+
+	// mu serializes Stream writes (see SessionManager.Relay): bufio-backed
+	// TCP streams are not safe for concurrent writers.
+	mu sync.Mutex
+
+	// verified is set once the session completed the X25519 per-peer auth
+	// handshake (ADR-0004). Guarded by SessionManager.mu.
+	verified bool
 }

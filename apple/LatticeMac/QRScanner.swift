@@ -116,33 +116,3 @@ struct CameraScannerView: NSViewRepresentable {
         }
     }
 }
-
-/// Parses a scanned or pasted join payload.
-///   lattice://join?server=<url>&token=<token>   → both fields
-///   bare enrollment token                        → token only
-struct JoinPayload {
-    var serverURL: String?
-    var token: String?
-
-    init?(_ raw: String) {
-        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return nil }
-
-        if value.lowercased().hasPrefix("lattice://join") {
-            guard let url = URL(string: value),
-                  let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else {
-                return nil
-            }
-            let server = query.first { $0.name == "server" }?.value
-            let token = query.first { $0.name == "token" }?.value
-            if server == nil && token == nil { return nil }
-            self.serverURL = server
-            self.token = token
-            return
-        }
-        // Bare token: enrollment tokens are short opaque strings.
-        guard !value.contains("://"), !value.contains(" "), value.count <= 64 else { return nil }
-        self.serverURL = nil
-        self.token = value
-    }
-}

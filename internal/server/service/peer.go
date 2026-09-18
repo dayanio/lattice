@@ -67,6 +67,7 @@ type PeerService interface {
 	DisablePeer(ctx context.Context, namespace, name string) error
 	EnablePeer(ctx context.Context, namespace, name string) error
 	DeletePeer(ctx context.Context, namespace, name string) error
+	SetPeerApproval(ctx context.Context, namespace, name, status string) error
 	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
 	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
 	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
@@ -81,6 +82,11 @@ type peerService struct {
 	// netmapBuilder serves netmaps from the standalone DB registry when
 	// no K8s client exists (client == nil).
 	netmapBuilder *reconcilers.NetmapBuilder
+	// signal notifies already-connected peers to refresh sooner than their
+	// next poll cycle when something in the workspace's netmap changes.
+	// May be nil (e.g. NewPeerService called from token.go's internal use) —
+	// infra.PublishNetmapChanged handles that as a no-op.
+	signal infra.SignalService
 }
 
 const (
@@ -150,6 +156,7 @@ type peerItem struct {
 	labels           map[string]string
 	advertisedRoutes []string
 	disabled         bool
+	endpoint         string
 }
 
 func (p *peerService) ListPeers(ctx context.Context, pageParam *dto.PageRequest) (*dto.PageResult[vo.PeerVo], error) {
@@ -229,6 +236,7 @@ func (p *peerService) listPeersStandalone(ctx context.Context, pageParam *dto.Pa
 			labels:           labels,
 			advertisedRoutes: advertisedRoutes,
 			disabled:         r.Disabled,
+			endpoint:         r.Endpoint,
 		})
 	}
 
@@ -278,6 +286,7 @@ func (p *peerService) renderPeerPage(ctx context.Context, workspace *models.Work
 			AdvertisedRoutes:     n.advertisedRoutes,
 			WorkspaceDisplayName: workspace.DisplayName,
 			Disabled:             n.disabled,
+			Endpoint:             n.endpoint,
 		}
 		if p.presence != nil {
 			status, lastSeen := p.presence.GetStatus(n.appId)
@@ -341,13 +350,14 @@ func (p *peerService) CreateToken(ctx context.Context, tokenDto *dto.TokenDto) (
 	return []byte(actualToken), nil
 }
 
-func NewPeerService(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier) PeerService {
+func NewPeerService(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier, signal infra.SignalService) PeerService {
 	svc := &peerService{
 		client:          client,
 		logger:          log.GetLogger("peer-service"),
 		store:           st,
 		presence:        presence,
 		licenseVerifier: verifier,
+		signal:          signal,
 	}
 	if client == nil && st != nil {
 		// Standalone mode: build netmaps from the DB peer registry.
@@ -369,10 +379,56 @@ func (p *peerService) GetNetmap(ctx context.Context, token string, appId string)
 // registerStandalone is the DB-path registration: validate the workspace
 // enrollment token, resume or create the t_peer record with a per-peer
 // credential, and apply the license node limit for new peers.
+// notifyWorkspacePeers tells every peer registered in workspaceID (except
+// exceptAppID — the peer that just changed and already holds fresh data)
+// that the netmap changed and they should refresh now. Standalone mode:
+// peers come from the t_peer registry. A nil signal is a no-op.
+func (p *peerService) notifyWorkspacePeers(ctx context.Context, workspaceID, exceptAppID string) {
+	rows, err := p.store.Peers().ListByWorkspace(ctx, workspaceID)
+	if err != nil {
+		p.logger.Warn("notifyWorkspacePeers: list failed", "err", err)
+		return
+	}
+	for _, r := range rows {
+		if r.AppID == exceptAppID {
+			continue
+		}
+		if err := infra.PublishNetmapChanged(ctx, p.signal, r.AppID); err != nil {
+			p.logger.Warn("notifyWorkspacePeers: publish failed", "appID", r.AppID, "err", err)
+		}
+	}
+}
+
+// notifyK8sWorkspacePeers is the K8s-mode variant of notifyWorkspacePeers:
+// the peer set comes from LatticePeer CRDs in the given namespace instead of
+// the t_peer table.
+func (p *peerService) notifyK8sWorkspacePeers(ctx context.Context, namespace, exceptAppID string) {
+	if p.client == nil {
+		return
+	}
+	var peerList v1alpha1.LatticePeerList
+	if err := p.client.GetAPIReader().List(ctx, &peerList, client.InNamespace(namespace)); err != nil {
+		p.logger.Warn("notifyK8sWorkspacePeers: list failed", "err", err)
+		return
+	}
+	for _, r := range peerList.Items {
+		if r.Spec.AppId == exceptAppID {
+			continue
+		}
+		if err := infra.PublishNetmapChanged(ctx, p.signal, r.Spec.AppId); err != nil {
+			p.logger.Warn("notifyK8sWorkspacePeers: publish failed", "appID", r.Spec.AppId, "err", err)
+		}
+	}
+}
+
 func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
 	if dto.Token == "" {
 		return nil, fmt.Errorf("token is empty")
 	}
+	// NATS subjects are derived from the AppID (per-peer push); normalize
+	// client-supplied IDs (device names carry spaces) before any lookup or
+	// persistence.
+	dto.AppID = infra.NormalizeAppID(dto.AppID)
 	tok, err := p.store.EnrollmentTokens().GetByToken(ctx, dto.Token)
 	if err != nil {
 		return nil, fmt.Errorf("token not exists")
@@ -380,10 +436,17 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if time.Now().After(tok.ExpiresAt) {
 		return nil, fmt.Errorf("token is expired")
 	}
+	// ADR-0003: approval gating is a per-workspace flag. Legacy deployments
+	// may have no workspace row for the token — they keep the open
+	// registration behavior; real store failures stay fatal.
+	workspace, wsErr := p.store.Workspaces().GetByID(ctx, tok.WorkspaceID)
+	if wsErr != nil && !stderrors.Is(wsErr, gorm.ErrRecordNotFound) {
+		return nil, wsErr
+	}
 	// Re-registration always resumes, regardless of the usage limit.
 	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
 	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
-		return nil, err
+		return nil, existingErr
 	}
 	if existingErr == nil && existing.WorkspaceID != tok.WorkspaceID {
 		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
@@ -402,42 +465,74 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 
 	peer := existing
 	if peer == nil {
-		rows, listErr := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
-		if listErr != nil {
-			return nil, listErr
-		}
-		taken := make([]string, 0, len(rows))
-		for _, r := range rows {
-			taken = append(taken, r.Address)
-		}
-		address, allocErr := reconcilers.AllocateAddress(taken)
-		if allocErr != nil {
-			return nil, allocErr
-		}
 		peer = &models.Peer{
 			WorkspaceID: tok.WorkspaceID,
 			Name:        cmp.Or(dto.Name, dto.AppID), // agents may register without a display name
 			AppID:       dto.AppID,
 			Token:       dto.Token, // K8s semantics: the agent polls GetNetMap with its enrollment token
-			Address:     address,
+			// ADR-0003: peers are approved unless the workspace opts into
+			// approval gating (checked below).
+			ApprovalStatus: models.ApprovalApproved,
+		}
+		if workspace != nil && workspace.RequirePeerApproval {
+			// Address allocation is deferred to approval time (ADR-0003);
+			// the empty address also hides the peer from every netmap via
+			// the existing "still enrolling" skip.
+			peer.ApprovalStatus = models.ApprovalPending
+		} else {
+			rows, listErr := p.store.Peers().ListByWorkspace(ctx, tok.WorkspaceID)
+			if listErr != nil {
+				return nil, listErr
+			}
+			taken := make([]string, 0, len(rows))
+			for _, r := range rows {
+				taken = append(taken, r.Address)
+			}
+			address, allocErr := reconcilers.AllocateAddress(taken)
+			if allocErr != nil {
+				return nil, allocErr
+			}
+			peer.Address = address
 		}
 	}
-	// The control plane owns the WireGuard keypair (same as the K8s path):
-	// generate on first enrollment, reuse on re-registration.
-	var key wgtypes.Key
-	if peer.PrivateKey != "" {
-		key, err = wgtypes.ParseKey(peer.PrivateKey)
-		if err != nil {
-			return nil, fmt.Errorf("parse stored key: %w", err)
+	// Defense-in-depth (ADR-0003): a peer enrolled with a client-generated
+	// key (PublicKey stored, PrivateKey empty) must never fall through to the
+	// server-side generation branch below — silently rotating its keypair
+	// would break every handshake for the peer until restart. A registration
+	// that omits the public key is refused instead.
+	if dto.PublicKey == "" && peer.PublicKey != "" && peer.PrivateKey == "" {
+		return nil, fmt.Errorf("peer %q was enrolled with a client-generated key; registration must present the matching public key", peer.AppID)
+	}
+	// ADR-0003: agents generate their WireGuard keypair locally and submit
+	// only the public key. Legacy agents (no PublicKey in the request)
+	// keep the server-side generation path during the compat window.
+	switch {
+	case dto.PublicKey != "":
+		if _, pErr := wgtypes.ParseKey(dto.PublicKey); pErr != nil {
+			return nil, fmt.Errorf("invalid public key: %w", pErr)
 		}
-	} else {
-		key, err = wgtypes.GeneratePrivateKey()
-		if err != nil {
-			return nil, fmt.Errorf("generate key: %w", err)
+		if peer.PublicKey != "" && peer.PublicKey != dto.PublicKey {
+			if peer.PrivateKey != "" {
+				// Legacy peer migrating to a client key: the old key was
+				// server-generated, rotating to the client key is a strict
+				// improvement — accept once.
+				p.logger.Warn("peer migrated from server-side to client-side key", "app_id", peer.AppID)
+			} else {
+				return nil, fmt.Errorf("public key mismatch for peer %q; key rotation requires re-enrollment", peer.AppID)
+			}
+		}
+		peer.PublicKey = dto.PublicKey
+		peer.PrivateKey = ""
+	case peer.PrivateKey != "":
+		// Legacy resume: server-side key already stored.
+	default:
+		key, kErr := wgtypes.GeneratePrivateKey()
+		if kErr != nil {
+			return nil, fmt.Errorf("generate key: %w", kErr)
 		}
 		peer.PrivateKey = key.String()
+		peer.PublicKey = key.PublicKey().String()
 	}
-	peer.PublicKey = key.PublicKey().String()
 	peer.Endpoint = dto.Endpoint
 	peer.Hostname = dto.Hostname
 	peer.Platform = dto.Platform
@@ -449,12 +544,11 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if err := p.store.Peers().Update(ctx, peer); err != nil {
 		return nil, err
 	}
+	p.notifyWorkspacePeers(ctx, tok.WorkspaceID, peer.AppID)
 
-	address := peer.Address
 	node := &infra.Peer{
 		Name:       peer.Name,
 		AppID:      peer.AppID,
-		Address:    &address,
 		Token:      peer.Token,
 		PrivateKey: peer.PrivateKey,
 		PublicKey:  peer.PublicKey,
@@ -462,6 +556,14 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		Hostname:   peer.Hostname,
 		Platform:   peer.Platform,
 		NetworkId:  peer.WorkspaceID,
+		// ADR-0003: tells the agent whether the peer is usable yet.
+		ApprovalStatus: peer.ApprovalStatus,
+	}
+	if peer.Address != "" {
+		address := peer.Address
+		node.Address = &address
+		// Pending peers have no overlay address yet: a nil Address signals
+		// "awaiting approval" instead of an unusable empty IP.
 	}
 
 	// Look up enforcer_mode from the workspace owner's profile (best effort,
@@ -492,6 +594,78 @@ func (p *peerService) checkNodeLimitStandalone(ctx context.Context) error {
 	return nil
 }
 
+// SetPeerApproval transitions a peer between approved/revoked (ADR-0003).
+// Approving a pending peer allocates its overlay address, making it part
+// of the mesh; revoking keeps the row but the netmap gates exclude it.
+// Revoking sets Disabled; approving lifts it only when the disable came
+// from that prior revocation — an admin's direct DisablePeer stays in
+// force across an idempotent re-approve.
+// The peers repository has no by-name lookup, so the workspace's rows are
+// listed once and filtered by name (same pattern as standalonePeerByName).
+func (p *peerService) SetPeerApproval(ctx context.Context, namespace, name, status string) error {
+	switch status {
+	case models.ApprovalApproved, models.ApprovalRevoked:
+	default:
+		return fmt.Errorf("invalid approval status %q", status)
+	}
+	if p.netmapBuilder == nil {
+		return stderrors.New("peer approval is not supported in K8s mode yet")
+	}
+
+	workspace, err := p.store.Workspaces().GetByNamespace(ctx, namespace)
+	if err != nil {
+		return err
+	}
+	rows, err := p.store.Peers().ListByWorkspace(ctx, workspace.ID)
+	if err != nil {
+		return err
+	}
+	var peer *models.Peer
+	for _, r := range rows {
+		if r.Name == name {
+			peer = r
+			break
+		}
+	}
+	if peer == nil {
+		return fmt.Errorf("peer %q not found", name)
+	}
+
+	now := time.Now()
+	prevStatus := peer.ApprovalStatus
+	if status == models.ApprovalRevoked {
+		peer.Disabled = true
+	}
+	if status == models.ApprovalApproved && prevStatus == models.ApprovalRevoked {
+		// Only a revocation-set disable is lifted by approval; an admin's
+		// direct DisablePeer stays in force.
+		peer.Disabled = false
+	}
+	peer.ApprovalStatus = status
+	peer.ApprovedAt = &now
+	if status == models.ApprovalApproved {
+		if peer.Address == "" {
+			taken := make([]string, 0, len(rows))
+			for _, r := range rows {
+				taken = append(taken, r.Address)
+			}
+			address, allocErr := reconcilers.AllocateAddress(taken)
+			if allocErr != nil {
+				return allocErr
+			}
+			peer.Address = address
+		}
+	}
+	if err := p.store.Peers().Update(ctx, peer); err != nil {
+		return err
+	}
+	// Include the transitioning peer — its last applied state was the
+	// pending stub, so it needs the netmap-changed push too (the agent's
+	// ConfigVersion-skip guard keeps this safe for everyone else).
+	p.notifyWorkspacePeers(ctx, workspace.ID, "")
+	return nil
+}
+
 func (p *peerService) UpdateStatus(_ context.Context, _ int) error { return nil }
 
 func (p *peerService) DisablePeer(ctx context.Context, namespace, name string) error {
@@ -508,7 +682,11 @@ func (p *peerService) DisablePeer(ctx context.Context, namespace, name string) e
 	}
 	annotations[disabledAnnotation] = "true"
 	peer.SetAnnotations(annotations)
-	return p.client.Update(ctx, &peer)
+	if err := p.client.Update(ctx, &peer); err != nil {
+		return err
+	}
+	p.notifyK8sWorkspacePeers(ctx, peer.Namespace, peer.Spec.AppId)
+	return nil
 }
 
 func (p *peerService) EnablePeer(ctx context.Context, namespace, name string) error {
@@ -522,7 +700,11 @@ func (p *peerService) EnablePeer(ctx context.Context, namespace, name string) er
 	annotations := peer.GetAnnotations()
 	delete(annotations, disabledAnnotation)
 	peer.SetAnnotations(annotations)
-	return p.client.Update(ctx, &peer)
+	if err := p.client.Update(ctx, &peer); err != nil {
+		return err
+	}
+	p.notifyK8sWorkspacePeers(ctx, peer.Namespace, peer.Spec.AppId)
+	return nil
 }
 
 func (p *peerService) DeletePeer(ctx context.Context, namespace, name string) error {
@@ -591,6 +773,7 @@ func (p *peerService) updatePeerStandalone(ctx context.Context, peerDto *dto.Pee
 	if err := p.store.Peers().Update(ctx, peer); err != nil {
 		return nil, err
 	}
+	p.notifyWorkspacePeers(ctx, peer.WorkspaceID, peer.AppID)
 	var labels map[string]string
 	_ = json.Unmarshal([]byte(peer.Labels), &labels)
 	address := peer.Address
@@ -615,7 +798,11 @@ func (p *peerService) setPeerDisabledStandalone(ctx context.Context, name string
 		return err
 	}
 	peer.Disabled = disabled
-	return p.store.Peers().Update(ctx, peer)
+	if err := p.store.Peers().Update(ctx, peer); err != nil {
+		return err
+	}
+	p.notifyWorkspacePeers(ctx, peer.WorkspaceID, peer.AppID)
+	return nil
 }
 
 // SetAdvertisedRoutes declares (or clears, if routes is empty) the CIDRs
@@ -644,7 +831,11 @@ func (p *peerService) SetAdvertisedRoutes(ctx context.Context, name string, rout
 		}
 		peer.AdvertisedRoutes = string(blob)
 	}
-	return p.store.Peers().Update(ctx, peer)
+	if err := p.store.Peers().Update(ctx, peer); err != nil {
+		return err
+	}
+	p.notifyWorkspacePeers(ctx, peer.WorkspaceID, peer.AppID)
+	return nil
 }
 
 // SetRouteSelection opts consumerName in (selected=true) or out
@@ -666,13 +857,23 @@ func (p *peerService) SetRouteSelection(ctx context.Context, consumerName, provi
 		return err
 	}
 	if !selected {
-		return p.store.RouteSelections().Delete(ctx, consumer.WorkspaceID, consumer.ID, provider.ID)
+		if err := p.store.RouteSelections().Delete(ctx, consumer.WorkspaceID, consumer.ID, provider.ID); err != nil {
+			return err
+		}
+		// The consumer's own netmap changes too (it gains/loses the routed
+		// CIDRs), so notify everyone including the consumer.
+		p.notifyWorkspacePeers(ctx, consumer.WorkspaceID, "")
+		return nil
 	}
-	return p.store.RouteSelections().Create(ctx, &models.PeerRouteSelection{
+	if err := p.store.RouteSelections().Create(ctx, &models.PeerRouteSelection{
 		WorkspaceID:    consumer.WorkspaceID,
 		ConsumerPeerID: consumer.ID,
 		ProviderPeerID: provider.ID,
-	})
+	}); err != nil {
+		return err
+	}
+	p.notifyWorkspacePeers(ctx, consumer.WorkspaceID, "")
+	return nil
 }
 
 // ListRouteSelections returns the names (not IDs) of providers

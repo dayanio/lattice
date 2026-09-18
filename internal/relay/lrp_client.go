@@ -16,7 +16,10 @@ package relay
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"sync/atomic"
+	"time"
 
 	"encoding/json"
 
@@ -43,14 +46,44 @@ type writer interface {
 
 // lrpClient holds logic shared between TCP and QUIC clients.
 type lrpClient struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	log       *log.Logger
-	localId   infra.PeerID
-	serverURL string
-	onMessage func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error
-	probeCh   chan *Task
-	seq       atomic.Uint32
+	ctx        context.Context
+	cancel     context.CancelFunc
+	log        *log.Logger
+	localId    infra.PeerID
+	serverURL  string
+	authToken  string
+	privateKey [KeySize]byte // WireGuard private key, for the per-peer auth proof (ADR-0004)
+	onMessage  func(ctx context.Context, remoteId infra.PeerID, packet *signal.SignalPacket) error
+	probeCh    chan *Task
+	seq        atomic.Uint32
+}
+
+// splitURLToken extracts a "?token=..." query parameter from a relay
+// address ("host:port?token=secret") and returns the bare host:port plus
+// the token. Relay addresses are bare host:port (fed straight into
+// net.Dial / quic.DialAddr), so the query string is split manually instead
+// of via url.Parse, which misreads "host:port" as scheme:opaque.
+func splitURLToken(addr string) (cleanAddr, token string) {
+	i := strings.IndexByte(addr, '?')
+	if i < 0 {
+		return addr, ""
+	}
+	cleanAddr = addr[:i]
+	if q, err := url.ParseQuery(addr[i+1:]); err == nil {
+		token = q.Get("token")
+	}
+	return cleanAddr, token
+}
+
+// authChallengeWait bounds how long a client waits for the relay's auth
+// challenge after registering. Expiry means the relay is a legacy one that
+// already accepted the bare Register — the client proceeds unverified.
+const authChallengeWait = 3 * time.Second
+
+// computeAuthResponse builds the AuthResponse payload for the relay's
+// challenge: clientPublicKey || DH(clientPrivate, challenge).
+func (c *lrpClient) computeAuthResponse(challenge [KeySize]byte) ([AuthResponsePayload]byte, error) {
+	return answerChallenge(challenge, c.privateKey)
 }
 
 func (c *lrpClient) nextSeq() uint16 {
@@ -75,16 +108,26 @@ func (c *lrpClient) probeWorker() {
 	}
 }
 
-// register sends a Register frame on the given writer.
+// register sends a Register frame on the given writer. When an auth token
+// was configured (via the relay URL's "?token=..." query parameter) it is
+// carried as the frame payload; the server validates it before accepting
+// the session.
 func (c *lrpClient) register(w writer) error {
 	h := &Header{
 		Seq:        c.nextSeq(),
-		PayloadLen: 0,
+		PayloadLen: uint32(len(c.authToken)),
 		Cmd:        Register,
 		ToID:       uint32(c.localId.ToUint64()),
 	}
-	_, err := w.Write(h.Marshal())
-	return err
+	if _, err := w.Write(h.Marshal()); err != nil {
+		return err
+	}
+	if len(c.authToken) > 0 {
+		if _, err := w.Write([]byte(c.authToken)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // makeFrame builds a complete LRP frame (header + payload).

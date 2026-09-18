@@ -57,7 +57,11 @@ var (
 // network the agent sits on (e.g. containers reaching a control plane on the
 // host via host.docker.internal, while the host itself uses loopback).
 func discoverNATSURLOnly(ctx context.Context, serverURL string) (string, error) {
-	if override := config.Conf.GetSignalingURL(); override != "" {
+	// Only an explicit override skips discovery. The runtime-discovered URL
+	// (runtimeNATSURL) must NOT: it may be stale (e.g. the server was fixed
+	// or moved since the last start), and a cached loopback URL famously
+	// made remote devices reconnect to themselves forever.
+	if override := config.Conf.SignalingURL; override != "" {
 		return override, nil
 	}
 	d, err := discover(ctx, serverURL)
@@ -138,6 +142,14 @@ type Node struct {
 
 	current   *infra.Peer
 	lrpClient infra.Lrp
+
+	// devicePrivateKey is the resolved WireGuard private key for this node,
+	// captured on every resolution path in NewNode (sandbox parse, local
+	// device key, legacy server key). Start() configures the device from it;
+	// the in-memory current peer record must stay key-free because peers in
+	// the PeerManager are serialized into signaling payloads sent to remote
+	// peers (SYN/ACK PeerInfo, OFFER Current).
+	devicePrivateKey wgtypes.Key
 
 	token          string
 	callback       func(message *infra.Message) error // nolint
@@ -267,8 +279,11 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		node.filteringMux6 = filteringMux6
 	}
 
-	// Auto-discover NATS and STUN URLs from server if not already set.
-	if config.Conf.GetSignalingURL() == "" {
+	// Auto-discover NATS and STUN URLs unless an explicit override exists.
+	// Guard on SignalingURL (the operator-provided value), NOT GetSignalingURL()
+	// — the runtime-discovered cache must never suppress a fresh discovery on
+	// a later engine (re)start within the same process.
+	if config.Conf.SignalingURL == "" {
 		var d discoveryResult
 		d, err = discover(ctx, config.Conf.ServerUrl)
 		if err != nil {
@@ -317,15 +332,46 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	}
 
 	// Register announces this node to the control plane and receives back the
-	// assigned WireGuard private key, allocated IP, and LRP relay URL.
+	// allocated IP and LRP relay URL. Since ADR-0003 the WireGuard keypair is
+	// generated locally (ensureDeviceKey) and only its public key is sent;
+	// any private key the server still returns is ignored.
 	// The sandbox skips this call: it pre-registers via HTTP and passes
 	// CurrentPeer with identity information already filled in.
 	if cfg.CurrentPeer != nil {
 		node.current = cfg.CurrentPeer
-	} else {
-		node.current, err = node.ctrClient.Register(ctx, cfg.Token, node.Name, "")
+		// Sandbox path: the pre-registered peer carries its own key.
+		privateKey, err = utils.ParseKey(node.current.PrivateKey)
 		if err != nil {
 			return nil, err
+		}
+		node.devicePrivateKey = privateKey
+	} else {
+		pub := ""
+		var deviceKey *wgtypes.Key
+		if dk, derr := ensureDeviceKey(); derr == nil {
+			deviceKey = &dk
+			pub = dk.PublicKey().String()
+		} else {
+			log.GetLogger("node").Warn("device key generation failed; falling back to server-side key", "err", derr)
+		}
+		node.current, err = node.ctrClient.Register(ctx, cfg.Token, node.Name, pub)
+		if err != nil {
+			return nil, err
+		}
+		if deviceKey != nil {
+			// ADR-0003: the key is generated here and never leaves the
+			// device; ignore anything the server still sends back.
+			if node.current.PrivateKey != "" {
+				log.GetLogger("node").Warn("server returned a private key; ignoring it (client-side key generation active)")
+			}
+			privateKey = *deviceKey
+			node.devicePrivateKey = privateKey
+		} else {
+			privateKey, err = utils.ParseKey(node.current.PrivateKey)
+			if err != nil {
+				return nil, err
+			}
+			node.devicePrivateKey = privateKey
 		}
 	}
 
@@ -340,10 +386,6 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		config.Conf.EnforcerMode = "auto"
 	}
 
-	privateKey, err = utils.ParseKey(node.current.PrivateKey)
-	if err != nil {
-		return nil, err
-	}
 	// KeyManager holds the WireGuard private key and exposes it to the Bind
 	// layer so it can perform AEAD peer matching during the handshake.
 	node.manager.keyManager = infra.NewKeyManager(privateKey)
@@ -394,7 +436,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// can fall back to the relay without operator flags.
 	if cfg.Flags.EnableLrp || node.current.LrpUrl != "" {
 		if cfg.Flags.RelayQuicURL != "" {
-			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, node.probeFactory.Handle)
+			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, privateKey, node.probeFactory.Handle)
 		} else {
 			lrpUrl := cfg.Flags.RelayURL
 			if lrpUrl == "" {
@@ -404,7 +446,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 			if lrpUrl != "" {
 				// probeFactory.Handle is passed directly: probeFactory already exists
 				// at this point so no closure is needed on this side of the circular dep.
-				lrp, err = relay.NewTCPClient(ctx, localIdentity.ID(), lrpUrl, node.probeFactory.Handle)
+				lrp, err = relay.NewTCPClient(ctx, localIdentity.ID(), lrpUrl, privateKey, node.probeFactory.Handle)
 			}
 		}
 		if err != nil {
@@ -483,6 +525,37 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	if err = natsSignalService.Subscribe(fmt.Sprintf("%s.%s", "lattice.signals.peers", localIdentity), node.probeFactory.Handle); err != nil {
 		return nil, err
 	}
+
+	// Control-plane push: refresh the netmap shortly after the server says
+	// something changed (peer joined/left, endpoint pinned, routes edited),
+	// instead of waiting for the next poll cycle. Bursts are coalesced with
+	// a 250ms debounce and the fetch+apply runs in the timer's own goroutine,
+	// so a slow control-plane fetch never delays NATS signaling dispatch.
+	var refreshMu sync.Mutex
+	var refreshTimer *time.Timer
+	requestNetmapRefresh := func() {
+		refreshMu.Lock()
+		defer refreshMu.Unlock()
+		if refreshTimer != nil {
+			refreshTimer.Reset(netmapRefreshDebounce)
+			return
+		}
+		refreshTimer = time.AfterFunc(netmapRefreshDebounce, func() {
+			refreshMu.Lock()
+			refreshTimer = nil
+			refreshMu.Unlock()
+
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if rErr := node.RefreshConfig(refreshCtx); rErr != nil {
+				node.logger.Warn("netmap-changed notification: refresh failed", "err", rErr)
+			}
+		})
+	}
+	netmapSubject := infra.NetmapChangedSubject(localIdentity.AppID)
+	if err = natsSignalService.SubscribeRaw(netmapSubject, requestNetmapRefresh); err != nil {
+		return nil, err
+	}
 	node.token = cfg.Token
 
 	// Re-register and re-apply the network map whenever NATS reconnects.
@@ -490,13 +563,17 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// The handler reads GetNetworkMap at call time (not at setup time), so it
 	// works even though GetNetworkMap is assigned externally after NewAgent returns.
 	//
+	// The re-register always presents the device key's public key (same as the
+	// initial registration): an empty key would make the server rotate a
+	// client-key peer's keypair, breaking handshakes until restart.
+	//
 	// Sandbox nodes (cfg.CurrentPeer != nil) skip NATS re-registration: they
 	// pre-registered via HTTP and their identity does not change on reconnect.
 	skipRegister := cfg.CurrentPeer != nil
 	natsSignalService.SetReconnectedHandler(func() {
 		rctx := context.Background()
 		if !skipRegister {
-			peer, rErr := node.ctrClient.Register(rctx, node.token, node.Name, "")
+			peer, rErr := node.ctrClient.Register(rctx, node.token, node.Name, node.devicePrivateKey.PublicKey().String())
 			if rErr != nil {
 				node.logger.Error("NATS reconnect: re-register failed", rErr)
 				return
@@ -536,7 +613,7 @@ func (c *Node) Start(ctx context.Context) error {
 	}
 
 	if err := c.provisioner.SetupInterface(&infra.DeviceConfig{
-		PrivateKey: c.current.PrivateKey,
+		PrivateKey: c.devicePrivateKey.String(),
 	}); err != nil {
 		return err
 	}
@@ -565,8 +642,15 @@ func (c *Node) Start(ctx context.Context) error {
 	return nil
 }
 
+// netmapRefreshDebounce coalesces netmap-changed notification bursts: the
+// server publishes one notification per changed peer, so a workspace-wide
+// change would otherwise trigger one full fetch+apply per peer.
+const netmapRefreshDebounce = 250 * time.Millisecond
+
 // RefreshConfig re-fetches the current network map from the control plane and
-// applies it. It is safe to call concurrently with normal NATS push handlers.
+// applies it. It is safe to call concurrently with normal NATS push handlers:
+// MessageHandler.ApplyFullConfig serializes concurrent applies, and a fetch
+// whose ConfigVersion matches the last applied one is skipped as a no-op.
 // Sandbox nodes call this periodically as a fallback in case a NATS config-push
 // is dropped (e.g. when the ConfigMap is updated before the subscription is
 // fully established on the broker).
@@ -577,6 +661,13 @@ func (c *Node) RefreshConfig(ctx context.Context) error {
 	remoteCfg, err := c.GetNetworkMap()
 	if err != nil {
 		return err
+	}
+	// Skip redundant full applies when nothing changed since the last
+	// successful apply: the server fans one workspace change out to every
+	// peer, so most notifications arrive with an already-applied version.
+	if v := remoteCfg.ConfigVersion; v != "" && v == c.AppliedVersion() {
+		c.logger.Debug("netmap refresh skipped: version already applied", "version", v)
+		return nil
 	}
 	return c.messageHandler.ApplyFullConfig(ctx, remoteCfg)
 }

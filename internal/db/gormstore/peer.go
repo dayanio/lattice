@@ -61,7 +61,11 @@ func (r *peerRepo) Update(ctx context.Context, m *models.Peer) error {
 }
 
 func (r *peerRepo) Delete(ctx context.Context, id string) error {
-	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&models.Peer{}).Error
+	// Hard delete, not gorm soft delete: (workspace_id, name) carries a
+	// UNIQUE index, and a soft-deleted row keeps occupying it — a deleted
+	// peer's name could then never be re-enrolled (UNIQUE constraint
+	// failed on re-registration). Deleted peer rows have no readers.
+	return r.db.Unscoped().WithContext(ctx).Where("id = ?", id).Delete(&models.Peer{}).Error
 }
 
 // CountAll counts every registered peer across workspaces.

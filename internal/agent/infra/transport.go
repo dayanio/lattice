@@ -26,6 +26,11 @@ type SignalService interface {
 	// PeerID is sufficient here — full PeerIdentity is not needed for routing.
 	Send(ctx context.Context, peerId PeerID, data []byte) error
 
+	// Publish sends a raw payload to an arbitrary subject, for control-plane-
+	// initiated notifications that don't fit the peer-to-peer Send() pattern
+	// (e.g. "your netmap changed, refresh now").
+	Publish(ctx context.Context, subject string, data []byte) error
+
 	//req/resp
 	Request(ctx context.Context, subject, method string, data []byte) ([]byte, error)
 

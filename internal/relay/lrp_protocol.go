@@ -21,13 +21,39 @@ import (
 
 const HeaderSize = 12
 
+// MaxRegisterPayload bounds the Register frame payload (the shared auth
+// token). Anything larger is a protocol violation — the connection is
+// rejected before any sized allocation happens, so a crafted header cannot
+// force the relay into a huge allocation.
+const MaxRegisterPayload = 512
+
+// MaxForwardPayload bounds Forward/Probe payload sizes on the relay server
+// read path. WireGuard packets are at most 65535 bytes; anything claiming to
+// be larger is a protocol violation.
+const MaxForwardPayload = 64 << 10
+
 // Commands
 const (
 	Register  uint8 = 0x01
 	Forward   uint8 = 0x02
 	KeepAlive uint8 = 0x03
 	Probe     uint8 = 0x04
+
+	// Per-peer authentication handshake (ADR-0004). The relay challenges
+	// with an ephemeral X25519 public key; the client answers with
+	// DH(client private key, relay ephemeral public key) prefixed by its
+	// own public key. A session becomes usable only after the proof
+	// verifies (or immediately, in lenient mode, for legacy clients).
+	AuthChallenge uint8 = 0x05
+	AuthResponse  uint8 = 0x06
 )
+
+// KeySize is the WireGuard / X25519 key length used by the auth handshake.
+const KeySize = 32
+
+// AuthResponsePayload is the exact AuthResponse payload size:
+// client public key (32 B) || DH result (32 B).
+const AuthResponsePayload = 2 * KeySize
 
 // Header is the 12-byte LRP frame header (little-endian).
 // Offset 0-1:   Seq        — frame sequence number

@@ -84,6 +84,7 @@ func (s *Server) apiRouter() error {
 		peerApi.PUT("/update", s.updatePeer)
 		peerApi.PUT("/:name/disable", s.disablePeer)
 		peerApi.PUT("/:name/enable", s.enablePeer)
+		peerApi.PUT("/:name/approval", s.middleware.WorkspaceAuthMiddleware(dto.RoleAdmin), s.setPeerApproval)
 		peerApi.DELETE("/:name", s.deletePeerHandler)
 		peerApi.POST("/:name/advertised-routes", s.setAdvertisedRoutes)
 		peerApi.POST("/:name/route-selection", s.setRouteSelection)
@@ -306,6 +307,29 @@ func (s *Server) disablePeer(c *gin.Context) {
 		return
 	}
 	if err := s.peerController.DisablePeer(c.Request.Context(), ns, name); err != nil {
+		resp.Error(c, err.Error())
+		return
+	}
+	resp.OK(c, nil)
+}
+
+// setPeerApproval transitions a peer between approved/revoked (ADR-0003).
+// Admin-only: the route is tightened above the group's viewer-level auth.
+func (s *Server) setPeerApproval(c *gin.Context) {
+	name := c.Param("name")
+	ns, err := s.peerNamespace(c)
+	if err != nil {
+		resp.Error(c, err.Error())
+		return
+	}
+	var body struct {
+		Status string `json:"status"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		resp.Error(c, err.Error())
+		return
+	}
+	if err := s.peerController.SetPeerApproval(c.Request.Context(), ns, name, body.Status); err != nil {
 		resp.Error(c, err.Error())
 		return
 	}

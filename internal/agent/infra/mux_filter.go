@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/alatticeio/lattice/internal/metrics"
+
 	"github.com/pion/ice/v4"
 	"github.com/pion/logging"
 	"github.com/pion/stun/v3"
@@ -31,6 +33,12 @@ type PassThroughPacket struct {
 	Data []byte
 	Addr *net.UDPAddr
 }
+
+// droppedCounter counts pass-through packets dropped because the channel
+// was full. Registered once per PROCESS: NewNode constructs two mux
+// instances (v4 + v6) and VictoriaMetrics panics on duplicate names, so
+// the registration must not live inside the per-instance constructor.
+var droppedCounter = metrics.NewCounter(`lattice_agent_udpmux_passthrough_dropped_total`)
 
 // FilteringUDPMux wraps UniversalUDPMuxDefault and becomes the sole reader of
 // the shared UDP socket. It classifies every incoming packet:
@@ -137,6 +145,7 @@ func (f *FilteringUDPMux) readLoop() {
 			default:
 				// Channel full: drop rather than block the sole reader.
 				f.droppedCount.Add(1)
+				droppedCounter.Inc()
 			}
 		}
 	}

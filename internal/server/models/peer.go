@@ -16,6 +16,14 @@ package models
 
 import "time"
 
+// Peer approval lifecycle (ADR-0003). Approval is opt-in per workspace;
+// the default 'approved' keeps existing rows and workspaces unchanged.
+const (
+	ApprovalApproved = "approved"
+	ApprovalPending  = "pending"
+	ApprovalRevoked  = "revoked"
+)
+
 // Peer is the standalone (non-K8s) registry record for an enrolled device.
 // It mirrors the LatticePeer CRD's netmap-relevant fields so the DB-backed
 // netmap builder can serve agents identically to the K8s path.
@@ -41,6 +49,9 @@ type Peer struct {
 	// Consumers only get this expanded into their own AllowedIPs after
 	// opting in via PeerRouteSelection — see netmap_builder.go.
 	AdvertisedRoutes string     `gorm:"type:text" json:"advertised_routes,omitempty"`
+	ApprovalStatus   string     `gorm:"size:20;default:'approved';index" json:"approval_status,omitempty"`
+	ApprovedBy       string     `gorm:"size:100" json:"approved_by,omitempty"`
+	ApprovedAt       *time.Time `json:"approved_at,omitempty"`
 	Disabled         bool       `gorm:"default:false;index" json:"disabled"`
 	LastSeenAt       *time.Time `json:"last_seen_at,omitempty"`
 	Description      string     `gorm:"size:500" json:"description,omitempty"`

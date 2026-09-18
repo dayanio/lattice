@@ -38,6 +38,8 @@ token. Use 'peer label' to attach custom labels that policy selectors can match.
 	c.AddCommand(
 		peerListCmd(),
 		peerLabelCmd(),
+		peerApprovalCmd("approve", "approved", "Approve a pending peer"),
+		peerApprovalCmd("reject", "revoked", "Reject/revoke a peer"),
 	)
 	return c
 }
@@ -63,6 +65,30 @@ func peerListCmd() *cobra.Command {
 				return err
 			}
 			return client.ListPeers(namespace)
+		},
+	}
+	c.Flags().StringVarP(&namespace, "namespace", "n", "", "workspace namespace (required)")
+	return c
+}
+
+// peerApprovalCmd builds `lattice peer approve|reject <peer-name> -n <namespace>`
+// (ADR-0003 peer approval lifecycle).
+func peerApprovalCmd(verb, status, short string) *cobra.Command {
+	var namespace string
+	c := &cobra.Command{
+		Use:     verb + " <peer-name>",
+		Short:   short,
+		Example: `  lattice ` + verb + ` my-peer-abc123 -n wf-550e8400`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(c *cobra.Command, args []string) error {
+			if namespace == "" {
+				return fmt.Errorf("namespace is required (-n <namespace>)\n  run 'lattice workspace list' to see available namespaces")
+			}
+			client, err := newClient()
+			if err != nil {
+				return err
+			}
+			return client.SetPeerApproval(namespace, args[0], status)
 		},
 	}
 	c.Flags().StringVarP(&namespace, "namespace", "n", "", "workspace namespace (required)")

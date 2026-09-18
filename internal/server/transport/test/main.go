@@ -51,7 +51,7 @@ func main() {
 		GetLrp:      func() infra.Lrp { return lrpClient },
 	})
 
-	lrpClient, err = relay.NewTCPClient(ctx, localId.ID(), "127.0.0.1:6266", probeFactory.Handle)
+	lrpClient, err = relay.NewTCPClient(ctx, localId.ID(), "127.0.0.1:6266", key1, probeFactory.Handle)
 	if err != nil {
 		panic(err)
 	}

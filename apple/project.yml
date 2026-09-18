@@ -31,12 +31,16 @@ targets:
     dependencies:
       - target: LatticeTunnel
       - framework: Frameworks/iOS/LatticeCore.xcframework
-        embed: true
+        # The iOS slice is a STATIC library (gomobile) — the engine is linked
+        # into LatticeTunnel at build time, so embedding the framework in the
+        # app only leaves an ar-archive that installd refuses to parse.
+        embed: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "Lattice 需要使用摄像头扫描入网二维码"
         CODE_SIGN_ENTITLEMENTS: entitlements/Lattice.entitlements
         SWIFT_EMIT_LOC_STRINGS: YES
         CODE_SIGN_STYLE: Automatic

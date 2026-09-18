@@ -18,9 +18,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -55,15 +58,21 @@ func (s *quicControlStream) RemoteAddr() net.Addr {
 
 // QUICServer accepts QUIC connections and multiplexes LRP sessions.
 type QUICServer struct {
-	log        *internallog.Logger
-	sessionMgr *SessionManager
+	log             *internallog.Logger
+	sessionMgr      *SessionManager
+	authToken       string
+	requirePeerAuth bool
 }
 
 // NewQUICServer creates a new QUICServer backed by the given SessionManager.
-func NewQUICServer(manager *SessionManager) *QUICServer {
+// An empty authToken disables Register authentication (legacy open relay);
+// requirePeerAuth enables the X25519 challenge-response (ADR-0004).
+func NewQUICServer(manager *SessionManager, authToken string, requirePeerAuth bool) *QUICServer {
 	return &QUICServer{
-		log:        internallog.GetLogger("lrp-quic"),
-		sessionMgr: manager,
+		log:             internallog.GetLogger("lrp-quic"),
+		sessionMgr:      manager,
+		authToken:       authToken,
+		requirePeerAuth: requirePeerAuth,
 	}
 }
 
@@ -113,15 +122,104 @@ func (s *QUICServer) handleConn(conn *quic.Conn) {
 		return
 	}
 
+	// Drain the Register payload (auth token) before validating so the
+	// control stream stays aligned; the size is capped before allocation.
+	var regPayload []byte
+	if h.PayloadLen > 0 {
+		if h.PayloadLen > MaxRegisterPayload {
+			s.log.Warn("register payload too large", "bytes", h.PayloadLen)
+			return
+		}
+		regPayload = make([]byte, h.PayloadLen)
+		if _, err = io.ReadFull(ctrl, regPayload); err != nil {
+			s.log.Error("failed to read Register payload", err)
+			return
+		}
+	}
+	if s.authToken != "" && subtle.ConstantTimeCompare(regPayload, []byte(s.authToken)) != 1 {
+		s.log.Warn("relay register rejected: bad or missing auth token")
+		return
+	}
+
 	fromId := uint64(h.ToID)
 	ctrlStream := &quicControlStream{stream: ctrl, conn: conn}
-	s.sessionMgr.RegisterQUIC(fromId, ctrlStream, conn)
-	defer s.sessionMgr.Unregister(fromId)
+
+	// ── Per-peer auth (ADR-0004): X25519 challenge-response ─────────────
+	// Lenient: register the session immediately (legacy semantics) and
+	// opportunistically verify. Strict: nothing is registered until the
+	// proof verifies; relayDatagrams only starts for verified sessions so
+	// an unauthenticated connection cannot relay traffic.
+	var sess *Session
+	defer func() {
+		if sess != nil {
+			s.sessionMgr.Unregister(fromId, sess)
+		}
+	}()
+
+	if !s.requirePeerAuth {
+		sess = s.sessionMgr.RegisterQUIC(fromId, ctrlStream, conn)
+	}
+
+	var pending *relayChallenge
+	if challengePub, ch, chErr := newChallenge(); chErr == nil {
+		if err := sendFrame(ctrlStream, AuthChallenge, challengePub[:]); err == nil {
+			pending = ch
+		} else if s.requirePeerAuth {
+			s.log.Error("failed to send auth challenge", err, "from", fromId)
+			return
+		}
+	} else if s.requirePeerAuth {
+		s.log.Error("failed to generate auth challenge", chErr)
+		return
+	}
+
+	if s.requirePeerAuth {
+		// Wait for the proof on the control stream (bounded wait).
+		_ = ctrl.SetReadDeadline(time.Now().Add(10 * time.Second))
+		verified, vErr := s.readAuthResponse(ctrl, fromId, pending)
+		if vErr != nil {
+			s.log.Warn("peer-auth failed, closing session", "from", fromId, "err", vErr)
+			return
+		}
+		_ = ctrl.SetReadDeadline(time.Time{})
+		if verified {
+			sess = s.sessionMgr.RegisterQUICVerified(fromId, ctrlStream, conn)
+			pending = nil // already proven; control stream serves keepalives only
+		}
+	}
 
 	s.log.Info("QUIC session registered", "from", fromId)
 
 	go s.relayDatagrams(conn, fromId)
-	s.handleControlStream(ctrl, fromId)
+	s.handleControlStream(ctrl, fromId, pending, sess)
+}
+
+// readAuthResponse reads the next control-stream frame and verifies it as
+// the AuthResponse for the given challenge. Any other frame is a rejection
+// (strict mode is only entered with requirePeerAuth on).
+func (s *QUICServer) readAuthResponse(ctrl *quic.Stream, fromId uint64, pending *relayChallenge) (bool, error) {
+	if pending == nil {
+		return false, errors.New("no challenge in flight")
+	}
+	headBuf := make([]byte, HeaderSize)
+	if _, err := io.ReadFull(ctrl, headBuf); err != nil {
+		return false, err
+	}
+	h, err := Unmarshal(headBuf)
+	if err != nil {
+		return false, err
+	}
+	if h.Cmd != AuthResponse || h.PayloadLen > AuthResponsePayload {
+		return false, fmt.Errorf("expected auth response, got cmd=%d len=%d", h.Cmd, h.PayloadLen)
+	}
+	payload := make([]byte, h.PayloadLen)
+	if _, err := io.ReadFull(ctrl, payload); err != nil {
+		return false, err
+	}
+	if vErr := pending.verifyResponse(uint32(fromId), payload); vErr != nil {
+		return false, vErr
+	}
+	return true, nil
 }
 
 func (s *QUICServer) relayDatagrams(conn *quic.Conn, fromId uint64) {
@@ -156,7 +254,10 @@ func (s *QUICServer) relayDatagrams(conn *quic.Conn, fromId uint64) {
 	}
 }
 
-func (s *QUICServer) handleControlStream(ctrl *quic.Stream, fromId uint64) {
+// handleControlStream serves the control stream: keepalive frames, plus —
+// in lenient mode — the opportunistic AuthResponse that upgrades an
+// already-registered session to verified.
+func (s *QUICServer) handleControlStream(ctrl *quic.Stream, fromId uint64, pending *relayChallenge, sess *Session) {
 	headBuf := make([]byte, HeaderSize)
 	for {
 		_, err := io.ReadFull(ctrl, headBuf)
@@ -171,8 +272,37 @@ func (s *QUICServer) handleControlStream(ctrl *quic.Stream, fromId uint64) {
 			return
 		}
 
-		if h.Cmd == KeepAlive {
+		switch {
+		case h.Cmd == AuthResponse && pending != nil:
+			// Size-check before allocating (bounded by AuthResponsePayload).
+			if h.PayloadLen > AuthResponsePayload {
+				s.log.Warn("auth response too large", "from", fromId, "bytes", h.PayloadLen)
+				return
+			}
+			payload := make([]byte, h.PayloadLen)
+			if _, err := io.ReadFull(ctrl, payload); err != nil {
+				return
+			}
+			if vErr := pending.verifyResponse(uint32(fromId), payload); vErr != nil {
+				s.log.Warn("peer-auth failed, closing session", "from", fromId, "err", vErr)
+				return
+			}
+			s.sessionMgr.MarkVerified(fromId, sess)
+			pending = nil
+			s.log.Info("peer-auth verified", "from", fromId)
+
+		case h.Cmd == KeepAlive:
 			s.log.Debug("keepalive received on control stream", "from", fromId)
+			// Drain any payload so the next read starts on a frame boundary.
+			if h.PayloadLen > 0 {
+				if h.PayloadLen > MaxForwardPayload {
+					s.log.Warn("keepalive payload too large, closing control stream", "from", fromId, "bytes", h.PayloadLen)
+					return
+				}
+				if _, err := io.CopyN(io.Discard, ctrl, int64(h.PayloadLen)); err != nil {
+					return
+				}
+			}
 		}
 	}
 }

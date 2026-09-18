@@ -61,7 +61,7 @@ func newRouteSelectionTestServer(t *testing.T) *Server {
 		Model: models.Model{ID: "mac-id"}, WorkspaceID: "ws1", Name: "mac",
 		AppID: "mac-app", Address: "10.96.0.2", PublicKey: "kmac",
 	}))
-	return &Server{peerController: controller.NewPeerController(nil, st, nil, noopVerifier{})}
+	return &Server{peerController: controller.NewPeerController(nil, st, nil, noopVerifier{}, nil)}
 }
 
 // testContext builds a *gin.Context carrying the workspace-scoped request

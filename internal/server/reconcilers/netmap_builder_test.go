@@ -360,3 +360,71 @@ func TestNetmapBuilder_FullyMalformedAdvertisedRouteFallsBackToSlash32(t *testin
 	require.NotNil(t, gwForMac)
 	assert.Equal(t, "10.96.0.4/32", gwForMac.AllowedIPs)
 }
+
+// TestNetmapBuilder_PendingPeerGetsPendingMessage covers the ADR-0003 gate in
+// BuildForAppID: a peer that is not approved yet must still receive a
+// (minimal) message — not an error — so its poll loop keeps running while it
+// waits for an administrator's approval.
+func TestNetmapBuilder_PendingPeerGetsPendingMessage(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "api", AppID: "a1", Token: "tk1",
+		Address: "10.96.0.2", ApprovalStatus: models.ApprovalApproved,
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "enrolling", AppID: "a2", Token: "tk2",
+		ApprovalStatus: models.ApprovalPending,
+	}))
+
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	msg, err := builder.BuildForAppID(ctx, "a2", "tk2")
+	require.NoError(t, err) // NOT an error: the agent must keep polling
+	require.NotNil(t, msg.Current)
+	assert.Equal(t, models.ApprovalPending, msg.Current.ApprovalStatus)
+	require.NotNil(t, msg.Current.Address)
+	assert.Empty(t, *msg.Current.Address, "a pending peer has no overlay address yet")
+	assert.Empty(t, msg.ComputedPeers)
+	assert.Empty(t, msg.ConfigVersion,
+		"empty version makes the agent's poll loop treat this as a cheap no-op apply")
+}
+
+// TestNetmapBuilder_ExcludesUnapprovedPeers proves the gate in BuildForPeer is
+// the approval status and not the missing-address rule: the pending and
+// revoked peers are seeded WITH overlay addresses, so only their approval
+// status can keep them out of the mesh.
+func TestNetmapBuilder_ExcludesUnapprovedPeers(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "api", AppID: "a1", Token: "tk1",
+		Address: "10.96.0.2", ApprovalStatus: models.ApprovalApproved,
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "db", AppID: "a2", Token: "tk2",
+		Address: "10.96.0.3", ApprovalStatus: models.ApprovalApproved,
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "enrolling", AppID: "a3", Token: "tk3",
+		Address: "10.96.0.4", ApprovalStatus: models.ApprovalPending,
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "fired", AppID: "a4", Token: "tk4",
+		Address: "10.96.0.5", ApprovalStatus: models.ApprovalRevoked,
+	}))
+
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	api, err := st.Peers().GetByAppID(ctx, "a1")
+	require.NoError(t, err)
+	msg, err := builder.BuildForPeer(ctx, api)
+	require.NoError(t, err)
+
+	require.Len(t, msg.ComputedPeers, 1, "only approved peers are visible to the mesh")
+	for _, p := range msg.ComputedPeers {
+		assert.NotEqual(t, models.ApprovalPending, p.ApprovalStatus)
+		assert.NotEqual(t, models.ApprovalRevoked, p.ApprovalStatus)
+	}
+	assert.Equal(t, "db", msg.ComputedPeers[0].Name)
+}

@@ -23,6 +23,7 @@ struct PeerDetailView: View {
     var quality: String?
     var onBack: () -> Void
     var onRename: (String) -> Void
+    var onSetEndpoint: (String) -> Void
     var onToggleDisabled: () -> Void
     var onDelete: () -> Void
 
@@ -143,6 +144,7 @@ struct PeerDetailView: View {
         case "lrp-ready": return ("经中继", .orange)
         case "probing", "created": return ("连接中", .secondary)
         case "failed": return ("失败", .red)
+        case "closed": return ("不可达", .secondary)
         default: return nil
         }
     }
@@ -289,6 +291,13 @@ struct PeerDetailView: View {
                 onRename(peer.name)
             } label: {
                 actionLabel(icon: "pencil", color: .gray, title: "重命名")
+            }
+            .buttonStyle(.plain)
+            Divider().padding(.leading, 42)
+            Button {
+                onSetEndpoint(peer.name)
+            } label: {
+                actionLabel(icon: "network", color: .blue, title: "设置静态地址")
             }
             .buttonStyle(.plain)
             Divider().padding(.leading, 42)

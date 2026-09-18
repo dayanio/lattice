@@ -43,6 +43,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Latest per-peer connection-quality snapshot, served to the containing
     /// app via handleAppMessage (the app cannot read engine state directly).
     private var latestPeerStates = "{}"
+    /// Last fatal engine error — surfaced to the app over handleAppMessage.
+    private var latestError = ""
     /// Latest extra-routes snapshot from the engine (JSON array of CIDRs),
     /// applied as NEIPv4Routes once the tunnel is up. Empty until the first
     /// OnRoutesChanged call.
@@ -51,7 +53,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         if String(data: messageData, encoding: .utf8) == "peerStates" {
-            completionHandler?(Data(latestPeerStates.utf8))
+            // latestPeerStates 本身是 map 的 JSON 字符串——先解成对象再装进
+            // 信封，避免把整个 map 当字符串二次编码（App 端会解码失败）。
+            let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: String] ?? [:]
+            let snapshot: [String: Any] = [
+                "peerStates": states,
+                "lastError": latestError,
+                "publicKey": engine?.publicKey() ?? "",
+                "overlayIP": currentOverlayIP,
+            ]
+            completionHandler?(try? JSONSerialization.data(withJSONObject: snapshot))
             return
         }
         completionHandler?(nil)
@@ -71,6 +82,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 userInfo: [NSLocalizedDescriptionKey: "缺少 serverURL 或 token 配置"]
             ))
             return
+        }
+        if pc["resetIdentity"] as? Bool == true {
+            if !LatticeEngineResetIdentity(nil) {
+                TunnelLog.write("startTunnel: resetIdentity failed")
+            }
         }
         let name = (pc["name"] as? String) ?? (Host.current().localizedName ?? "lattice-mac")
         TunnelLog.write("startTunnel: server=\(serverURL) token=\(token.count) chars name=\(name)")
@@ -132,6 +148,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: overlayIP)
         settings.mtu = 1280
 
+        // LatticeDNS: 只有 *.lattice 的 DNS 查询进隧道（由引擎内置应答器解析），
+        // 其余域名的解析走系统默认 DNS。
+        let dns = NEDNSSettings(servers: ["10.96.0.1"])
+        dns.matchDomains = ["lattice"]
+        settings.dnsSettings = dns
+
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
         // Route the overlay range into the tunnel always. No default route
         // unless a selected Exit Node advertises 0.0.0.0/0 (handled below):
@@ -189,14 +211,29 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
 
     func onEvent(_ event: String!) {
         TunnelLog.write("engine event: \(event ?? "")")
-        guard let event, event.hasPrefix("error: "), let pendingStart else { return }
+        guard let event, event.hasPrefix("error: ") else { return }
         let message = String(event.dropFirst("error: ".count))
-        self.pendingStart = nil
-        pendingStart(NSError(
-            domain: "io.lattice.tunnel",
-            code: 2,
-            userInfo: [NSLocalizedDescriptionKey: message]
-        ))
+        latestError = message
+        if let pendingStart {
+            // Failure during start: surface the reason to NE (and thus to the
+            // containing app) as a failed start.
+            self.pendingStart = nil
+            pendingStart(NSError(
+                domain: "io.lattice.tunnel",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            ))
+            return
+        }
+        // Failure AFTER start completed: the engine is dead but NE still
+        // considers the tunnel up. Tear the session down so the panel shows
+        // 未连接 and the next connect tap spawns a fresh engine instead of
+        // silently no-oping against a zombie provider.
+        TunnelLog.write("engine failed post-start, tearing down: \(message)")
+        // macOS NEProvider has no cancelTunnel; exiting the extension marks
+        // the session down in NE, and the next connect from the panel spawns
+        // a fresh engine. The engine already stopped its NATS drain by now.
+        exit(0)
     }
 
     /// Registration finished and an overlay IP was assigned: install the

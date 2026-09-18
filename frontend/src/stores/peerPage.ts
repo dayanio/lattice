@@ -35,6 +35,7 @@ export const usePeerPageStore = defineStore('peerPage', () => {
         network?: string
         status?: string
         lastSeen?: string
+        endpoint?: string
         labels: string[]
     }>({
         appId: '',

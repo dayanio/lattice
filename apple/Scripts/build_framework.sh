@@ -25,13 +25,16 @@ gomobile init
 build_macos() {
     info "Building apple/Frameworks/MacOS/LatticeCore.xcframework..."
     rm -rf apple/Frameworks/MacOS/LatticeCore.xcframework
-    gomobile bind -target=macos -o apple/Frameworks/MacOS/LatticeCore.xcframework ./apple/engine
+    # -prefix=Lattice reproduces the gomobile class names the Swift
+    # side imports (LatticeEngineEngine etc.) — without it the prefix
+    # defaults to the package name ("Engine") and the app fails to compile.
+    gomobile bind -prefix=Lattice -target=macos -o apple/Frameworks/MacOS/LatticeCore.xcframework ./apple/engine
 }
 
 build_ios() {
     info "Building apple/Frameworks/iOS/LatticeCore.xcframework..."
     rm -rf apple/Frameworks/iOS/LatticeCore.xcframework
-    gomobile bind -target=ios -o apple/Frameworks/iOS/LatticeCore.xcframework ./apple/engine
+    gomobile bind -prefix=Lattice -target=ios -o apple/Frameworks/iOS/LatticeCore.xcframework ./apple/engine
 }
 
 case "$TARGET" in

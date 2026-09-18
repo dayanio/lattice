@@ -17,6 +17,8 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sync"
+
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/provision"
@@ -32,6 +34,13 @@ type MessageHandler struct {
 	deviceManager infra.NodeInterface
 	logger        *log.Logger
 	provisioner   provision.Provisioner
+
+	// applyMu serializes netmap application. ApplyFullConfig is reachable
+	// from five concurrent entry points (Start, NATS MESSAGE push, the
+	// poll loop, the NATS reconnect handler and netmap-changed refreshes);
+	// without serialization its check-then-act device writes (IpcGet →
+	// compare → IpcSet, ApplyIP, routes) interleave and flap.
+	applyMu sync.Mutex
 }
 
 func NewMessageHandler(e infra.NodeInterface, logger *log.Logger, provisioner provision.Provisioner) *MessageHandler {
@@ -115,7 +124,9 @@ func (h *MessageHandler) HandleEvent(ctx context.Context, msg *infra.Message) er
 	// 3. Core exit: eventual consistency reconciliation (Safe Path)
 	// Regardless of whether there were incremental changes, always call ApplyFullConfig.
 	// This function should be idempotent: if kernel state already matches msg.Current, no writes are performed.
-	if err := h.ApplyFullConfig(ctx, msg); err != nil {
+	// applyMu is already held (HandleEvent serializes with ApplyFullConfig),
+	// so this goes through the unlocked variant.
+	if err := h.applyFullConfig(ctx, msg); err != nil {
 		return fmt.Errorf("failed to apply full configuration: %w", err)
 	}
 
@@ -123,8 +134,24 @@ func (h *MessageHandler) HandleEvent(ctx context.Context, msg *infra.Message) er
 	return nil
 }
 
-// ApplyFullConfig when lattice start, apply full config
+// ApplyFullConfig applies a full netmap snapshot. Serialized: concurrent
+// callers (poll loop, NATS push, netmap-changed refresh) queue up.
 func (h *MessageHandler) ApplyFullConfig(ctx context.Context, msg *infra.Message) error {
+	h.applyMu.Lock()
+	defer h.applyMu.Unlock()
+	return h.applyFullConfig(ctx, msg)
+}
+
+// applyFullConfig is the lock-free body; callers must hold applyMu.
+func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message) error {
+	// A pending peer's netmap carries Current with an Address that is a
+	// pointer to an empty string (not nil) and no ComputedPeers — there is
+	// nothing to apply until an administrator approves the registration.
+	if msg.Current == nil || msg.Current.Address == nil || *msg.Current.Address == "" {
+		h.logger.Info("netmap empty: peer is awaiting administrator approval")
+		return nil
+	}
+
 	h.logger.Debug("reconciling full config", "version", msg.ConfigVersion)
 	var err error
 

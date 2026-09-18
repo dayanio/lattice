@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"github.com/alatticeio/lattice/cmd/lattice/cmd/peer"
 	"github.com/alatticeio/lattice/cmd/lattice/cmd/policy"
-	"github.com/alatticeio/lattice/cmd/lattice/cmd/sandbox"
+	"github.com/alatticeio/lattice/cmd/lattice/cmd/sandbox" //nolint:staticcheck // 旧命令兼容窗口：v0.6 移除（见包注释）
 	"github.com/alatticeio/lattice/cmd/lattice/cmd/token"
 	"github.com/alatticeio/lattice/cmd/lattice/cmd/workspace"
 	"github.com/alatticeio/lattice/internal/agent/config"

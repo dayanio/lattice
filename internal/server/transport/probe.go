@@ -111,7 +111,7 @@ func (p *Probe) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet 
 }
 
 // startLivenessTicker starts a background goroutine that polls the WireGuard
-// LastHandshakeTime every 60 s. If the handshake is stale (> 3 minutes), the
+// LastHandshakeTime every 15 s. If the handshake is stale (> 45 s), the
 // probe is restarted so that a new connection can be established.
 func (p *Probe) startLivenessTicker() {
 	if p.getHandshake == nil {
@@ -136,13 +136,20 @@ func (p *Probe) stopLivenessTicker() {
 	}
 }
 
-const livenessInterval = 60 * time.Second
-const livenessThreshold = 3 * time.Minute
+// Liveness thresholds must clear WireGuard's own rekey cadence: with no
+// payload traffic the handshake only refreshes when the initiator rekeys
+// (REKEY_AFTER_TIME ≈ 120 s), so a 45 s threshold declared healthy probes
+// stale every ~45 s and restart-looped idle peers forever (observed live:
+// ice-ready → failed every 45.0 s). 180 s covers the rekey window with
+// margin while still catching genuinely dead peers within ~3 min.
+const livenessInterval = 15 * time.Second
+const livenessThreshold = 180 * time.Second
 
 func (p *Probe) runLiveness(ctx context.Context) {
 	ticker := time.NewTicker(livenessInterval)
 	defer ticker.Stop()
 	pubKey := p.remoteId.PublicKey.String()
+	consecutiveErrs := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -155,12 +162,18 @@ func (p *Probe) runLiveness(ctx context.Context) {
 			}
 			t, err := p.getHandshake(pubKey)
 			if err != nil {
-				// Peer not yet visible in WireGuard (e.g. peer removed after
-				// Close); stop monitoring.
-				p.log.Debug("liveness: handshake query failed, stopping ticker",
-					"remoteId", p.remoteId.AppID, "err", err)
-				return
+				// Transient query failures (wgctrl hiccup, busy device) must
+				// not silently kill monitoring for the peer; stop only after
+				// repeated consecutive failures.
+				consecutiveErrs++
+				if consecutiveErrs >= 4 {
+					p.log.Warn("liveness: handshake query keeps failing, stopping ticker",
+						"remoteId", p.remoteId.AppID, "err", err)
+					return
+				}
+				continue
 			}
+			consecutiveErrs = 0
 			if t.IsZero() || time.Since(t) > livenessThreshold {
 				p.log.Warn("WireGuard handshake stale, restarting probe",
 					"remoteId", p.remoteId.AppID, "lastHandshake", t)
@@ -345,8 +358,15 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 	result := make(chan infra.Transport, dialerCount)
 	errs := make(chan error, dialerCount)
 	var lrpWon atomic.Bool
+	// upgradeTarget records the transport claimed by the LRP→ICE upgrade
+	// path: it is also delivered via result, and the loser-drainer below
+	// must not close it (it lives on as currentTransport).
+	var upgradeTarget atomic.Value
+	var racers sync.WaitGroup
+	racers.Add(dialerCount)
 
 	go func() {
+		defer racers.Done()
 		p.log.Debug("Starting ice dialer", "remoteId", p.remoteId)
 		if err := iceD.Prepare(ctx, p.remoteId); err != nil {
 			p.log.Error("Prepare failed", err)
@@ -360,6 +380,7 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 		}
 		result <- t
 		if lrpWon.Load() {
+			upgradeTarget.Store(t)
 			if err = p.handleUpgradeTransport(t); err != nil {
 				p.log.Error("Upgrade transport failed", err)
 			}
@@ -368,6 +389,7 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 
 	if config.Conf.EnableLrp {
 		go func() {
+			defer racers.Done()
 			p.log.Debug("Starting lrp dialer", "remoteId", p.remoteId)
 			if err := lrpD.Prepare(ctx, p.remoteId); err != nil {
 				errs <- err
@@ -381,6 +403,28 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 			result <- t
 		}()
 	}
+
+	// When this discovery settles, close losing transports that still
+	// arrive: without this, the LRP dial completing after ICE already won
+	// leaves an open relay session parked in the buffered channel until
+	// process restart. racers.Wait() guarantees the upgrade path (which
+	// sets upgradeTarget before its goroutine exits) is fully decided
+	// before the drain reads it.
+	defer func() {
+		go func() {
+			racers.Wait()
+			for {
+				select {
+				case t := <-result:
+					if claimed, _ := upgradeTarget.Load().(infra.Transport); t != claimed {
+						t.Close() //nolint:errcheck
+					}
+				default:
+					return
+				}
+			}
+		}()
+	}()
 
 	failed := 0
 	var lastErr error

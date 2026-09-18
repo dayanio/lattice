@@ -46,15 +46,16 @@ type PeerController interface {
 	UpdatePeer(ctx context.Context, peerDto *dto.PeerDto) (*vo.PeerVo, error)
 	DisablePeer(ctx context.Context, namespace, name string) error
 	EnablePeer(ctx context.Context, namespace, name string) error
+	SetPeerApproval(ctx context.Context, namespace, name, status string) error
 	DeletePeer(ctx context.Context, namespace, name string) error
 	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
 	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
 	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
 }
 
-func NewPeerController(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier) PeerController {
+func NewPeerController(client *resource.Client, st store.Store, presence *managementnats.NodePresenceStore, verifier license.Verifier, signal infra.SignalService) PeerController {
 	return &peerController{
-		peerService:   service.NewPeerService(client, st, presence, verifier),
+		peerService:   service.NewPeerService(client, st, presence, verifier, signal),
 		policyService: service.NewPolicyService(client, st),
 	}
 }
@@ -112,6 +113,10 @@ func (p *peerController) DisablePeer(ctx context.Context, namespace, name string
 
 func (p *peerController) EnablePeer(ctx context.Context, namespace, name string) error {
 	return p.peerService.EnablePeer(ctx, namespace, name)
+}
+
+func (p *peerController) SetPeerApproval(ctx context.Context, namespace, name, status string) error {
+	return p.peerService.SetPeerApproval(ctx, namespace, name, status)
 }
 
 func (p *peerController) DeletePeer(ctx context.Context, namespace, name string) error {

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/store"
 	"github.com/alatticeio/lattice/internal/db/gormstore"
 	"github.com/alatticeio/lattice/internal/license"
@@ -28,6 +29,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gorm.io/gorm"
 )
 
@@ -56,7 +58,7 @@ func newRegisterService(t *testing.T, verifier license.Verifier) (service.PeerSe
 	))
 	st, err := gormstore.New(db)
 	require.NoError(t, err)
-	svc := service.NewPeerService(nil, st, nil, verifier)
+	svc := service.NewPeerService(nil, st, nil, verifier, nil)
 	return svc, st
 }
 
@@ -81,7 +83,7 @@ func TestPeerService_RegisterStandalone_CreatesPeer(t *testing.T) {
 
 	node, err := svc.Register(ctx, &dto.PeerDto{
 		Name: "api", AppID: "app-1", Token: "enr-test-token",
-		PublicKey: "pub-1", Endpoint: "1.2.3.4:51820", Platform: "linux",
+		Endpoint: "1.2.3.4:51820", Platform: "linux",
 	})
 	require.NoError(t, err)
 
@@ -202,4 +204,229 @@ func TestPeerService_RegisterStandalone_EnforcerModeFromWorkspaceOwner(t *testin
 	node, err := svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-test-token"})
 	require.NoError(t, err)
 	assert.Equal(t, "enforce", node.EnforcerMode)
+}
+
+// ADR-0003: agents that generate their WireGuard keypair locally submit only
+// the public key; the control plane stores it and never issues a private key.
+func TestRegisterStandalone_ClientPublicKey(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	pubKey := mustPubKey(t)
+	node, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-a", AppID: "device-a", Token: "enr-test-token", PublicKey: pubKey,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, pubKey, node.PublicKey)
+	assert.Empty(t, node.PrivateKey, "private key must never be returned to client-key agents")
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-a")
+	require.NoError(t, err)
+	assert.Equal(t, pubKey, peer.PublicKey)
+	assert.Empty(t, peer.PrivateKey)
+}
+
+// ADR-0003: re-registering an existing client-key peer with a different
+// public key is a takeover attempt and must be rejected.
+func TestRegisterStandalone_KeyMismatchRejected(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	// First registration seeds a client-key peer for "device-a".
+	_, err := svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token", PublicKey: mustPubKey(t)})
+	require.NoError(t, err)
+
+	// Same AppID, different key → takeover attempt.
+	_, err = svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token", PublicKey: mustPubKey(t)})
+	require.ErrorContains(t, err, "public key mismatch")
+
+	// The stored key must still be the one from the first registration.
+	peer, err := st.Peers().GetByAppID(ctx, "device-a")
+	require.NoError(t, err)
+	assert.NotEmpty(t, peer.PublicKey)
+	assert.Empty(t, peer.PrivateKey)
+}
+
+// Regression (final review): re-registering a client-key peer WITHOUT a
+// public key must be refused — falling through to server-side generation
+// would silently rotate the peer's keypair and break handshakes until
+// restart (e.g. the NATS-reconnect re-register path).
+func TestRegisterStandalone_ClientKeyPeerRequiresPublicKeyOnReregister(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+
+	pubKey := mustPubKey(t)
+	_, err := svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token", PublicKey: pubKey})
+	require.NoError(t, err)
+
+	_, err = svc.Register(ctx, &dto.PeerDto{AppID: "device-a", Token: "enr-test-token"})
+	require.ErrorContains(t, err, "client-generated key")
+
+	// The stored keypair must be untouched by the refused attempt.
+	peer, err := st.Peers().GetByAppID(ctx, "device-a")
+	require.NoError(t, err)
+	assert.Equal(t, pubKey, peer.PublicKey)
+	assert.Empty(t, peer.PrivateKey)
+}
+
+// Approving a peer an admin disabled directly (DisablePeer) must not
+// re-enable it on an idempotent re-approve; a revoke→approve round-trip
+// must lift the disable the revocation itself set.
+func TestSetPeerApproval_ApprovePreservesDirectDisable(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	seedApprovalWorkspace(t, st)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-d", AppID: "device-d", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalApproved))
+	// DisablePeer resolves the peer by name from the workspace-scoped context.
+	wsCtx := context.WithValue(ctx, infra.WorkspaceKey, "ws1")
+	require.NoError(t, svc.DisablePeer(wsCtx, "ws1", "device-d"))
+
+	// Idempotent re-approve: the admin's direct disable stays in force.
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalApproved))
+	peer, err := st.Peers().GetByAppID(ctx, "device-d")
+	require.NoError(t, err)
+	assert.True(t, peer.Disabled, "re-approving must not lift a direct admin disable")
+
+	// Revoke → approve: the revocation-set disable is lifted by approval.
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalRevoked))
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-d", models.ApprovalApproved))
+	peer, err = st.Peers().GetByAppID(ctx, "device-d")
+	require.NoError(t, err)
+	assert.False(t, peer.Disabled, "approve after revoke must lift the revocation-set disable")
+}
+
+// ADR-0003: workspaces with approval gating enroll new peers as 'pending'
+// with no overlay address; the register response carries approvalStatus so
+// the agent can show "awaiting approval".
+func TestRegisterStandalone_PendingWhenWorkspaceRequiresApproval(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "ws1", DisplayName: "Dev", CreatedBy: "owner-1",
+	}))
+
+	workspace, err := st.Workspaces().GetByID(ctx, "ws1")
+	require.NoError(t, err)
+	workspace.RequirePeerApproval = true
+	require.NoError(t, st.Workspaces().Update(ctx, workspace))
+
+	node, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-p", AppID: "device-p", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalPending, node.ApprovalStatus)
+	assert.Nil(t, node.Address, "pending peer must not receive an overlay address")
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-p")
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalPending, peer.ApprovalStatus)
+	assert.Empty(t, peer.Address)
+}
+
+// seedApprovalWorkspace seeds workspace "ws1" (namespace "ws1") with
+// RequirePeerApproval=true, matching the token's WorkspaceID.
+func seedApprovalWorkspace(t *testing.T, st store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "ws1", DisplayName: "Dev", CreatedBy: "owner-1",
+	}))
+	workspace, err := st.Workspaces().GetByID(ctx, "ws1")
+	require.NoError(t, err)
+	workspace.RequirePeerApproval = true
+	require.NoError(t, st.Workspaces().Update(ctx, workspace))
+}
+
+// ADR-0003: approving a pending peer allocates its overlay address, making
+// it part of the mesh. (ApprovedBy stays empty for now — actor identity
+// wiring is a documented follow-up.)
+func TestSetPeerApproval_ApproveAllocatesAddress(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	seedApprovalWorkspace(t, st)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-p", AppID: "device-p", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-p", models.ApprovalApproved))
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-p")
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalApproved, peer.ApprovalStatus)
+	assert.NotEmpty(t, peer.Address, "approval must allocate the overlay address")
+}
+
+// ADR-0003: revoking a peer keeps the row but flips Disabled, which the
+// netmap builder treats as a hard error for the peer itself and excludes it
+// from every other peer's mesh view.
+func TestSetPeerApproval_RevokeDisablesPeer(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, nil)
+	seedApprovalWorkspace(t, st)
+
+	_, err := svc.Register(ctx, &dto.PeerDto{
+		Name: "device-p", AppID: "device-p", Token: "enr-test-token", PublicKey: mustPubKey(t),
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-p", models.ApprovalApproved))
+
+	require.NoError(t, svc.SetPeerApproval(ctx, "ws1", "device-p", models.ApprovalRevoked))
+
+	peer, err := st.Peers().GetByAppID(ctx, "device-p")
+	require.NoError(t, err)
+	assert.Equal(t, models.ApprovalRevoked, peer.ApprovalStatus)
+	assert.True(t, peer.Disabled, "revocation must disable the peer")
+}
+
+func TestSetPeerApproval_RejectsUnknownStatus(t *testing.T) {
+	svc, _ := newRegisterService(t, &fakeVerifier{})
+
+	err := svc.SetPeerApproval(context.Background(), "ws1", "x", "maybe")
+	assert.Error(t, err, "unknown status must be rejected")
+}
+
+// Regression: a genuine store failure during registerStandalone's
+// duplicate-AppID lookup must surface as an error (and must not consume a
+// token use) — not be swallowed by returning (nil, nil).
+func TestRegisterStandalone_StoreFailureSurfaces(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Peer{}, &models.EnrollmentToken{}, &models.Workspace{}, &models.UserProfile{},
+	))
+	st, err := gormstore.New(db)
+	require.NoError(t, err)
+	svc := service.NewPeerService(nil, st, nil, &fakeVerifier{valid: false}, nil)
+	ctx := context.Background()
+	tok := seedEnrollmentToken(t, st, nil)
+	// Force a non-NotFound failure in Peers().GetByAppID: remove its table.
+	require.NoError(t, db.Exec("DROP TABLE t_peer").Error)
+
+	_, err = svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: tok.Token})
+	require.Error(t, err, "a store failure must surface, not be swallowed")
+
+	enr, err := st.EnrollmentTokens().GetByToken(ctx, tok.Token)
+	require.NoError(t, err)
+	assert.Equal(t, 0, enr.UsedCount, "a failed registration must not consume a token use")
+}
+
+func mustPubKey(t *testing.T) string {
+	t.Helper()
+	key, err := wgtypes.GeneratePrivateKey()
+	require.NoError(t, err)
+	return key.PublicKey().String()
 }

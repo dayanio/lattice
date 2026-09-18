@@ -75,6 +75,10 @@ type Workspace struct {
 	// Demo workspace fields
 	IsDemo    bool       `gorm:"default:false" json:"isDemo"`
 	ExpiresAt *time.Time `gorm:"index" json:"expiresAt,omitempty"`
+
+	// RequirePeerApproval gates new enrollments behind an administrator
+	// approval step (ADR-0003). Default false: opt-in per workspace.
+	RequirePeerApproval bool `gorm:"default:false" json:"requirePeerApproval"`
 }
 
 func (Workspace) TableName() string {
