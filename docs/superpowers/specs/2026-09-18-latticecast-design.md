@@ -68,7 +68,7 @@ LatticeCast 渲染端（Android TV / 盒子 APK：ExoPlayer 拉流播放 + 进�
 
 **关键简化**：渲染端**不入 mesh、不跑 WireGuard**——它只在家里局域网收 cast-agent 指令，远程访问的活儿全由 cast-agent（mesh peer）承担，APK 因此可以做得极轻。
 
-**仓库策略（双仓库）**：全部实现放**新仓库** `lattice-cast`（`github.com/alatticeio/lattice-cast`）：
+**仓库策略（双仓库）**：全部实现放**新仓库** `lattice-cast`（`github.com/dayanio/lattice-cast`）：
 
 ```
 cmd/lattice-cast/            # cast-agent 入口

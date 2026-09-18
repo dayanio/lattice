@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- 仓库：全部代码进新仓库 `github.com/alatticeio/lattice-cast`；**本地检出于 `/Users/francis/workspc/lattice-cast`（与 lattice 仓库平级），严禁嵌套进 lattice 仓库内部**；lattice 主仓库仅 Task 15 一个文档任务（零代码）。
+- 仓库：全部代码进新仓库 `github.com/dayanio/lattice-cast`；**本地检出于 `/Users/francis/workspc/lattice-cast`（与 lattice 仓库平级），严禁嵌套进 lattice 仓库内部**；lattice 主仓库仅 Task 15 一个文档任务（零代码）。
 - License：Apache-2.0（对齐主仓库）。
 - Go 版本：1.26（对齐主仓库 CI）。
 - 端口约定：MCP `7800`、媒体 HTTP `7810`、渲染端 `7822`（APK 内可改）。
@@ -31,7 +31,7 @@
 - Create: 仓库 `lattice-cast`（GitHub `alatticeio/lattice-cast`）内：`go.mod`、`Makefile`、`LICENSE`、`README.md`、`.gitignore`、`.github/workflows/ci.yml`
 
 **Interfaces:**
-- Produces: Go module `github.com/alatticeio/lattice-cast`；`make test`、`make lint`、`make build` 三个入口；CI workflow 文件。后续所有任务在此仓库内工作。
+- Produces: Go module `github.com/dayanio/lattice-cast`；`make test`、`make lint`、`make build` 三个入口；CI workflow 文件。后续所有任务在此仓库内工作。
 
 - [ ] **Step 1: 建仓并克隆**
 
@@ -47,7 +47,7 @@ git checkout -b feat/v1-agent
 - [ ] **Step 2: go.mod 与 .gitignore**
 
 ```bash
-go mod init github.com/alatticeio/lattice-cast
+go mod init github.com/dayanio/lattice-cast
 ```
 
 `.gitignore`:
