@@ -126,7 +126,7 @@ info "在云端构建 agent 镜像"
 $SSH 'mkdir -p /tmp/agentimg && cp /opt/lattice/bin/lattice /tmp/agentimg/lattice && printf "FROM alpine:3.19\nRUN apk add -U iptables ip6tables && chmod 755 /usr/local/bin 2>/dev/null; mkdir -p /usr/local/bin\nCOPY lattice /usr/local/bin/lattice\nWORKDIR /data\n" > /tmp/agentimg/Dockerfile && docker build -q -t lattice-run-test:v2 /tmp/agentimg'
 
 info "启动测试容器 agent(hostname cloud-node-1)"
-$SSH 'docker rm -f lattice-cloud-node >/dev/null 2>&1 || true; docker run -d --name lattice-cloud-node --hostname cloud-node-1 --privileged --add-host host.docker.internal:host-gateway lattice-run-test:v2 sh -c "lattice init --server http://host.docker.internal:18090 --token '$JOIN_TOKEN' >/tmp/init.log 2>&1 && exec lattice up"' || \
+$SSH 'docker rm -f lattice-cloud-node >/dev/null 2>&1 || true; docker run -d --name lattice-cloud-node --hostname cloud-node-1 --privileged --add-host host.docker.internal:host-gateway -v lattice-cloud-node-data:/root/.lattice lattice-run-test:v2 sh -c "lattice init --server http://host.docker.internal:18090 --token '$JOIN_TOKEN' >/tmp/init.log 2>&1 && exec lattice up"' || \
   fail "容器启动失败——确认镜像 lattice-run-test:v2 已在云端构建(脚本第 8 步提示见报告)"
 
 # ── 8. 输出交付信息 ──────────────────────────────────────────────────────────
