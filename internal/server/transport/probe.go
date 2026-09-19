@@ -78,9 +78,15 @@ type Probe struct {
 
 	// Liveness ticker: polls WireGuard LastHandshakeTime to detect silent
 	// peer failures after a transport is established.
-	getHandshake   func(pubKey string) (time.Time, error)
+	getStats       func(pubKey string) (PeerStats, error)
 	muLiveness     sync.Mutex
 	livenessCancel context.CancelFunc
+
+	// Relay→direct upgrade retries (see probe_upgrade.go).
+	upgradeMu      sync.Mutex
+	upgradeTimer   *time.Timer
+	upgradeTries   int
+	upgradeRestart func() // test hook; defaults to restart
 }
 
 // State returns the peer's current connection lifecycle state
@@ -120,7 +126,7 @@ func (p *Probe) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet 
 // LastHandshakeTime every 15 s. If the handshake is stale (> 45 s), the
 // probe is restarted so that a new connection can be established.
 func (p *Probe) startLivenessTicker() {
-	if p.getHandshake == nil {
+	if p.getStats == nil {
 		return
 	}
 	p.muLiveness.Lock()
@@ -155,6 +161,7 @@ func (p *Probe) runLiveness(ctx context.Context) {
 	ticker := time.NewTicker(livenessInterval)
 	defer ticker.Stop()
 	pubKey := p.remoteId.PublicKey.String()
+	tracker := newLivenessTracker(time.Now())
 	consecutiveErrs := 0
 	for {
 		select {
@@ -166,7 +173,7 @@ func (p *Probe) runLiveness(ctx context.Context) {
 			if state != StateICEReady && state != StateLRPReady {
 				return
 			}
-			t, err := p.getHandshake(pubKey)
+			stats, err := p.getStats(pubKey)
 			if err != nil {
 				// Transient query failures (wgctrl hiccup, busy device) must
 				// not silently kill monitoring for the peer; stop only after
@@ -180,14 +187,20 @@ func (p *Probe) runLiveness(ctx context.Context) {
 				continue
 			}
 			consecutiveErrs = 0
-			if t.IsZero() || time.Since(t) > livenessThreshold {
+			switch tracker.observe(time.Now(), stats) {
+			case livenessHandshakeStale:
 				p.log.Warn("WireGuard handshake stale, restarting probe",
-					"remoteId", p.remoteId.AppID, "lastHandshake", t)
+					"remoteId", p.remoteId.AppID, "lastHandshake", stats.LastHandshake)
+				go p.restart()
+				return
+			case livenessRxStalled:
+				p.log.Warn("no data received from peer, restarting probe",
+					"remoteId", p.remoteId.AppID, "stalledFor", rxStallThreshold)
 				go p.restart()
 				return
 			}
-			p.log.Debug("liveness: handshake ok",
-				"remoteId", p.remoteId.AppID, "age", time.Since(t).Round(time.Second))
+			p.log.Debug("liveness: ok",
+				"remoteId", p.remoteId.AppID, "handshakeAge", time.Since(stats.LastHandshake).Round(time.Second), "rxBytes", stats.RxBytes)
 		}
 	}
 }
@@ -200,6 +213,7 @@ func (p *Probe) restart() {
 	defer p.restartInProgress.Store(false)
 
 	p.stopLivenessTicker()
+	p.cancelUpgrade(false)
 
 	if p.newIceDialer == nil {
 		return
@@ -228,6 +242,7 @@ func (p *Probe) restart() {
 // Close permanently stops this probe.
 func (p *Probe) Close() {
 	p.stopLivenessTicker()
+	p.cancelUpgrade(true)
 	p.mu.Lock()
 	p.newIceDialer = nil
 	p.newLrpDialer = nil
@@ -310,8 +325,10 @@ func (p *Probe) onSuccess(transport infra.Transport) {
 	transportType := transport.Type()
 	if transportType == infra.ICE {
 		_ = p.sm.Transition(StateICEReady)
+		p.cancelUpgrade(true)
 	} else {
 		_ = p.sm.Transition(StateLRPReady)
+		p.scheduleUpgrade()
 	}
 
 	p.startLivenessTicker()
@@ -477,5 +494,6 @@ func (p *Probe) handleUpgradeTransport(newTransport infra.Transport) error {
 
 	// Transition LRPReady -> ICEReady: WG config handled by state machine callbacks.
 	_ = p.sm.Transition(StateICEReady)
+	p.cancelUpgrade(true)
 	return nil
 }

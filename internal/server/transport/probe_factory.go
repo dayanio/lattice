@@ -39,7 +39,7 @@ type ProbeFactory struct {
 	getProvisioner func() provision.Provisioner
 	getOnMessage   func() func(context.Context, *infra.Message) error
 	getLrp         func() infra.Lrp
-	getHandshake   func(pubKey string) (time.Time, error)
+	getStats       func(pubKey string) (PeerStats, error)
 
 	log *log.Logger
 
@@ -59,10 +59,10 @@ type ProbeFactoryConfig struct {
 	FilteringMux   *infra.FilteringUDPMux
 	FilteringMux6  *infra.FilteringUDPMux
 	GetProvisioner func() provision.Provisioner
-	// GetHandshake returns the WireGuard LastHandshakeTime for the given peer
-	// public key. Used by the liveness ticker to detect silent peer failures.
-	// May be nil (liveness monitoring is disabled).
-	GetHandshake func(pubKey string) (time.Time, error)
+	// GetPeerStats returns the WireGuard handshake time and received-byte
+	// counter for the given peer public key. Used by the liveness ticker to
+	// detect silent peer failures. May be nil (liveness monitoring is disabled).
+	GetPeerStats func(pubKey string) (PeerStats, error)
 	ShowLog      bool
 }
 
@@ -79,7 +79,7 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 		FilteringMux6:  cfg.FilteringMux6,
 		getProvisioner: cfg.GetProvisioner,
 		getOnMessage:   cfg.GetOnMessage,
-		getHandshake:   cfg.GetHandshake,
+		getStats:       cfg.GetPeerStats,
 	}
 }
 
@@ -390,11 +390,10 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 
 	pubKey := remoteId.PublicKey.String()
 
-	// Only initiator drives PersistentKeepalive.
-	persistentKA := 0
-	if isInitiator(p.localId, remoteId) {
-		persistentKA = provision.PersistentKeepalive
-	}
+	// Both sides send WireGuard keepalives. A keepalive is the only traffic an
+	// idle peer produces, so with both directions active the received-byte
+	// counter doubles as a fast path-liveness signal (see livenessTracker).
+	persistentKA := provision.PersistentKeepalive
 
 	sm.OnTransition(func(from, to PeerState) {
 		p.log.Debug("state transition", "remoteId", remoteId.AppID, "from", from, "to", to)
@@ -481,7 +480,7 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		signal:       p.signal,
 		sm:           sm,
 		configurator: configurator,
-		getHandshake: p.getHandshake,
+		getStats:     p.getStats,
 	}
 
 	makeIceDialer := func() infra.Dialer {

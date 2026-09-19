@@ -427,8 +427,9 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		GetLrp: func() infra.Lrp {
 			return lrp
 		},
-		GetHandshake: func(pubKey string) (time.Time, error) {
-			return wireguard.PeerHandshake(node.Name, pubKey)
+		GetPeerStats: func(pubKey string) (transport.PeerStats, error) {
+			hs, rx, statsErr := wireguard.PeerStats(node.Name, pubKey)
+			return transport.PeerStats{LastHandshake: hs, RxBytes: rx}, statsErr
 		},
 	})
 
