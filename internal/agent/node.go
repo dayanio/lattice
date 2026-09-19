@@ -639,6 +639,12 @@ func (c *Node) Start(ctx context.Context) error {
 			return nil
 		})
 	}
+
+	// Probe lifecycle watchdog: probes that permanently closed (60 s of
+	// failed discovery) must be revived on a cadence of their own — the
+	// netmap apply path is version-guarded and cannot be relied on to
+	// recreate them once the incident that closed them is over.
+	c.probeFactory.StartReconciler(ctx, 30*time.Second)
 	return nil
 }
 
