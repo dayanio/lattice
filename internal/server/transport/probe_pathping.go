@@ -26,7 +26,7 @@ import (
 // A peer that has never answered is assumed not to support echo (older agent)
 // and is given up on after pathPingGiveUp unanswered pings, never declared dead.
 var (
-	pathPingInterval = 10 * time.Second
+	pathPingInterval = 5 * time.Second
 	pathPingTimeout  = 2 * time.Second
 )
 
