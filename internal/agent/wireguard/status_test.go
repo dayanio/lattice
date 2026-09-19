@@ -16,6 +16,7 @@ package wireguard
 
 import (
 	"bytes"
+	"net"
 	"strings"
 	"testing"
 
@@ -97,5 +98,64 @@ func TestWriteUnmatchedPeersPrintsNothingWhenAllHaveSessions(t *testing.T) {
 	writeUnmatchedPeers(&buf, map[string]PeerLabel{"k": {Name: "a", Transport: "ice-ready"}}, map[string]bool{"k": true})
 	if buf.Len() != 0 {
 		t.Errorf("expected no output, got:\n%s", buf.String())
+	}
+}
+
+var (
+	relayEndpoint  = &net.UDPAddr{IP: net.ParseIP("fd6c:7270::e833:e4a3"), Port: 51820}
+	directEndpoint = &net.UDPAddr{IP: net.ParseIP("45.8.204.88"), Port: 35062}
+)
+
+func TestActualPath(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ep   *net.UDPAddr
+		want string
+	}{
+		"no endpoint yet":       {nil, ""},
+		"public v4 address":     {directEndpoint, "direct"},
+		"public v6 address":     {&net.UDPAddr{IP: net.ParseIP("2409:8a20::1"), Port: 51820}, "direct"},
+		"relay fake address":    {relayEndpoint, "relayed"},
+		"private v4 is direct":  {&net.UDPAddr{IP: net.ParseIP("192.168.1.8"), Port: 51820}, "direct"},
+		"other ULA is not fake": {&net.UDPAddr{IP: net.ParseIP("fd00::1"), Port: 51820}, "direct"},
+	} {
+		if got := actualPath(tc.ep); got != tc.want {
+			t.Errorf("%s: actualPath(%v) = %q, want %q", name, tc.ep, got, tc.want)
+		}
+	}
+}
+
+func TestWritePeerReportsTheActualPath(t *testing.T) {
+	var buf bytes.Buffer
+	writePeer(&buf, wgtypes.Peer{Endpoint: relayEndpoint}, nil)
+	if !strings.Contains(buf.String(), "  Path      : relayed\n") {
+		t.Errorf("relayed endpoint not reported:\n%s", buf.String())
+	}
+
+	buf.Reset()
+	writePeer(&buf, wgtypes.Peer{Endpoint: directEndpoint}, nil)
+	if !strings.Contains(buf.String(), "  Path      : direct\n") {
+		t.Errorf("direct endpoint not reported:\n%s", buf.String())
+	}
+}
+
+func TestWritePeerFlagsAProbeThatDisagreesWithTheEndpoint(t *testing.T) {
+	// The probe says direct, but WireGuard is talking through the relay.
+	var buf bytes.Buffer
+	writePeer(&buf, wgtypes.Peer{Endpoint: relayEndpoint}, &PeerLabel{Name: "x", Transport: "ice-ready"})
+	out := buf.String()
+	if !strings.Contains(out, "  Path      : relayed\n") || !strings.Contains(out, "differs from the transport state") {
+		t.Errorf("mismatch must be called out:\n%s", out)
+	}
+
+	// Agreeing states must not print the note.
+	for _, c := range []struct {
+		ep    *net.UDPAddr
+		state string
+	}{{directEndpoint, "ice-ready"}, {relayEndpoint, "lrp-ready"}} {
+		buf.Reset()
+		writePeer(&buf, wgtypes.Peer{Endpoint: c.ep}, &PeerLabel{Name: "x", Transport: c.state})
+		if strings.Contains(buf.String(), "differs from the transport state") {
+			t.Errorf("state %s with endpoint %v must not be flagged:\n%s", c.state, c.ep, buf.String())
+		}
 	}
 }

@@ -18,11 +18,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/alatticeio/lattice/internal/agent/infra"
 	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -104,6 +106,38 @@ func PrintStatus(interfaceName string, labels map[string]PeerLabel) error {
 	return nil
 }
 
+// Path values reported by actualPath.
+const (
+	pathDirect  = "direct"
+	pathRelayed = "relayed"
+)
+
+// actualPath reports how traffic actually reaches a peer, judged by the
+// WireGuard endpoint rather than the probe's state: WireGuard re-points a peer
+// at whichever address its authenticated packets arrive from, so the probe can
+// say "ice-ready" while the data flows through the relay (and the reverse).
+// Empty when the peer has no endpoint yet.
+func actualPath(endpoint *net.UDPAddr) string {
+	if endpoint == nil {
+		return ""
+	}
+	addr, ok := netip.AddrFromSlice(endpoint.IP)
+	if !ok {
+		return ""
+	}
+	if infra.IsLrpFakeAddr(addr.Unmap()) {
+		return pathRelayed
+	}
+	return pathDirect
+}
+
+// pathDisagrees reports whether the probe's transport state contradicts the
+// path WireGuard is really using.
+func pathDisagrees(path, transport string) bool {
+	return (transport == "ice-ready" && path == pathRelayed) ||
+		(transport == "lrp-ready" && path == pathDirect)
+}
+
 // transportDescription renders a transport state for humans.
 func transportDescription(state string) string {
 	switch state {
@@ -179,6 +213,13 @@ func writePeer(w io.Writer, p wgtypes.Peer, label *PeerLabel) {
 	fmt.Fprintf(&b, "  Endpoint  : %s\n", endpointStr)
 	if label != nil {
 		fmt.Fprintf(&b, "  Transport : %s\n", transportDescription(label.Transport))
+	}
+	path := actualPath(p.Endpoint)
+	if path != "" {
+		fmt.Fprintf(&b, "  Path      : %s\n", path)
+		if label != nil && pathDisagrees(path, label.Transport) {
+			fmt.Fprintf(&b, "  Note      : the path in use differs from the transport state (WireGuard re-points a peer at the address its packets arrive from)\n")
+		}
 	}
 	fmt.Fprintf(&b, "  Handshake : %s\n", handshakeStr)
 	fmt.Fprintf(&b, "  Traffic   : ↑ %s  ↓ %s\n", formatBytes(p.TransmitBytes), formatBytes(p.ReceiveBytes))
