@@ -68,6 +68,12 @@ type NetmapBuilder struct {
 	// relayURL, when set, is stamped into every peer's LrpUrl so agents
 	// fall back to the control-plane relay when ICE cannot traverse.
 	relayURL string
+	// selfRelayURL is relayURL plus the relay's auth token, given only to the
+	// netmap's Current peer. Sandbox-style clients (the iOS engine) enable the
+	// relay only when their own record carries a relay URL, and they take that
+	// record from here rather than from the registration response. The token
+	// must not appear on any other peer's entry.
+	selfRelayURL string
 }
 
 // NewNetmapBuilder returns a builder over the standalone stores.
@@ -83,6 +89,10 @@ func NewNetmapBuilder(peers store.PeerRepository, policies store.PolicyRepositor
 
 // SetRelayURL stamps relayURL into every netmap peer's LrpUrl.
 func (b *NetmapBuilder) SetRelayURL(url string) { b.relayURL = url }
+
+// SetSelfRelayURL sets the relay address (with its auth token) placed on the
+// netmap's Current peer only, never on the entries describing other peers.
+func (b *NetmapBuilder) SetSelfRelayURL(url string) { b.selfRelayURL = url }
 
 // BuildForAppID resolves the peer by its agent instance id, verifies the
 // registration token, and builds the peer's netmap message.
@@ -123,6 +133,9 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 
 	current := dbToInfraPeer(peer)
 	current.PrivateKey = peer.PrivateKey // the owner gets its own key back
+	if b.selfRelayURL != "" {
+		current.LrpUrl = b.selfRelayURL
+	}
 	network := &infra.Network{
 		NetworkId:   peer.WorkspaceID,
 		NetworkName: peer.WorkspaceID,

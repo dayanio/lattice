@@ -371,6 +371,7 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
 			svc.netmapBuilder.SetRelayURL(advertise)
 			svc.relayURL = relayURLWithToken(advertise, agentconfig.Conf.LrpAuthToken)
+			svc.netmapBuilder.SetSelfRelayURL(svc.relayURL)
 		}
 	}
 	return svc
