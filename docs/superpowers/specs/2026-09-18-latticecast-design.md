@@ -125,7 +125,7 @@ GET  /status  -> { state: playing|paused|idle|error, position_ms, duration_ms, t
 ```jsonc
 list_cast_devices() -> [{ name, room, protocols[], online, now_playing }]
 search_media(query) -> [{ media_id, title, kind, source }]        // NAS 媒体库检索
-cast_play(device, media_id?, url?, title?) -> { status, adapter }  // 二选一传参
+cast_play(device, media_id?, url?, title?, position_ms?) -> { status, adapter }  // media_id/url 二选一；position_ms 用于续播
 cast_pause(device) -> { status }
 cast_seek(device, position_ms) -> { status }   // 负值 -> position_out_of_range
 cast_stop(device) -> { status }
