@@ -364,6 +364,12 @@ func NewIceDialer(cfg *ICEDialerConfig) infra.Dialer {
 	}
 }
 
+// restartNotifyInterval / restartNotifyAttempts bound how long a responder
+// keeps telling the initiator it started fresh (see Prepare).
+var restartNotifyInterval = 5 * time.Second
+
+const restartNotifyAttempts = 12
+
 // Prepare sends handshake SYN when local is the initiator (localId > remoteId numerically).
 func (i *iceDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) error {
 	i.log.Debug("prepare ice", "localId", i.localId, "remoteId", remoteId, "isInitiator", isInitiator(i.localId, remoteId))
@@ -376,9 +382,28 @@ func (i *iceDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) er
 		// triggers probe.restart() on the remote so it re-initiates the ICE
 		// handshake. If the remote is still probing (normal startup), the
 		// notification is ignored.
+		//
+		// The notice is repeated until the initiator's SYN/OFFER arrives, the
+		// dialer closes or the attempts run out: a single send at startup is
+		// easily lost (NATS still connecting, initiator mid-restart), which
+		// left initiators believing a dead session was alive until the 3-min
+		// WireGuard liveness check fired.
 		go func() {
-			if err := i.sendPacket(ctx, remoteId, signal.PacketType_RESTART_NOTIFY, nil); err != nil {
-				i.log.Debug("restart notify send failed", "remoteId", remoteId, "err", err)
+			ticker := time.NewTicker(restartNotifyInterval)
+			defer ticker.Stop()
+			for attempt := 0; attempt < restartNotifyAttempts; attempt++ {
+				if err := i.sendPacket(ctx, remoteId, signal.PacketType_RESTART_NOTIFY, nil); err != nil {
+					i.log.Debug("restart notify send failed", "remoteId", remoteId, "err", err)
+				}
+				select {
+				case <-ticker.C:
+				case <-i.offerReady:
+					return
+				case <-i.closeChan:
+					return
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 		return nil
