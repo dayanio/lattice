@@ -20,6 +20,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -64,12 +65,15 @@ func discoverNATSURLOnly(ctx context.Context, serverURL string) (string, error) 
 	if override := config.Conf.SignalingURL; override != "" {
 		return override, nil
 	}
-	d, err := discover(ctx, serverURL)
+	d, err := discoverWithRetry(ctx, serverURL)
 	if err != nil {
 		return "", err
 	}
 	return d.NatsURL, nil
 }
+
+// errDiscoveryEmpty means the server answered but advertised no NATS URL.
+var errDiscoveryEmpty = errors.New("discovery endpoint returned empty nats_url")
 
 // discoveryResult holds the URLs returned by the server's /api/v1/discovery endpoint.
 type discoveryResult struct {
@@ -102,7 +106,7 @@ func discover(ctx context.Context, serverURL string) (discoveryResult, error) {
 		return discoveryResult{}, fmt.Errorf("decoding discovery response: %w", err)
 	}
 	if envelope.Data.NatsURL == "" {
-		return discoveryResult{}, fmt.Errorf("discovery endpoint returned empty nats_url")
+		return discoveryResult{}, errDiscoveryEmpty
 	}
 	return discoveryResult{
 		NatsURL:      envelope.Data.NatsURL,
@@ -285,7 +289,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// a later engine (re)start within the same process.
 	if config.Conf.SignalingURL == "" {
 		var d discoveryResult
-		d, err = discover(ctx, config.Conf.ServerUrl)
+		d, err = discoverWithRetry(ctx, config.Conf.ServerUrl)
 		if err != nil {
 			return nil, fmt.Errorf("NATS discovery failed: %w", err)
 		}
