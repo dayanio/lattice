@@ -25,6 +25,13 @@ func TestResolveRelayURL(t *testing.T) {
 		"override with no advertised url at all":  {"172.17.0.1:6266", "", "172.17.0.1:6266"},
 		"nothing configured":                      {"", "", ""},
 		"token found among other advertised keys": {"h:1", "r:2?x=y&token=t1&z=w", "h:1?token=t1"},
+		// relay-url is also the relay server's *listen* address; agent configs
+		// written from server defaults carry ":6266", which is not dialable
+		// and must not shadow the relay the control plane advertises.
+		"listen-style override is ignored":          {":6266", "relay.example:6266?token=t", "relay.example:6266?token=t"},
+		"wildcard v4 override is ignored":           {"0.0.0.0:6266", "relay.example:6266?token=t", "relay.example:6266?token=t"},
+		"wildcard v6 override is ignored":           {"[::]:6266", "relay.example:6266?token=t", "relay.example:6266?token=t"},
+		"listen-style kept when nothing advertised": {":6266", "", ":6266"},
 	} {
 		if got := resolveRelayURL(tc.override, tc.advertised); got != tc.want {
 			t.Errorf("%s: resolveRelayURL(%q, %q) = %q, want %q", name, tc.override, tc.advertised, got, tc.want)
