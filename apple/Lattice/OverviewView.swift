@@ -60,6 +60,7 @@ struct OverviewView: View {
                         aggregateText: aggregateText,
                         selfAddress: localPeer?.address ?? tunnel.localOverlayIP,
                         errorText: tunnel.lastFailure?.display ?? "",
+                        errorIsNotice: tunnel.lastFailure?.isNotice ?? false,
                         onToggle: { tunnel.connectedBinding.wrappedValue.toggle() }
                     )
 

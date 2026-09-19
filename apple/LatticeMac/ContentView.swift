@@ -419,7 +419,8 @@ struct ContentView: View {
                     }
                 }
                 if let failure = tunnel.lastFailure {
-                    Text(failure.title).font(.caption2.weight(.semibold)).foregroundColor(.red)
+                    Text(failure.title).font(.caption2.weight(.semibold))
+                        .foregroundColor(failure.isNotice ? .orange : .red)
                     if !failure.advice.isEmpty {
                         Text(failure.advice)
                             .font(.caption2)
