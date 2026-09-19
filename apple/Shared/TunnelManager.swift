@@ -35,6 +35,23 @@ final class TunnelManager: ObservableObject {
     @Published private(set) var isConfigured = false
     @Published private(set) var status: NEVPNStatus = .invalid
     @Published private(set) var lastStartError: String = ""
+
+    /// Nodes as the tunnel reports them; lets the device list work without a
+    /// management login. Empty while the tunnel is not connected.
+    @Published private(set) var tunnelPeers: [PeerNode] = []
+    private var tunnelPeerRaw: [TunnelPeer] = []
+
+    /// The workspace is holding this device until an administrator approves it.
+    /// The tunnel connects on its own afterwards.
+    @Published private(set) var awaitingApproval = false
+
+    /// What to tell the user about a connection that is not up: the reason, or
+    /// that an administrator has to approve the device first. nil when there is
+    /// nothing to say.
+    var lastFailure: JoinFailure? {
+        if awaitingApproval { return .awaitingApproval }
+        return lastStartError.isEmpty ? nil : JoinFailure.classify(lastStartError)
+    }
     /// Per-peer connection quality from the tunnel process
     /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
     @Published private(set) var peerStates: [String: String] = [:]
@@ -89,6 +106,7 @@ final class TunnelManager: ObservableObject {
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
     private var statePoller: Timer?
+    private var connectingSince: Date?
 
     /// Nonce recorded when the last join was a reset-join (createProfile wrote
     /// "resetIdentity" into the persisted provider configuration). The reset
@@ -222,15 +240,31 @@ final class TunnelManager: ObservableObject {
     private func refreshStatus() {
         status = manager?.connection.status ?? .invalid
         if status == .connected {
+            connectingSince = nil
             if connectedSince == nil { connectedSince = Date() }
             lastStartError = ""
             startStatePoller()
             consumeProfileResetFlagIfNeeded()
         } else {
             connectedSince = nil
-            stopStatePoller()
+            // The engine says why it is not up (an error, or waiting for approval)
+            // only while the extension runs, so keep asking while it connects.
+            if status == .connecting || status == .reasserting {
+                if connectingSince == nil { connectingSince = Date() }
+                startStatePoller()
+            } else {
+                connectingSince = nil
+                stopStatePoller()
+            }
             if peerStates.isEmpty == false {
                 peerStates = [:]
+            }
+            if !tunnelPeerRaw.isEmpty {
+                tunnelPeerRaw = []
+                tunnelPeers = []
+            }
+            if awaitingApproval && (status == .disconnected || status == .invalid) {
+                awaitingApproval = false
             }
         }
     }
@@ -296,6 +330,8 @@ final class TunnelManager: ObservableObject {
         let lastError: String?
         let publicKey: String?
         let overlayIP: String?
+        let peers: [TunnelPeer]?
+        let phase: String?
     }
 
     /// Asks the tunnel process for its latest peer-state snapshot over the
@@ -309,13 +345,20 @@ final class TunnelManager: ObservableObject {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     guard let data else {
-                        if self.status == .connecting {
+                        // The extension takes a moment to start; only a long
+                        // silence is worth reporting.
+                        if self.status == .connecting,
+                           let since = self.connectingSince, Date().timeIntervalSince(since) > 15 {
                             self.lastStartError = "隧道进程无响应，请重试连接或重启 App"
                         }
                         return
                     }
                     guard let snap = try? JSONDecoder().decode(ProviderSnapshot.self, from: data) else { return }
                     self.peerStates = snap.peerStates
+                    if let list = snap.peers, list != self.tunnelPeerRaw {
+                        self.tunnelPeerRaw = list
+                        self.tunnelPeers = list.map(\.node)
+                    }
                     if let publicKey = snap.publicKey, !publicKey.isEmpty {
                         self.localPublicKey = publicKey
                     }
@@ -323,6 +366,7 @@ final class TunnelManager: ObservableObject {
                     if let overlayIP = snap.overlayIP, !overlayIP.isEmpty, overlayIP != "10.96.0.1" {
                         self.localOverlayIP = overlayIP
                     }
+                    self.awaitingApproval = snap.phase == "awaiting-approval" && self.status != .connected
                     if self.status != .connected, let err = snap.lastError, !err.isEmpty {
                         self.lastStartError = err
                     }

@@ -60,6 +60,21 @@ func TestSplitURLToken(t *testing.T) {
 	}
 }
 
+// Operators put `openssl rand -base64` output straight into the relay URL;
+// '+' must stay a literal plus (url.ParseQuery would turn it into a space and
+// the relay would reject the token as wrong).
+func TestSplitURLTokenKeepsRawBase64(t *testing.T) {
+	addr, token := splitURLToken("10.0.0.1:6266?token=ab+cd/ef=")
+	if addr != "10.0.0.1:6266" || token != "ab+cd/ef=" {
+		t.Fatalf("raw base64 token: got %q/%q", addr, token)
+	}
+
+	addr, token = splitURLToken("10.0.0.1:6266?a=b&token=x+y&c=d")
+	if addr != "10.0.0.1:6266" || token != "x+y" {
+		t.Fatalf("token among other params: got %q/%q", addr, token)
+	}
+}
+
 func TestRegisterCarriesToken(t *testing.T) {
 	c := &lrpClient{authToken: "secret"}
 	w := &testWriter{}

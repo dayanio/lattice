@@ -39,14 +39,25 @@ type Response struct {
 	Status *StatusInfo `json:"status,omitempty"`
 }
 
+// PeerStatus is the daemon's view of one remote peer.
+type PeerStatus struct {
+	AppID     string `json:"appId"`
+	Name      string `json:"name,omitempty"`
+	PublicKey string `json:"publicKey"`
+	// Transport is the connection lifecycle state: probing, ice-ready
+	// (direct), lrp-ready (relayed), failed, closed, or none (no probe).
+	Transport string `json:"transport"`
+}
+
 // StatusInfo is the daemon's self-reported runtime state.
 type StatusInfo struct {
-	State          string `json:"state"` // running
-	PID            int    `json:"pid"`
-	Address        string `json:"address,omitempty"`
-	AppID          string `json:"appId,omitempty"`
-	AppliedVersion string `json:"appliedVersion,omitempty"`
-	UptimeSeconds  int64  `json:"uptimeSeconds"`
+	State          string       `json:"state"` // running
+	PID            int          `json:"pid"`
+	Address        string       `json:"address,omitempty"`
+	AppID          string       `json:"appId,omitempty"`
+	AppliedVersion string       `json:"appliedVersion,omitempty"`
+	UptimeSeconds  int64        `json:"uptimeSeconds"`
+	Peers          []PeerStatus `json:"peers,omitempty"`
 }
 
 // Handler processes one IPC request.

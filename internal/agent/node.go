@@ -20,6 +20,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -64,12 +65,15 @@ func discoverNATSURLOnly(ctx context.Context, serverURL string) (string, error) 
 	if override := config.Conf.SignalingURL; override != "" {
 		return override, nil
 	}
-	d, err := discover(ctx, serverURL)
+	d, err := discoverWithRetry(ctx, serverURL)
 	if err != nil {
 		return "", err
 	}
 	return d.NatsURL, nil
 }
+
+// errDiscoveryEmpty means the server answered but advertised no NATS URL.
+var errDiscoveryEmpty = errors.New("discovery endpoint returned empty nats_url")
 
 // discoveryResult holds the URLs returned by the server's /api/v1/discovery endpoint.
 type discoveryResult struct {
@@ -102,7 +106,7 @@ func discover(ctx context.Context, serverURL string) (discoveryResult, error) {
 		return discoveryResult{}, fmt.Errorf("decoding discovery response: %w", err)
 	}
 	if envelope.Data.NatsURL == "" {
-		return discoveryResult{}, fmt.Errorf("discovery endpoint returned empty nats_url")
+		return discoveryResult{}, errDiscoveryEmpty
 	}
 	return discoveryResult{
 		NatsURL:      envelope.Data.NatsURL,
@@ -285,7 +289,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// a later engine (re)start within the same process.
 	if config.Conf.SignalingURL == "" {
 		var d discoveryResult
-		d, err = discover(ctx, config.Conf.ServerUrl)
+		d, err = discoverWithRetry(ctx, config.Conf.ServerUrl)
 		if err != nil {
 			return nil, fmt.Errorf("NATS discovery failed: %w", err)
 		}
@@ -423,8 +427,19 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		GetLrp: func() infra.Lrp {
 			return lrp
 		},
-		GetHandshake: func(pubKey string) (time.Time, error) {
-			return wireguard.PeerHandshake(node.Name, pubKey)
+		GetPeerStats: func(pubKey string) (transport.PeerStats, error) {
+			// In-process IpcGet, not wgctrl: the engine embedded in the iOS
+			// network extension is built with NewNode and never opens the UAPI
+			// socket file wgctrl needs, so every liveness signal would fail there.
+			if node.iface == nil {
+				return transport.PeerStats{}, errors.New("wireguard device not ready")
+			}
+			conf, ipcErr := node.iface.IpcGet()
+			if ipcErr != nil {
+				return transport.PeerStats{}, ipcErr
+			}
+			hs, rx, ep, statsErr := wireguard.PeerStatsFromIpc(conf, pubKey)
+			return transport.PeerStats{LastHandshake: hs, RxBytes: rx, Endpoint: ep}, statsErr
 		},
 	})
 
@@ -438,10 +453,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		if cfg.Flags.RelayQuicURL != "" {
 			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, privateKey, node.probeFactory.Handle)
 		} else {
-			lrpUrl := cfg.Flags.RelayURL
-			if lrpUrl == "" {
-				lrpUrl = node.current.LrpUrl
-			}
+			lrpUrl := resolveRelayURL(cfg.Flags.RelayURL, node.current.LrpUrl)
 
 			if lrpUrl != "" {
 				// probeFactory.Handle is passed directly: probeFactory already exists
@@ -453,6 +465,13 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 			return nil, err
 		}
 		node.lrpClient = lrp
+		if lrp != nil {
+			// The ICE/LRP race and the bind's relay receive path are gated on
+			// this flag; a relay client that exists but is never raced or
+			// read leaves NATed peers with no fallback (same as the Apple
+			// engine, which sets it whenever the server advertises a relay).
+			config.Conf.EnableLrp = true
+		}
 	}
 
 	// ── Phase 3: WireGuard data plane ────────────────────────────────────────
@@ -639,6 +658,12 @@ func (c *Node) Start(ctx context.Context) error {
 			return nil
 		})
 	}
+
+	// Probe lifecycle watchdog: probes that permanently closed (60 s of
+	// failed discovery) must be revived on a cadence of their own — the
+	// netmap apply path is version-guarded and cannot be relied on to
+	// recreate them once the incident that closed them is over.
+	c.probeFactory.StartReconciler(ctx, 30*time.Second)
 	return nil
 }
 
@@ -750,6 +775,7 @@ func (c *Node) StatusSnapshot(pid int) daemon.StatusInfo {
 		AppID:          c.Name,
 		AppliedVersion: c.AppliedVersion(),
 		UptimeSeconds:  int64(time.Since(c.startedAt).Seconds()),
+		Peers:          buildPeerStatuses(c.manager.peerManager.GetAll(), c.ConnectionStates()),
 	}
 	if c.current != nil && c.current.Address != nil {
 		snapshot.Address = *c.current.Address

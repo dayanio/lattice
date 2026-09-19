@@ -43,6 +43,11 @@ struct ContentView: View {
     @State private var detailPeer: PeerNode?
     @State private var showingNetworkSettings = false
     @State private var showingShare = false
+    /// The management API is unavailable (not logged in, or the login expired);
+    /// the device list still shows what the tunnel knows.
+    @State private var needsLogin = false
+    @ObservedObject private var loginCoordinator = LoginCoordinator.shared
+    @ObservedObject private var auth = AuthSession.shared
     @State private var searchQuery = ""
     @ObservedObject private var ui = UIState.shared
     @Environment(\.openWindow) private var openAIWindow
@@ -171,11 +176,11 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                 }
                 Spacer()
-            } else if isLoading {
+            } else if isLoading && displayPeers.isEmpty {
                 Spacer()
                 ProgressView("加载中…")
                 Spacer()
-            } else if !errorMsg.isEmpty {
+            } else if !errorMsg.isEmpty && displayPeers.isEmpty {
                 Spacer()
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -185,13 +190,17 @@ struct ContentView: View {
                         .buttonStyle(.bordered)
                 }
                 Spacer()
-            } else if peers.isEmpty {
+            } else if displayPeers.isEmpty {
                 Spacer()
                 VStack(spacing: 8) {
                     Image(systemName: "personalhotspot")
                         .font(.system(size: 32))
                         .foregroundColor(.secondary)
                     Text("没有已连接的节点").foregroundColor(.secondary)
+                    if needsLogin {
+                        Button("登录以查看和管理设备") { requestManageLogin() }
+                            .buttonStyle(.bordered)
+                    }
                 }
                 Spacer()
             } else {
@@ -203,6 +212,18 @@ struct ContentView: View {
         .task {
             tunnel.load()
             await loadPeers()
+        }
+        .onChange(of: auth.isLoggedIn) { _ in
+            Task { await loadPeers() }
+        }
+        // A management action (rename, delete, ...) that needs a login asks for
+        // one here and carries on once it succeeds. Only the main window presents
+        // it; the menu-bar panel cannot host a sheet.
+        .sheet(isPresented: Binding(
+            get: { loginCoordinator.isPresenting && !inPanel },
+            set: { if !$0 { loginCoordinator.finish(success: false) } }
+        )) {
+            ManageLoginView { loginCoordinator.finish(success: $0) }
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView {
@@ -232,11 +253,39 @@ struct ContentView: View {
         }
     }
 
+    /// Shown when the management API is unavailable: the list above still works,
+    /// only rename / disable / delete and the extra details need a login.
+    private var loginHint: some View {
+        Button { requestManageLogin() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.circle.badge.exclamationmark")
+                    .foregroundColor(.accentColor)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("登录后可管理设备").font(.caption.weight(.medium))
+                    Text("列表与连接不受影响").font(.caption2).foregroundColor(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func requestManageLogin() {
+        Task { _ = await LoginCoordinator.shared.requestLogin() }
+    }
+
     private var deviceList: some View {
         ScrollView {
             VStack(spacing: 0) {
+                if needsLogin {
+                    loginHint
+                }
                 SectionHead(title: "设备", trailing: "\(filteredPeers.count) 台在线")
-                if !inPanel, peers.count >= 4 {
+                if !inPanel, displayPeers.count >= 4 {
                     PanelSearchField(text: $searchQuery)
                 }
                 NavRow(
@@ -369,8 +418,16 @@ struct ContentView: View {
                         QualityPill(text: summary.text, color: summary.color)
                     }
                 }
-                if !tunnel.lastStartError.isEmpty {
-                    Text(tunnel.lastStartError).font(.caption2).foregroundColor(.red)
+                if let failure = tunnel.lastFailure {
+                    Text(failure.title).font(.caption2.weight(.semibold))
+                        .foregroundColor(failure.isNotice ? .orange : .red)
+                    if !failure.advice.isEmpty {
+                        Text(failure.advice)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else if let host = URL(string: tunnel.serverURL ?? ""), let hostHeader = host.host {
                     Text(hostHeader)
                         .font(.caption2)
@@ -396,10 +453,16 @@ struct ContentView: View {
         return nil
     }
 
+    /// Management-API peers merged with the tunnel's own list, so the list works
+    /// without a login.
+    private var displayPeers: [PeerNode] {
+        PeerListMerge.merged(api: peers, tunnel: tunnel.tunnelPeers)
+    }
+
     private var filteredPeers: [PeerNode] {
         let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return peers }
-        return peers.filter {
+        guard !q.isEmpty else { return displayPeers }
+        return displayPeers.filter {
             $0.shownName.localizedCaseInsensitiveContains(q)
                 || $0.name.localizedCaseInsensitiveContains(q)
                 || $0.address.contains(q)
@@ -478,6 +541,13 @@ struct ContentView: View {
         isLoading = true
         errorMsg = ""
         defer { isLoading = false }
+        // Not logged in: skip the management API; the list comes from the tunnel.
+        guard LatticeAPI.shared.isLoggedIn else {
+            needsLogin = true
+            peers = []
+            return
+        }
+        needsLogin = false
         do {
             var loaded = try await LatticeAPI.shared.listPeers()
             // Badge AI agents: an AgentIdentity referencing the peer makes it
@@ -498,8 +568,11 @@ struct ContentView: View {
             let description = error.localizedDescription
             if description.contains("Invalid token") || description.contains("log in first")
                 || description.contains("token has been revoked") {
-                errorMsg = "登录已过期"
-                showingSettings = true
+                needsLogin = true
+                if tunnel.tunnelPeers.isEmpty {
+                    errorMsg = "登录已过期"
+                    showingSettings = true
+                }
             } else {
                 errorMsg = "加载失败: \(description)"
             }
@@ -669,124 +742,347 @@ struct PeerRow: View {
 
 // MARK: - Join (network enrollment)
 
-/// First-run join sheet: collects the control-plane URL and enrollment token,
-/// installs the VPN profile, and connects the tunnel.
+/// First-run join sheet. One input takes an invite link
+/// (lattice://join?server=…&token=…[&name=…]) or a bare enrollment token; the
+/// server address and device name live under "高级" and are only asked for when
+/// the input does not carry them. Saving installs the VPN profile; the caller
+/// connects the tunnel.
 struct JoinView: View {
     var onDone: () -> Void
 
-    @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
-    @State private var token = ""
+    @State private var input = ""
+    @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
     @State private var deviceName = Host.current().localizedName ?? "lattice-mac"
+    @State private var showAdvanced = false
+    @State private var fromClipboard = false
+    /// "Log in and join": an account issues this device's token, instead of an
+    /// invite link or token being pasted.
+    @State private var accountMode = false
+    @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
+    @State private var password = ""
     @State private var isSaving = false
-    @State private var errorText = ""
+    @State private var failure: JoinFailure?
     @State private var showingScanner = false
 
+    private var payload: JoinPayload? { JoinPayload(input) }
+    private var token: String { payload?.token ?? "" }
+    private var effectiveServer: String {
+        (payload?.serverURL ?? serverURL).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private var effectiveName: String { payload?.name ?? deviceName }
+    private var canJoin: Bool {
+        if accountMode {
+            return !serverURL.trimmingCharacters(in: .whitespaces).isEmpty && !username.isEmpty && !password.isEmpty && !isSaving
+        }
+        return !token.isEmpty && !effectiveServer.isEmpty && !isSaving
+    }
+    private var needsServer: Bool { payload != nil && payload?.serverURL == nil && serverURL.isEmpty }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("加入 Lattice 网络")
                 .font(.system(.headline, design: .rounded))
 
-            LabeledField(label: "服务器地址") {
-                TextField("http://127.0.0.1:8080", text: $serverURL)
-                    .textFieldStyle(.plain)
-                    .font(.system(.caption, design: .monospaced))
+            Picker("", selection: $accountMode) {
+                Text("邀请链接 / 令牌").tag(false)
+                Text("账号登录").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if accountMode {
+                LabeledField(label: "服务器地址") {
+                    TextField("http://服务器地址:18090", text: $serverURL)
+                        .textFieldStyle(.plain)
+                        .font(.system(.caption, design: .monospaced))
+                }
+                LabeledField(label: "用户名") {
+                    TextField("admin", text: $username)
+                        .textFieldStyle(.plain)
+                }
+                LabeledField(label: "密码") {
+                    SecureField("••••••••", text: $password)
+                        .textFieldStyle(.plain)
+                }
+                Text("用账号为这台设备签发入网令牌，登录状态会保留，之后的管理操作不必再登录。")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                LabeledField(label: "邀请链接或入网令牌") {
+                    TextField("粘贴 lattice://join?… 链接，或入网令牌", text: $input)
+                        .textFieldStyle(.plain)
+                        .font(.system(.caption, design: .monospaced))
+                }
             }
 
-            LabeledField(label: "入网令牌") {
-                SecureField("控制台签发的入网令牌", text: $token)
-                    .textFieldStyle(.plain)
-                    .font(.system(.caption, design: .monospaced))
+            if accountMode {
+                EmptyView()
+            } else if fromClipboard {
+                Text("已从剪贴板读取邀请信息")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else if let payload, payload.serverURL != nil {
+                Text("服务器：\(payload.serverURL ?? "")")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
-            LabeledField(label: "节点名称") {
-                TextField("lattice-mac", text: $deviceName)
-                    .textFieldStyle(.plain)
+            if needsServer && !accountMode {
+                Text("这个令牌不含服务器地址，请在下面填写。")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
             }
 
-            Text("加入后系统会请求授权创建 VPN 配置，本机即可访问网络内的节点。")
+            DisclosureGroup(accountMode ? "高级（设备名）" : "高级（服务器地址、设备名）", isExpanded: $showAdvanced) {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !accountMode {
+                        LabeledField(label: "服务器地址") {
+                            TextField("http://服务器地址:18090", text: $serverURL)
+                                .textFieldStyle(.plain)
+                                .font(.system(.caption, design: .monospaced))
+                        }
+                    }
+                    LabeledField(label: "设备名") {
+                        TextField("lattice-mac", text: $deviceName)
+                            .textFieldStyle(.plain)
+                    }
+                    if let stored = DeviceName.preview(effectiveName) {
+                        Text("将保存为 \(stored)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.top, 6)
+            }
+            .font(.caption)
+
+            Text("加入后系统会请求授权创建 VPN 配置，请在弹窗里点“允许”。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
 
-            if !errorText.isEmpty {
-                Text(errorText).font(.caption).foregroundColor(.red)
+            if let failure {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(failure.title).font(.caption.weight(.semibold)).foregroundColor(.red)
+                    if !failure.advice.isEmpty {
+                        Text(failure.advice).font(.caption2).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
 
             HStack(spacing: 8) {
-                Button {
-                    showingScanner = true
-                } label: {
-                    Label("扫码入网", systemImage: "qrcode.viewfinder")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
+                if !accountMode {
+                    Button {
+                        showingScanner = true
+                    } label: {
+                        Label("扫码入网", systemImage: "qrcode.viewfinder")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
 
-                Button {
-                    pastePayload()
-                } label: {
-                    Label("粘贴", systemImage: "doc.on.clipboard")
-                        .font(.caption)
+                    Button {
+                        pasteFromClipboard()
+                    } label: {
+                        Label("粘贴", systemImage: "doc.on.clipboard")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
 
                 Spacer()
 
                 if isSaving {
                     ProgressView().controlSize(.small)
+                    Text("正在保存配置…").font(.caption2).foregroundColor(.secondary)
                 } else {
-                    Button("加入网络") { saveAndConnect() }
+                    Button(accountMode ? "登录并加入" : "加入网络") { join() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(serverURL.isEmpty || token.isEmpty)
+                        .disabled(!canJoin)
                 }
             }
         }
         .padding(20)
-        .frame(width: 320)
+        .frame(width: 340)
+        .onAppear { detectClipboardInvite() }
+        .onChange(of: needsServer) { needed in
+            if needed { showAdvanced = true }
+        }
         .sheet(isPresented: $showingScanner) {
             JoinScannerView { payload in
                 showingScanner = false
-                applyPayload(payload)
+                applyPayload(payload, raw: nil)
             } onCancel: {
                 showingScanner = false
             }
         }
     }
 
-    /// Fills server/token from a scanned or pasted lattice://join payload.
-    private func applyPayload(_ payload: JoinPayload) {
-        if let server = payload.serverURL, !server.isEmpty {
-            serverURL = server
-        }
-        if let t = payload.token, !t.isEmpty {
-            token = t
-        }
-        errorText = ""
+    /// Only a complete invite link is picked up from the clipboard on its own; a
+    /// bare word (any copied password, say) would otherwise land in this field.
+    private func detectClipboardInvite() {
+        guard input.isEmpty,
+              let raw = NSPasteboard.general.string(forType: .string),
+              raw.lowercased().hasPrefix("lattice://join"),
+              let payload = JoinPayload(raw), payload.token != nil else { return }
+        applyPayload(payload, raw: raw)
+        fromClipboard = true
     }
 
-    private func pastePayload() {
+    private func applyPayload(_ payload: JoinPayload, raw: String?) {
+        if let raw {
+            input = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let t = payload.token {
+            var link = URLComponents()
+            link.scheme = "lattice"
+            link.host = "join"
+            var items = [URLQueryItem(name: "token", value: t)]
+            if let server = payload.serverURL { items.append(URLQueryItem(name: "server", value: server)) }
+            if let name = payload.name { items.append(URLQueryItem(name: "name", value: name)) }
+            link.queryItems = items
+            input = link.string ?? t
+        }
+        fromClipboard = false
+        failure = nil
+    }
+
+    private func pasteFromClipboard() {
         guard let raw = NSPasteboard.general.string(forType: .string) else {
-            errorText = "剪贴板为空"
+            failure = JoinFailure(title: "剪贴板是空的", advice: "先复制邀请链接或入网令牌。")
             return
         }
         guard let payload = JoinPayload(raw) else {
-            errorText = "剪贴板内容不是有效的入网信息"
+            failure = JoinFailure(title: "剪贴板里不是有效的入网信息", advice: "需要 lattice://join?… 链接，或不含空格的入网令牌。")
             return
         }
-        applyPayload(payload)
+        applyPayload(payload, raw: raw)
     }
 
-    private func saveAndConnect() {
+    private func join() {
+        if accountMode {
+            joinWithAccount()
+        } else {
+            saveAndConnect(server: effectiveServer, token: token, name: effectiveName)
+        }
+    }
+
+    /// Logs in, has the account issue this device's token, then joins with it.
+    private func joinWithAccount() {
         isSaving = true
-        errorText = ""
-        let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
-        UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
-        UserDefaults.standard.set(deviceName, forKey: "lattice.nodeName")
-        TunnelManager.shared.saveJoin(serverURL: trimmed, token: token, name: deviceName) { err in
+        failure = nil
+        let server = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = server.hasSuffix("/") ? String(server.dropLast()) : server
+        Task {
+            do {
+                let issued = try await LatticeAPI.shared.loginAndCreateDeviceToken(server: trimmed, user: username, pass: password)
+                password = ""
+                saveAndConnect(server: trimmed, token: issued, name: deviceName)
+            } catch let error as AccountJoinError {
+                isSaving = false
+                failure = error.failure
+            } catch {
+                isSaving = false
+                failure = .tokenNotIssued(error.localizedDescription)
+            }
+        }
+    }
+
+    private func saveAndConnect(server rawServer: String, token: String, name: String) {
+        isSaving = true
+        failure = nil
+        let server = rawServer.hasSuffix("/") ? String(rawServer.dropLast()) : rawServer
+        UserDefaults.standard.set(server, forKey: "lattice.serverURL")
+        // Peers appear under the server's normalized name; keep the same form so
+        // "this device" is recognised in the list.
+        UserDefaults.standard.set(DeviceName.normalized(name), forKey: "lattice.nodeName")
+        TunnelManager.shared.saveJoin(serverURL: server, token: token, name: name) { err in
             isSaving = false
             if let err {
-                errorText = "保存失败: \(err)"
+                failure = JoinFailure(title: "保存 VPN 配置失败", advice: "\(err)。请在系统弹窗里点“允许”后重试。")
             } else {
                 onDone()
             }
+        }
+    }
+}
+
+// MARK: - Manage login (on demand)
+
+/// Compact login for a management action that needs one. The server is the one
+/// the device joined; only the account is asked for.
+struct ManageLoginView: View {
+    var onFinished: (Bool) -> Void
+
+    @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
+    @State private var password = ""
+    @State private var isLoggingIn = false
+    @State private var loginError = ""
+
+    private var serverURL: String { UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("登录以管理设备")
+                .font(.system(.headline, design: .rounded))
+            Text("改名、下线、删除等管理操作需要账号；设备列表和连接不受影响。")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if serverURL.isEmpty {
+                Text("尚未加入网络，请先加入。")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            } else {
+                Text(serverURL)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            LabeledField(label: "用户名") {
+                TextField("admin", text: $username)
+                    .textFieldStyle(.plain)
+            }
+            LabeledField(label: "密码") {
+                SecureField("••••••••", text: $password)
+                    .textFieldStyle(.plain)
+            }
+
+            if !loginError.isEmpty {
+                Text(loginError).font(.caption).foregroundColor(.red)
+            }
+
+            HStack {
+                Button("取消") { onFinished(false) }
+                    .buttonStyle(.bordered)
+                Spacer()
+                if isLoggingIn {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("登录") { Task { await login() } }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(serverURL.isEmpty || username.isEmpty || password.isEmpty)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 300)
+    }
+
+    private func login() async {
+        isLoggingIn = true
+        loginError = ""
+        defer { isLoggingIn = false }
+        do {
+            try await LatticeAPI.shared.login(user: username, pass: password)
+            onFinished(true)
+        } catch {
+            loginError = "登录失败: \(error.localizedDescription)"
         }
     }
 }

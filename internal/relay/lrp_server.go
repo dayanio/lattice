@@ -35,6 +35,7 @@ type Server struct {
 	sessionMgr      *SessionManager
 	authToken       string
 	requirePeerAuth bool
+	failLog         relayFailLimiter
 }
 
 func NewServer(flags *config.Config) *Server {
@@ -69,6 +70,12 @@ func NewServer(flags *config.Config) *Server {
 
 func (s *Server) Manager() *SessionManager {
 	return s.sessionMgr
+}
+
+// UpgradeHandler is the HTTP handler that upgrades a connection to an LRP
+// session, for embedding the relay in another server or in tests.
+func (s *Server) UpgradeHandler() http.Handler {
+	return http.HandlerFunc(s.boltUpgradeHandler)
 }
 
 func (s *Server) Start() error {
@@ -284,7 +291,10 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 				}
 			}
 
-			if relayErr := s.sessionMgr.Relay(uint64(h.ToID), frame); relayErr != nil {
+			if h.Cmd == Forward {
+				stampSender(frame, fromId)
+			}
+			if relayErr := s.sessionMgr.Relay(uint64(h.ToID), frame); relayErr != nil && s.failLog.allow(h.ToID, time.Now()) {
 				s.log.Warn("relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
 			}
 		}

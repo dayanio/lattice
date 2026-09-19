@@ -100,3 +100,12 @@ func Unmarshal(data []byte) (*Header, error) {
 	h.Reserved = data[11]
 	return h, nil
 }
+
+// stampSender rewrites the ToID field of a frame about to be relayed to the
+// SENDER's ID. Clients register with ToID = their own ID and address frames
+// with ToID = the target; a relayed Forward frame carries nothing else, so the
+// receiver (and WireGuard's roaming endpoint) identifies the peer from this
+// field. Without the rewrite it holds the receiver's own ID.
+func stampSender(frame []byte, fromID uint64) {
+	binary.LittleEndian.PutUint32(frame[7:11], uint32(fromID))
+}

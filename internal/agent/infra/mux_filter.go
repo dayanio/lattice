@@ -61,6 +61,7 @@ type FilteringUDPMux struct {
 
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
+	echo         pathEchoState
 	droppedCount atomic.Uint64 // count of dropped pass-through packets
 }
 
@@ -93,14 +94,15 @@ func (f *FilteringUDPMux) SetPassThrough(ch chan<- PassThroughPacket) {
 }
 
 // UDPMux returns the UDPMux interface for ice.WithUDPMux (host candidates).
+// Listen addresses of interfaces rejected by ICEInterfaceAllowed are hidden.
 func (f *FilteringUDPMux) UDPMux() ice.UDPMux {
-	return f.inner.UDPMuxDefault
+	return iceFilteredMux{f.inner.UDPMuxDefault}
 }
 
 // UDPMuxSrflx returns the UniversalUDPMux interface for ice.WithUDPMuxSrflx
-// (server-reflexive candidates).
+// (server-reflexive candidates), with the same address filtering as UDPMux.
 func (f *FilteringUDPMux) UDPMuxSrflx() ice.UniversalUDPMux {
-	return f.inner
+	return iceFilteredUniversalMux{f.inner}
 }
 
 // Start launches the sole-reader goroutine. Must be called after SetPassThrough
@@ -132,6 +134,9 @@ func (f *FilteringUDPMux) readLoop() {
 		pkt := buf[:n]
 		udpAddr, _ := addr.(*net.UDPAddr)
 
+		if f.handlePathEcho(pkt, addr) {
+			continue
+		}
 		if stun.IsMessage(pkt) {
 			// STUN: inject into the mux so connWorker can dispatch by ufrag.
 			f.chanConn.inject(pkt, addr)

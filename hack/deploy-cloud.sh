@@ -44,15 +44,19 @@ mkdir -p /tmp/cloud-deploy
 # ── 3. 上传 + 远端依赖 ───────────────────────────────────────────────────────
 info "上传二进制与部署清单"
 $SSH "mkdir -p /opt/lattice/bin /etc/lattice"
-$SCP /tmp/cloud-deploy/latticed  "${CLOUD_USER}@${CLOUD_HOST}:/opt/lattice/bin/latticed"
-$SCP /tmp/cloud-deploy/lattice   "${CLOUD_USER}@${CLOUD_HOST}:/opt/lattice/bin/lattice"
-$SSH 'chmod 755 /opt/lattice/bin/*'
+# Upload to a temp path then rename: scp overwriting the executable of the
+# running latticed fails with ETXTBSY (text file busy); rename swaps the
+# inode and is always allowed.
+$SCP /tmp/cloud-deploy/latticed  "${CLOUD_USER}@${CLOUD_HOST}:/opt/lattice/bin/.latticed.new"
+$SCP /tmp/cloud-deploy/lattice   "${CLOUD_USER}@${CLOUD_HOST}:/opt/lattice/bin/.lattice.new"
+$SSH 'mv -f /opt/lattice/bin/.latticed.new /opt/lattice/bin/latticed && mv -f /opt/lattice/bin/.lattice.new /opt/lattice/bin/lattice && chmod 755 /opt/lattice/bin/*'
 
 info "检查/安装 docker($PKG)"
 $SSH 'command -v docker >/dev/null || { apt-get update -qq && apt-get install -y -qq docker.io || dnf install -y -q docker || yum install -y -q docker; }'
 
 # ── 4. 云端配置(幂等：已生成的凭据不覆盖)───────────────────────────────────
 info "生成/复用 admin 密码与 relay token"
+ADMIN_USER="${ADMIN_USER:-admin}"
 $SSH 'grep -q ADMIN_PASSWORD /etc/lattice/credentials 2>/dev/null || { umask 077; { echo "ADMIN_PASSWORD=$(openssl rand -base64 18)"; echo "RELAY_TOKEN=$(openssl rand -base64 18)"; } > /etc/lattice/credentials; }'
 ADMIN_PASSWORD=$($SSH 'grep ADMIN_PASSWORD /etc/lattice/credentials | cut -d= -f2')
 RELAY_TOKEN=$($SSH 'grep RELAY_TOKEN /etc/lattice/credentials | cut -d= -f2')
@@ -68,6 +72,10 @@ Wants=network-online.target
 [Service]
 ExecStart=/opt/lattice/bin/latticed --standalone --config-dir /etc/lattice/config
 Environment=LATTICE_LISTEN=0.0.0.0:18090
+# Announce the PUBLIC NATS address: /api/v1/discovery hands this to every
+# agent. Without it the default nats://127.0.0.1:4222 is returned, which is
+# only reachable on the cloud host itself (container agents die instantly).
+Environment=LATTICE_SIGNALING_URL=nats://${CLOUD_HOST}:4222
 Environment=LATTICE_RELAY_ADVERTISE_URL=${CLOUD_HOST}:6266
 Environment=LATTICE_STUN_URL=${CLOUD_HOST}:3478
 Environment=LATTICE_LRP_AUTH_TOKEN=${RELAY_TOKEN}
@@ -79,7 +87,7 @@ WorkingDirectory=/var/lib/lattice
 [Install]
 WantedBy=multi-user.target
 EOF
-$SSH 'mkdir -p /etc/lattice/config /var/lib/lattice && systemctl daemon-reload && systemctl enable --now lattice-controller' || fail "systemd 启动失败"
+$SSH 'mkdir -p /etc/lattice/config /var/lib/lattice && systemctl daemon-reload && systemctl enable lattice-controller && systemctl restart lattice-controller' || fail "systemd 启动失败"
 
 # ── 6. 首次初始化：改 admin 密码 + 建默认 workspace + 入网 token ─────────────
 info "等待 API 就绪并初始化"
@@ -97,7 +105,7 @@ TOKEN=$(login "$ADMIN_PASSWORD") || true
 [ -n "$TOKEN" ] || TOKEN=$(login "123456")
 [ -n "$TOKEN" ] || fail "admin 登录失败(种子密码与生成密码均未通过)"
 $SSH "grep -q WORKSPACE_ID /etc/lattice/credentials 2>/dev/null || true"
-WS=$($SSH "grep WORKSPACE_ID /etc/lattice/credentials 2>/dev/null | cut -d= -f2" | tr -d '\r\n')
+WS=$($SSH "grep WORKSPACE_ID /etc/lattice/credentials 2>/dev/null | tail -1 | cut -d= -f2" | tr -d '\r\n')
 if [ -z "$WS" ]; then
   WS=$(curl -s -X POST "$API/api/v1/workspaces/add" -H "Authorization: Bearer $TOKEN" \
     -H 'Content-Type: application/json' \
@@ -105,7 +113,7 @@ if [ -z "$WS" ]; then
     | python3 -c "import sys,json;print(json.load(sys.stdin)['data']['id'])")
   $SSH "echo WORKSPACE_ID=$WS >> /etc/lattice/credentials"
 fi
-JOIN_TOKEN=$($SSH "grep JOIN_TOKEN /etc/lattice/credentials 2>/dev/null | cut -d= -f2" | tr -d '\r\n')
+JOIN_TOKEN=$($SSH "grep JOIN_TOKEN /etc/lattice/credentials 2>/dev/null | tail -1 | cut -d= -f2" | tr -d '\r\n')
 if [ -z "$JOIN_TOKEN" ]; then
   JOIN_TOKEN=$(curl -s -X POST "$API/api/v1/token/generate" -H "Authorization: Bearer $TOKEN" \
     -H "X-Workspace-Id: $WS" -H 'Content-Type: application/json' -d '{"name":"cloud-agent","expiry":""}' \
@@ -118,7 +126,9 @@ info "在云端构建 agent 镜像"
 $SSH 'mkdir -p /tmp/agentimg && cp /opt/lattice/bin/lattice /tmp/agentimg/lattice && printf "FROM alpine:3.19\nRUN apk add -U iptables ip6tables && chmod 755 /usr/local/bin 2>/dev/null; mkdir -p /usr/local/bin\nCOPY lattice /usr/local/bin/lattice\nWORKDIR /data\n" > /tmp/agentimg/Dockerfile && docker build -q -t lattice-run-test:v2 /tmp/agentimg'
 
 info "启动测试容器 agent(hostname cloud-node-1)"
-$SSH 'docker rm -f lattice-cloud-node >/dev/null 2>&1 || true; docker run -d --name lattice-cloud-node --hostname cloud-node-1 --privileged --add-host host.docker.internal:host-gateway lattice-run-test:v2 sh -c "lattice init --server http://host.docker.internal:18090 --token '$JOIN_TOKEN' >/tmp/init.log 2>&1 && exec lattice up"' || \
+# 容器无法回环访问宿主机自己的公网 IP:6266(云厂商会拦),所以中继地址覆盖为宿主网关;
+# token 沿用控制面下发地址里带的那份,无需在此重复。
+$SSH 'docker rm -f lattice-cloud-node >/dev/null 2>&1 || true; docker run -d --name lattice-cloud-node --hostname cloud-node-1 --privileged --add-host host.docker.internal:host-gateway -v lattice-cloud-node-data:/root/.lattice lattice-run-test:v2 sh -c "lattice init --server http://host.docker.internal:18090 --token '$JOIN_TOKEN' >/tmp/init.log 2>&1 && exec lattice up --relay-url host.docker.internal:6266"' || \
   fail "容器启动失败——确认镜像 lattice-run-test:v2 已在云端构建(脚本第 8 步提示见报告)"
 
 # ── 8. 输出交付信息 ──────────────────────────────────────────────────────────

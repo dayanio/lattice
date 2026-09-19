@@ -70,6 +70,26 @@ func TestTokenService_CreateStandalone_WritesEnrollmentToken(t *testing.T) {
 	assert.Equal(t, models.PolicyStatusActive, pol.Status)
 }
 
+// Regression: issuing a token with a caller-supplied name must return the
+// stored token. It used to return a freshly generated random string that was
+// never persisted, so every join with the issued token failed "token not
+// exists" (cloud test host, 2026-09-19).
+func TestTokenService_CreateStandalone_NamedTokenReturnsStoredValue(t *testing.T) {
+	svc, st := newStandaloneTokenService(t)
+	ctx := workspaceContext(context.Background(), "ws1")
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Dev",
+	}))
+
+	tokenStr, err := svc.Create(ctx, &dto.TokenDto{Name: "cloud-agent", Expiry: "1h", Limit: 5})
+	require.NoError(t, err)
+	assert.Equal(t, "cloud-agent", tokenStr, "the issued token must be the stored one, not an unpersisted random string")
+
+	tok, err := st.EnrollmentTokens().GetByToken(ctx, tokenStr)
+	require.NoError(t, err)
+	assert.Equal(t, "ws1", tok.WorkspaceID)
+}
+
 func TestTokenService_DeleteStandalone(t *testing.T) {
 	svc, st := newStandaloneTokenService(t)
 	ctx := workspaceContext(context.Background(), "ws1")

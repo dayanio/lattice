@@ -52,10 +52,14 @@ const DefaultMTU = 1280
 
 // Engine events reported to the Swift side via EngineDelegate.OnEvent.
 const (
-	EventConnecting   = "connecting"
-	EventConnected    = "connected"
-	EventDisconnected = "disconnected"
-	eventErrorPrefix  = "error: "
+	EventConnecting = "connecting"
+	// EventAwaitingApproval means registration succeeded but the workspace holds
+	// the device for administrator approval (ADR-0003). The engine keeps waiting
+	// and continues on its own once the device is approved.
+	EventAwaitingApproval = "awaiting-approval"
+	EventConnected        = "connected"
+	EventDisconnected     = "disconnected"
+	eventErrorPrefix      = "error: "
 )
 
 // EngineDelegate is implemented on the Swift side; gomobile generates the
@@ -100,6 +104,7 @@ type Engine struct {
 	privKey  wgtypes.Key
 
 	mu       sync.Mutex
+	node     *latticeagent.Node // set once the node exists; read by Peers
 	running  bool
 	cancel   context.CancelFunc
 	done     chan struct{}
@@ -204,7 +209,7 @@ func (e *Engine) run(ctx context.Context) {
 	e.emit(EventConnecting)
 
 	// The agent internals read these globals for NATS identity and endpoints.
-	agentconfig.Conf.AppId = e.cfg.Name
+	agentconfig.Conf.AppId = infra.NormalizeAppID(e.cfg.Name)
 	agentconfig.Conf.ServerUrl = e.cfg.ServerURL
 	agentconfig.Conf.WgPort = 0 // random UDP port inside the NE process
 
@@ -225,7 +230,8 @@ func (e *Engine) run(ctx context.Context) {
 	e.mu.Lock()
 	e.privKey = privKey
 	e.mu.Unlock()
-	peer, err := latticeagent.RegisterSandboxViaNATS(ctx, e.cfg.ServerURL, e.cfg.Token, e.cfg.Name, privKey)
+	peer, err := latticeagent.RegisterSandboxViaNATSNotify(ctx, e.cfg.ServerURL, e.cfg.Token, e.cfg.Name, privKey,
+		func() { e.emit(EventAwaitingApproval) })
 	if err != nil {
 		e.emitError(fmt.Errorf("enroll: %w", err))
 		return
@@ -284,6 +290,15 @@ func (e *Engine) run(ctx context.Context) {
 		e.emitError(fmt.Errorf("create node: %w", err))
 		return
 	}
+
+	e.mu.Lock()
+	e.node = node
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.node = nil
+		e.mu.Unlock()
+	}()
 
 	node.GetNetworkMap = func() (*infra.Message, error) {
 		return node.GetNetMap(peer.Token)
@@ -449,6 +464,20 @@ func (e *Engine) PublicKey() string {
 		return ""
 	}
 	return e.privKey.PublicKey().String()
+}
+
+// Peers returns the remote nodes this device knows about as a JSON array:
+// [{"appId","name","address","platform","state","online"}]. It comes from the
+// tunnel's own network map, so the app can list devices without a management
+// login. "[]" until the node exists.
+func (e *Engine) Peers() string {
+	e.mu.Lock()
+	node := e.node
+	e.mu.Unlock()
+	if node == nil {
+		return "[]"
+	}
+	return peerListJSON(node.GetPeerManager().GetAll(), node.ConnectionStates(), infra.NormalizeAppID(e.cfg.Name))
 }
 
 // ResetIdentity deletes the persisted WireGuard identity file, if any, so

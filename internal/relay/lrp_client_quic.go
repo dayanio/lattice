@@ -248,6 +248,13 @@ func (c *QUICClient) RemoteAddr() net.Addr {
 
 // Send transmits a LRP frame (header + data) as a QUIC datagram. While
 // disconnected, sends fail fast: WireGuard retransmits at its own layer.
+// Connected reports whether the relay QUIC connection is currently up.
+func (c *QUICClient) Connected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn != nil
+}
+
 func (c *QUICClient) Send(ctx context.Context, targetId uint64, lrpType uint8, data []byte) error {
 	c.mu.Lock()
 	conn := c.conn

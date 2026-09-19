@@ -17,7 +17,9 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/provision"
+	"github.com/alatticeio/lattice/internal/relay"
 	"github.com/alatticeio/lattice/internal/signal"
 )
 
@@ -39,7 +42,7 @@ type ProbeFactory struct {
 	getProvisioner func() provision.Provisioner
 	getOnMessage   func() func(context.Context, *infra.Message) error
 	getLrp         func() infra.Lrp
-	getHandshake   func(pubKey string) (time.Time, error)
+	getStats       func(pubKey string) (PeerStats, error)
 
 	log *log.Logger
 
@@ -59,10 +62,10 @@ type ProbeFactoryConfig struct {
 	FilteringMux   *infra.FilteringUDPMux
 	FilteringMux6  *infra.FilteringUDPMux
 	GetProvisioner func() provision.Provisioner
-	// GetHandshake returns the WireGuard LastHandshakeTime for the given peer
-	// public key. Used by the liveness ticker to detect silent peer failures.
-	// May be nil (liveness monitoring is disabled).
-	GetHandshake func(pubKey string) (time.Time, error)
+	// GetPeerStats returns the WireGuard handshake time and received-byte
+	// counter for the given peer public key. Used by the liveness ticker to
+	// detect silent peer failures. May be nil (liveness monitoring is disabled).
+	GetPeerStats func(pubKey string) (PeerStats, error)
 	ShowLog      bool
 }
 
@@ -79,8 +82,157 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 		FilteringMux6:  cfg.FilteringMux6,
 		getProvisioner: cfg.GetProvisioner,
 		getOnMessage:   cfg.GetOnMessage,
-		getHandshake:   cfg.GetHandshake,
+		getStats:       cfg.GetPeerStats,
 	}
+}
+
+// pingDirect sends a path echo to a direct address through the shared UDP
+// socket of the matching address family.
+func (p *ProbeFactory) pingDirect(ctx context.Context, addr string, timeout time.Duration) (time.Duration, error) {
+	ua, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return 0, err
+	}
+	mux := p.FilteringMux
+	if ua.IP.To4() == nil && p.FilteringMux6 != nil {
+		mux = p.FilteringMux6
+	}
+	if mux == nil {
+		return 0, errors.New("no UDP mux for path echo")
+	}
+	return mux.Ping(ctx, ua, timeout)
+}
+
+// keepaliveFor returns the WireGuard persistent-keepalive interval this side
+// configures for the peer: only the initiator sends keepalives.
+//
+// wireguard-go re-arms the keepalive timer on every authenticated packet it
+// sends or receives. With keepalives on both sides each received one postpones
+// the local one, the sides alternate, and each receives a keepalive only about
+// every 50 s. That makes a single lost packet look like a 75 s silence and
+// would trip the received-bytes stall check (livenessTracker) on a healthy
+// path. With only the initiator sending, the responder receives one on a fixed
+// 25 s rhythm and can judge liveness by it; the initiator has no such rhythm
+// and relies on the handshake age, or on the responder's restart notice.
+func keepaliveFor(local, remote infra.PeerIdentity) int {
+	if isInitiator(local, remote) {
+		return provision.PersistentKeepalive
+	}
+	return 0
+}
+
+// reconcileAction is what the reconciler must do with a probe.
+type reconcileAction int
+
+const (
+	reconcileNone    reconcileAction = iota
+	reconcileStart                   // never started (Created)
+	reconcileRevive                  // permanently closed: replace and start
+	reconcileRestart                 // frozen in Probing: restart wholesale
+)
+
+// probingStuckAfter is how long a Probing cycle may run before it is
+// considered frozen: a healthy cycle self-terminates within ~75 s.
+const probingStuckAfter = 90 * time.Second
+
+// reconcileActionFor decides what the reconciler does with a probe given its
+// state and (for Probing) when the current cycle started.
+func reconcileActionFor(state PeerState, startedAtNanos int64, now time.Time) reconcileAction {
+	switch state {
+	case StateCreated:
+		return reconcileStart
+	case StateClosed:
+		return reconcileRevive
+	case StateProbing:
+		if startedAtNanos > 0 && now.Sub(time.Unix(0, startedAtNanos)) > probingStuckAfter {
+			return reconcileRestart
+		}
+	}
+	return reconcileNone
+}
+
+// StartReconciler periodically revives probes that reached StateClosed.
+//
+// Probes close permanently after 60 s of failed discovery (Probe.onFailure),
+// and the netmap pipeline cannot be relied on to recreate them: the poll loop
+// skips re-applying an unchanged ConfigVersion, so a node whose first probe
+// window overlapped a peer outage or a control-plane incident stayed dark
+// until process restart even though every dependency had recovered (observed
+// live: Mac initiator probes closed during the STUN outage and never
+// restarted, 2026-09-19). This reconciler replaces every closed probe with a
+// fresh one (Get swaps StateClosed entries) and starts it, restoring the
+// initiate/answer role it had before.
+func (f *ProbeFactory) StartReconciler(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				now := time.Now()
+				f.mu.RLock()
+				var created, closed, stuck []infra.PeerIdentity
+				for _, probe := range f.probes {
+					switch reconcileActionFor(probe.sm.Current(), probe.startedAt.Load(), now) {
+					case reconcileStart:
+						created = append(created, probe.remoteId)
+					case reconcileRevive:
+						closed = append(closed, probe.remoteId)
+					case reconcileRestart:
+						// Probing cycles self-terminate within ~75 s (60 s SYN window +
+						// Dial timeout). Still Probing well past that means the discover
+						// goroutine is gone (e.g. it lost the epoch race): restart the
+						// probe wholesale.
+						stuck = append(stuck, probe.remoteId)
+					}
+				}
+				f.mu.RUnlock()
+
+				// Created probes were registered but never started, e.g. a signaling
+				// packet reached a permanently closed probe, Get swapped in a fresh one
+				// and nothing ever started it. Neither the netmap pipeline nor the
+				// Closed/Probing checks would pick it up, leaving the peer dark until
+				// process restart.
+				for _, remoteId := range created {
+					f.mu.RLock()
+					probe := f.probes[remoteId.AppID]
+					f.mu.RUnlock()
+					if probe == nil {
+						continue
+					}
+					if err := probe.Start(ctx, remoteId); err != nil {
+						f.log.Error("reconciler: start probe failed", err, "remoteId", remoteId.AppID)
+						continue
+					}
+					f.log.Info("reconciler: started never-started probe", "remoteId", remoteId.AppID)
+				}
+				for _, remoteId := range closed {
+					probe, err := f.Get(remoteId)
+					if err != nil {
+						f.log.Error("reconciler: recreate probe failed", err, "remoteId", remoteId.AppID)
+						continue
+					}
+					if err := probe.Start(ctx, remoteId); err != nil {
+						f.log.Error("reconciler: restart probe failed", err, "remoteId", remoteId.AppID)
+						continue
+					}
+					f.log.Info("reconciler: revived closed probe", "remoteId", remoteId.AppID)
+				}
+				for _, remoteId := range stuck {
+					f.mu.RLock()
+					probe := f.probes[remoteId.AppID]
+					f.mu.RUnlock()
+					if probe == nil {
+						continue
+					}
+					f.log.Warn("reconciler: restarting probe stuck in Probing", "remoteId", remoteId.AppID)
+					probe.restart()
+				}
+			}
+		}
+	}()
 }
 
 func (f *ProbeFactory) Register(remoteId infra.PeerIdentity, probe *Probe) {
@@ -188,13 +340,19 @@ func (a *wgConfigAdapter) SetupNAT(iface string) error {
 	return pr.SetupNAT(iface)
 }
 
+// relayClient returns the relay client, or nil when the node has none.
+func (p *ProbeFactory) relayClient() infra.Lrp {
+	if p.getLrp == nil {
+		return nil
+	}
+	return p.getLrp()
+}
+
 func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 	getLocalPeer := func() *infra.Peer {
-		lp := p.peerManager.GetPeer(p.localId.AppID)
+		lp := signalingPeer(p.peerManager.GetPeer(p.localId.AppID))
 		if lp != nil && lp.AllowedIPs == "" && lp.Address != nil {
-			lpCopy := *lp
-			lpCopy.AllowedIPs = fmt.Sprintf("%s/32", *lp.Address)
-			return &lpCopy
+			lp.AllowedIPs = fmt.Sprintf("%s/32", *lp.Address)
 		}
 		return lp
 	}
@@ -274,13 +432,28 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 	// the configurator, NOT direct provisioner calls.
 	sm := NewStateMachine(StateCreated)
 
+	signaler := newPeerSignaler(p.log, remoteId.AppID, p.signal.Send,
+		func() bool {
+			cs, ok := p.signal.(interface{ Connected() bool })
+			return !ok || cs.Connected()
+		},
+		func(ctx context.Context, to infra.PeerID, data []byte) error {
+			lrp := p.relayClient()
+			if lrp == nil {
+				return errRelayUnready
+			}
+			return lrp.Send(ctx, to.ToUint64(), relay.Probe, data)
+		},
+		func() bool {
+			lrp := p.relayClient()
+			return lrp != nil && lrp.Connected()
+		},
+	)
+	sm.OnTransition(signaler.onState)
+
 	pubKey := remoteId.PublicKey.String()
 
-	// Only initiator drives PersistentKeepalive.
-	persistentKA := 0
-	if isInitiator(p.localId, remoteId) {
-		persistentKA = provision.PersistentKeepalive
-	}
+	persistentKA := keepaliveFor(p.localId, remoteId)
 
 	sm.OnTransition(func(from, to PeerState) {
 		p.log.Debug("state transition", "remoteId", remoteId.AppID, "from", from, "to", to)
@@ -353,7 +526,7 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 			LocalId:        p.localId,
 			RemoteId:       remoteId,
 			Lrp:            p.getLrp(),
-			Sender:         p.signal.Send,
+			Sender:         signaler.Send,
 			GetLocalPeer:   getLocalPeer,
 			OnPeerReceived: onPeerReceived,
 			OnRestart:      func() { probe.restart() },
@@ -367,14 +540,15 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		signal:       p.signal,
 		sm:           sm,
 		configurator: configurator,
-		getHandshake: p.getHandshake,
+		getStats:     p.getStats,
+		pathPing:     p.pingDirect,
 	}
 
 	makeIceDialer := func() infra.Dialer {
 		return NewIceDialer(&ICEDialerConfig{
 			LocalId:        p.localId,
 			RemoteId:       remoteId,
-			Sender:         p.signal.Send,
+			Sender:         signaler.Send,
 			GetLocalPeer:   getLocalPeer,
 			OnPeerReceived: onPeerReceived,
 			FilteringMux:   p.FilteringMux,
@@ -424,6 +598,14 @@ func (p *ProbeFactory) Handle(ctx context.Context, remoteId infra.PeerID, packet
 	probe, err := p.Get(remoteIdentity)
 	if err != nil {
 		return err
+	}
+	// Get may have just replaced a permanently closed probe with a fresh one.
+	// A responder that receives a SYN needs a running Dial to accept the ICE
+	// session, and an initiator must be running to react to a restart notice,
+	// so start it now instead of waiting for the reconciler tick. Background
+	// context: ctx dies when this packet's handler returns.
+	if probe.State() == StateCreated {
+		_ = probe.Start(context.Background(), remoteIdentity)
 	}
 	return probe.Handle(ctx, remoteIdentity, packet)
 }

@@ -34,6 +34,9 @@ type Lrp interface {
 	ReceiveFunc() conn.ReceiveFunc
 	Send(ctx context.Context, remoteId uint64, lrpType uint8, data []byte) error
 	Connect() error
+	// Connected reports whether a relay session is currently up, so callers can
+	// decide whether relaying a signaling packet is worth trying.
+	Connected() bool
 	RemoteAddr() net.Addr
 	Close() error
 }

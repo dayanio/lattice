@@ -296,7 +296,17 @@ func Stop(flags *config.Config) error {
 }
 
 func Status(flags *config.Config) error {
-	return wireguard.PrintStatus(flags.InterfaceName)
+	// Transport state lives in the running agent, so ask it over the local
+	// IPC socket. The WireGuard view is still printed if the agent is
+	// unreachable (older version, or not permitted to open the socket).
+	var labels map[string]wireguard.PeerLabel
+	resp, err := daemon.Call(daemon.SocketPath(), daemon.Request{Op: "status"}, 2*time.Second)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "note: transport info unavailable: %v\n\n", err)
+	} else {
+		labels = peerLabels(resp.Status)
+	}
+	return wireguard.PrintStatus(flags.InterfaceName, labels)
 }
 
 func pidFilePath(iface string) string {

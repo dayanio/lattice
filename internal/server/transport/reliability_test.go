@@ -1,0 +1,191 @@
+// Copyright 2026 The Lattice Authors, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package transport
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/alatticeio/lattice/internal/agent/infra"
+	"github.com/alatticeio/lattice/internal/agent/log"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+)
+
+func TestReconcileActionFor(t *testing.T) {
+	now := time.Now()
+	fresh := now.Add(-10 * time.Second).UnixNano()
+	frozen := now.Add(-2 * probingStuckAfter).UnixNano()
+
+	for name, tc := range map[string]struct {
+		state   PeerState
+		started int64
+		want    reconcileAction
+	}{
+		"created probe was never started":  {StateCreated, 0, reconcileStart},
+		"closed probe is revived":          {StateClosed, 0, reconcileRevive},
+		"probing past its window is stuck": {StateProbing, frozen, reconcileRestart},
+		"probing within its window":        {StateProbing, fresh, reconcileNone},
+		"probing without a start stamp":    {StateProbing, 0, reconcileNone},
+		"ice-ready is healthy":             {StateICEReady, 0, reconcileNone},
+		"lrp-ready is healthy":             {StateLRPReady, 0, reconcileNone},
+		"failed already has a retry timer": {StateFailed, 0, reconcileNone},
+	} {
+		if got := reconcileActionFor(tc.state, tc.started, now); got != tc.want {
+			t.Errorf("%s: reconcileActionFor(%s) = %v, want %v", name, tc.state, got, tc.want)
+		}
+	}
+}
+
+// A responder announces "I started fresh" so an initiator whose probe still
+// believes the old session is alive re-initiates. The single fire-and-forget
+// notice can be lost (NATS still connecting, initiator mid-restart), so it
+// must repeat until the initiator's SYN arrives or the dialer is closed.
+func newResponderDialer(t *testing.T, sends *atomic.Int32) (*iceDialer, infra.PeerIdentity) {
+	t.Helper()
+	local := infra.NewPeerIdentity("responder", wgtypes.Key{1})
+	remote := infra.NewPeerIdentity("initiator", wgtypes.Key{2})
+	if isInitiator(local, remote) {
+		t.Fatal("test setup: local must be the responder")
+	}
+	d := NewIceDialer(&ICEDialerConfig{
+		LocalId:  local,
+		RemoteId: remote,
+		Sender: func(ctx context.Context, peerId infra.PeerID, data []byte) error {
+			sends.Add(1)
+			return nil
+		},
+	}).(*iceDialer)
+	return d, remote
+}
+
+func withFastRestartNotify(t *testing.T) {
+	t.Helper()
+	prev := restartNotifyInterval
+	restartNotifyInterval = 10 * time.Millisecond
+	t.Cleanup(func() { restartNotifyInterval = prev })
+}
+
+func TestICEDialer_ResponderRepeatsRestartNotify(t *testing.T) {
+	withFastRestartNotify(t)
+	var sends atomic.Int32
+	d, remote := newResponderDialer(t, &sends)
+	defer d.Close() //nolint:errcheck
+
+	if err := d.Prepare(context.Background(), remote); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if n := sends.Load(); n < 3 {
+		t.Fatalf("restart notify sent %d time(s), want it repeated until the initiator answers", n)
+	}
+}
+
+func TestICEDialer_RestartNotifyStopsWhenInitiatorAnswers(t *testing.T) {
+	withFastRestartNotify(t)
+	var sends atomic.Int32
+	d, remote := newResponderDialer(t, &sends)
+	defer d.Close() //nolint:errcheck
+
+	if err := d.Prepare(context.Background(), remote); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	d.offerOnce.Do(func() { close(d.offerReady) }) // initiator's SYN/OFFER arrived
+	time.Sleep(30 * time.Millisecond)              // let any in-flight send land
+	before := sends.Load()
+	time.Sleep(100 * time.Millisecond)
+	if after := sends.Load(); after != before {
+		t.Fatalf("restart notify kept firing after the initiator answered: %d -> %d", before, after)
+	}
+}
+
+func TestICEDialer_RestartNotifyStopsWhenClosed(t *testing.T) {
+	withFastRestartNotify(t)
+	var sends atomic.Int32
+	d, remote := newResponderDialer(t, &sends)
+
+	if err := d.Prepare(context.Background(), remote); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	_ = d.Close()
+	time.Sleep(30 * time.Millisecond)
+	before := sends.Load()
+	time.Sleep(100 * time.Millisecond)
+	if after := sends.Load(); after != before {
+		t.Fatalf("restart notify kept firing after Close: %d -> %d", before, after)
+	}
+}
+
+// wireguard-go re-arms a peer's persistent-keepalive timer on every
+// authenticated packet it sends OR receives. With keepalives on both sides
+// each received keepalive postpones the local one, so the sides alternate and
+// each receives one only about every 50 s instead of every 25 s: a single
+// lost keepalive then looks like a 75 s silence and trips the received-bytes
+// stall check on a healthy path. Only the initiator therefore sends them; the
+// responder sees a steady 25 s rhythm to judge liveness by.
+func TestKeepaliveFor_OnlyTheInitiatorSendsKeepalives(t *testing.T) {
+	big := infra.NewPeerIdentity("big", wgtypes.Key{2})
+	small := infra.NewPeerIdentity("small", wgtypes.Key{1})
+
+	if got := keepaliveFor(big, small); got <= 0 {
+		t.Errorf("initiator keepalive = %d, want a positive interval", got)
+	}
+	if got := keepaliveFor(small, big); got != 0 {
+		t.Errorf("responder keepalive = %d, want 0 so the initiator's keepalives stay on a fixed rhythm", got)
+	}
+}
+
+// After a minute of failed discovery the probe is meant to close, but the state
+// machine only allows Probing -> Failed -> Closed. Asking for Closed straight
+// from Probing was rejected (and the error dropped), so the "peer unreachable
+// for 60s, closing probe" log was followed by a probe left in Probing with no
+// discovery running. Its dialers then answered a returning peer's signaling
+// (an OFFER even made the LRP dialer ready) while nothing waited in Dial, so
+// the probe never reached a ready state and the peer could never connect.
+func TestProbe_onFailure_AfterAMinuteReallyClosesTheProbe(t *testing.T) {
+	sm := NewStateMachine(StateProbing)
+	p := &Probe{sm: sm, log: log.GetLogger("test-probe")}
+	p.muFail.Lock()
+	p.firstFailureAt = time.Now().Add(-61 * time.Second)
+	p.muFail.Unlock()
+
+	p.onFailure(errors.New("lrpDialer: timed out waiting for ready"))
+
+	if got := sm.Current(); got != StateClosed {
+		t.Fatalf("state = %s after a minute of failures, want closed (a probe left in %s has no discovery running)", got, got)
+	}
+}
+
+// Closing must still tear the WireGuard peer down (that hangs off the Failed
+// transition), even though the probe passes through Failed on its way.
+func TestProbe_onFailure_ClosingStillFiresTheFailedCleanup(t *testing.T) {
+	sm := NewStateMachine(StateProbing)
+	var saw []PeerState
+	sm.OnTransition(func(_, to PeerState) { saw = append(saw, to) })
+	p := &Probe{sm: sm, log: log.GetLogger("test-probe")}
+	p.muFail.Lock()
+	p.firstFailureAt = time.Now().Add(-61 * time.Second)
+	p.muFail.Unlock()
+
+	p.onFailure(errors.New("timeout"))
+
+	if len(saw) != 2 || saw[0] != StateFailed || saw[1] != StateClosed {
+		t.Fatalf("transitions = %v, want [failed closed]", saw)
+	}
+}

@@ -19,6 +19,7 @@ import SwiftUI
 /// or Settings — never a launch-blocking gate.
 struct RootView: View {
     @StateObject private var tunnel = TunnelManager.shared
+    @ObservedObject private var loginCoordinator = LoginCoordinator.shared
 
     var body: some View {
         TabView {
@@ -28,5 +29,13 @@ struct RootView: View {
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }
         .onAppear { tunnel.load() }
+        // A management action that needs a login asks for one here and carries
+        // on once it succeeds.
+        .sheet(isPresented: Binding(
+            get: { loginCoordinator.isPresenting },
+            set: { if !$0 { loginCoordinator.finish(success: false) } }
+        )) {
+            LoginView { loginCoordinator.finish(success: true) }
+        }
     }
 }

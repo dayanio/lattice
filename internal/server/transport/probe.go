@@ -63,6 +63,12 @@ type Probe struct {
 	running           atomic.Bool
 	restartInProgress atomic.Bool
 
+	// startedAt records when the current Probing cycle began, so the factory
+	// reconciler can restart probes frozen in Probing. A discover goroutine
+	// that loses the epoch race returns without touching the probe state,
+	// which would otherwise leave the probe in Probing forever.
+	startedAt atomic.Int64
+
 	// currentTransport holds the active transport.
 	currentTransport infra.Transport
 
@@ -72,9 +78,20 @@ type Probe struct {
 
 	// Liveness ticker: polls WireGuard LastHandshakeTime to detect silent
 	// peer failures after a transport is established.
-	getHandshake   func(pubKey string) (time.Time, error)
+	getStats       func(pubKey string) (PeerStats, error)
 	muLiveness     sync.Mutex
 	livenessCancel context.CancelFunc
+
+	// Relay→direct upgrade retries (see probe_upgrade.go).
+	upgradeMu      sync.Mutex
+	upgradeTimer   *time.Timer
+	upgradeTries   int
+	upgradeRestart func() // test hook; defaults to restart
+
+	// pathPing sends a direct-path echo (nil disables the check); pathRestart
+	// is a test hook that replaces restart when the path is declared dead.
+	pathPing    pathPinger
+	pathRestart func()
 }
 
 // State returns the peer's current connection lifecycle state
@@ -114,7 +131,7 @@ func (p *Probe) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet 
 // LastHandshakeTime every 15 s. If the handshake is stale (> 45 s), the
 // probe is restarted so that a new connection can be established.
 func (p *Probe) startLivenessTicker() {
-	if p.getHandshake == nil {
+	if p.getStats == nil {
 		return
 	}
 	p.muLiveness.Lock()
@@ -149,6 +166,7 @@ func (p *Probe) runLiveness(ctx context.Context) {
 	ticker := time.NewTicker(livenessInterval)
 	defer ticker.Stop()
 	pubKey := p.remoteId.PublicKey.String()
+	tracker := newLivenessTracker(time.Now())
 	consecutiveErrs := 0
 	for {
 		select {
@@ -160,7 +178,7 @@ func (p *Probe) runLiveness(ctx context.Context) {
 			if state != StateICEReady && state != StateLRPReady {
 				return
 			}
-			t, err := p.getHandshake(pubKey)
+			stats, err := p.getStats(pubKey)
 			if err != nil {
 				// Transient query failures (wgctrl hiccup, busy device) must
 				// not silently kill monitoring for the peer; stop only after
@@ -174,14 +192,20 @@ func (p *Probe) runLiveness(ctx context.Context) {
 				continue
 			}
 			consecutiveErrs = 0
-			if t.IsZero() || time.Since(t) > livenessThreshold {
+			switch tracker.observe(time.Now(), stats) {
+			case livenessHandshakeStale:
 				p.log.Warn("WireGuard handshake stale, restarting probe",
-					"remoteId", p.remoteId.AppID, "lastHandshake", t)
+					"remoteId", p.remoteId.AppID, "lastHandshake", stats.LastHandshake)
+				go p.restart()
+				return
+			case livenessRxStalled:
+				p.log.Warn("no data received from peer, restarting probe",
+					"remoteId", p.remoteId.AppID, "stalledFor", rxStallThreshold)
 				go p.restart()
 				return
 			}
-			p.log.Debug("liveness: handshake ok",
-				"remoteId", p.remoteId.AppID, "age", time.Since(t).Round(time.Second))
+			p.log.Debug("liveness: ok",
+				"remoteId", p.remoteId.AppID, "handshakeAge", time.Since(stats.LastHandshake).Round(time.Second), "rxBytes", stats.RxBytes)
 		}
 	}
 }
@@ -194,6 +218,7 @@ func (p *Probe) restart() {
 	defer p.restartInProgress.Store(false)
 
 	p.stopLivenessTicker()
+	p.cancelUpgrade(false)
 
 	if p.newIceDialer == nil {
 		return
@@ -222,6 +247,7 @@ func (p *Probe) restart() {
 // Close permanently stops this probe.
 func (p *Probe) Close() {
 	p.stopLivenessTicker()
+	p.cancelUpgrade(true)
 	p.mu.Lock()
 	p.newIceDialer = nil
 	p.newLrpDialer = nil
@@ -266,6 +292,7 @@ func (p *Probe) Start(ctx context.Context, remoteId infra.PeerIdentity) error {
 		p.log.Debug("probe already connected, skipping start", "state", p.sm.Current())
 		return nil
 	}
+	p.startedAt.Store(time.Now().UnixNano())
 
 	go func() {
 		t, err := p.discover(ctx)
@@ -303,8 +330,12 @@ func (p *Probe) onSuccess(transport infra.Transport) {
 	transportType := transport.Type()
 	if transportType == infra.ICE {
 		_ = p.sm.Transition(StateICEReady)
+		p.cancelUpgrade(true)
+		p.startEndpointGuard()
+		p.startPathPing()
 	} else {
 		_ = p.sm.Transition(StateLRPReady)
+		p.scheduleUpgrade()
 	}
 
 	p.startLivenessTicker()
@@ -331,6 +362,11 @@ func (p *Probe) onFailure(err error) {
 
 	if elapsed >= 60*time.Second {
 		p.log.Info("peer unreachable for 60s, closing probe", "remoteId", p.remoteId.AppID)
+		// Probing -> Closed is not a legal transition, so go through Failed
+		// (which also removes the WireGuard peer). Asking for Closed directly
+		// was silently rejected and left the probe in Probing with no
+		// discovery running.
+		_ = p.sm.Transition(StateFailed)
 		_ = p.sm.Transition(StateClosed)
 		// Factory handles probe removal externally.
 		return
@@ -470,5 +506,8 @@ func (p *Probe) handleUpgradeTransport(newTransport infra.Transport) error {
 
 	// Transition LRPReady -> ICEReady: WG config handled by state machine callbacks.
 	_ = p.sm.Transition(StateICEReady)
+	p.cancelUpgrade(true)
+	p.startEndpointGuard()
+	p.startPathPing()
 	return nil
 }

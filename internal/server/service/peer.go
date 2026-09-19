@@ -35,6 +35,7 @@ import (
 	"github.com/alatticeio/lattice/internal/server/vo"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gorm.io/gorm"
+	"net/url"
 	"strings"
 	"time"
 
@@ -82,6 +83,11 @@ type peerService struct {
 	// netmapBuilder serves netmaps from the standalone DB registry when
 	// no K8s client exists (client == nil).
 	netmapBuilder *reconcilers.NetmapBuilder
+	// relayURL is the relay address (with auth token) handed to agents at
+	// registration. Agents create their relay client only when the
+	// registration response carries it, so without it the ICE/relay race
+	// never runs and NATed peers have no fallback path.
+	relayURL string
 	// signal notifies already-connected peers to refresh sooner than their
 	// next poll cycle when something in the workspace's netmap changes.
 	// May be nil (e.g. NewPeerService called from token.go's internal use) —
@@ -364,6 +370,8 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
 		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
 			svc.netmapBuilder.SetRelayURL(advertise)
+			svc.relayURL = relayURLWithToken(advertise, agentconfig.Conf.LrpAuthToken)
+			svc.netmapBuilder.SetSelfRelayURL(svc.relayURL)
 		}
 	}
 	return svc
@@ -433,7 +441,19 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if err != nil {
 		return nil, fmt.Errorf("token not exists")
 	}
-	if time.Now().After(tok.ExpiresAt) {
+	// Re-registration always resumes, regardless of the usage limit — and,
+	// for a peer that enrolled with this very token, regardless of expiry. The
+	// device presents its token every time it starts or its NATS connection
+	// comes back, and GetNetmap already accepts that token for it with no expiry
+	// check, so refusing here only locked enrolled devices out once the token
+	// lapsed (a 7-day default) without protecting anything. An expired token
+	// still cannot enroll a new peer or take over another token's peer.
+	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
+	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
+		return nil, existingErr
+	}
+	resumesOwnPeer := existingErr == nil && existing.Token != "" && existing.Token == dto.Token
+	if time.Now().After(tok.ExpiresAt) && !resumesOwnPeer {
 		return nil, fmt.Errorf("token is expired")
 	}
 	// ADR-0003: approval gating is a per-workspace flag. Legacy deployments
@@ -442,11 +462,6 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	workspace, wsErr := p.store.Workspaces().GetByID(ctx, tok.WorkspaceID)
 	if wsErr != nil && !stderrors.Is(wsErr, gorm.ErrRecordNotFound) {
 		return nil, wsErr
-	}
-	// Re-registration always resumes, regardless of the usage limit.
-	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
-	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
-		return nil, existingErr
 	}
 	if existingErr == nil && existing.WorkspaceID != tok.WorkspaceID {
 		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
@@ -458,9 +473,6 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	}
 	if tok.UsageLimit > 0 && existingErr != nil && tok.UsedCount >= tok.UsageLimit {
 		return nil, fmt.Errorf("token usage limit reached (%d)", tok.UsageLimit)
-	}
-	if incErr := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); incErr != nil {
-		return nil, incErr
 	}
 
 	peer := existing
@@ -544,6 +556,15 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if err := p.store.Peers().Update(ctx, peer); err != nil {
 		return nil, err
 	}
+	// A seat is consumed only by a persisted first enrollment: re-registrations
+	// (which bypass the limit check) and failed creates must not burn quota —
+	// every agent restart used to increment the counter until the token
+	// showed "exhausted" while still serving its own peer (cloud test, 2026-09-19).
+	if existing == nil {
+		if incErr := p.store.EnrollmentTokens().IncrementUsedCount(ctx, tok.ID); incErr != nil {
+			return nil, incErr
+		}
+	}
 	p.notifyWorkspacePeers(ctx, tok.WorkspaceID, peer.AppID)
 
 	node := &infra.Peer{
@@ -556,6 +577,7 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		Hostname:   peer.Hostname,
 		Platform:   peer.Platform,
 		NetworkId:  peer.WorkspaceID,
+		LrpUrl:     p.relayURL,
 		// ADR-0003: tells the agent whether the peer is usable yet.
 		ApprovalStatus: peer.ApprovalStatus,
 	}
@@ -901,9 +923,36 @@ func (p *peerService) ListRouteSelections(ctx context.Context, consumerName stri
 	return names, nil
 }
 
+// relayURLWithToken appends the relay auth token to an advertised relay
+// address: the relay rejects clients that do not present it. An address that
+// already embeds a token is left alone.
+func relayURLWithToken(advertise, token string) string {
+	if token == "" || strings.Contains(advertise, "?token=") || strings.Contains(advertise, "&token=") {
+		return advertise
+	}
+	sep := "?"
+	if strings.Contains(advertise, "?") {
+		sep = "&"
+	}
+	return advertise + sep + "token=" + url.QueryEscape(token)
+}
+
 func (p *peerService) Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
 	p.logger.Info("Received peer", "info", dto)
 
+	node, err := p.register(ctx, dto)
+	if err != nil {
+		// Token/limit rejections otherwise leave no server-side trace: the
+		// reason only shows up in the agent's log, which made the cloud
+		// deployment's "join silently fails" incident needlessly hard to
+		// diagnose (2026-09-19).
+		p.logger.Warn("peer register rejected", "app_id", dto.AppID, "err", err)
+		return nil, err
+	}
+	return node, nil
+}
+
+func (p *peerService) register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {
 	if p.netmapBuilder != nil {
 		return p.registerStandalone(ctx, dto)
 	}

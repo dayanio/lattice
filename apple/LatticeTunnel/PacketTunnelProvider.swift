@@ -31,6 +31,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// app over the handleAppMessage channel so the UI can show WHY the
     /// tunnel is not connected instead of failing silently.
     private var latestError = ""
+    /// "awaiting-approval" while the workspace holds this device for an
+    /// administrator; empty otherwise. Served to the app with the peer states.
+    private var latestPhase = ""
     /// Latest extra-routes snapshot from the engine (JSON array of CIDRs),
     /// applied as NEIPv4Routes once the tunnel is up. Empty until the first
     /// OnRoutesChanged call.
@@ -42,11 +45,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // latestPeerStates 本身是 map 的 JSON 字符串——先解成对象再装进
             // 信封，避免把整个 map 当字符串二次编码（App 端会解码失败）。
             let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: String] ?? [:]
+            let peers = (try? JSONSerialization.jsonObject(with: Data((engine?.peers() ?? "[]").utf8))) as? [[String: Any]] ?? []
             let snapshot: [String: Any] = [
                 "peerStates": states,
                 "lastError": latestError,
                 "publicKey": engine?.publicKey() ?? "",
                 "overlayIP": currentOverlayIP,
+                "peers": peers,
+                "phase": latestPhase,
             ]
             completionHandler?(try? JSONSerialization.data(withJSONObject: snapshot))
             return
@@ -170,6 +176,13 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
 
     func onEvent(_ event: String!) {
         NSLog("[Lattice] engine event: \(event ?? "")")
+        if event == "awaiting-approval" {
+            latestPhase = "awaiting-approval"
+            return
+        }
+        if event == "connected" || event == "disconnected" || event?.hasPrefix("error: ") == true {
+            latestPhase = ""
+        }
         guard let event, event.hasPrefix("error: ") else { return }
         let message = String(event.dropFirst("error: ".count))
         latestError = message

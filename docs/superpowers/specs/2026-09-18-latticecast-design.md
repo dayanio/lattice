@@ -10,6 +10,9 @@
 
 - **v1（2026-09-18）**: 初稿。主路径为 DLNA/Chromecast 适配（现成库），自研渲染端排 v2。
 - **v2（2026-09-18）**: 评审决策反转主次——**自研 LatticeCast 渲染端（Android TV/盒子 APK + 自有协议）提前至 v1 主路径**，DLNA/Chromecast 降级为 v2 兜底。依据：Chromecast 接收端为闭源认证制、AirPlay 接收端闭源且协议逆向合规存疑、DLNA 是唯一开放接收端但厂商实现参差；**自建接收端是唯一"零适配统一一切"的路径**——两端都是自家软件，无需任何厂商认证（Google/Apple 能统一协议正因握着接收端，我们能干是因为两端都是自己的）。发送端结论不变：go-chromecast 等 MIT 库无许可障碍，仍用于 v2 兜底。
+- **v3（2026-09-18）**: 增补定位说明——本特性为设备控制骨架（DeviceAdapter 模式）的**首例**，链路骨架可复用于其他设备品类；v1 咬死投屏一条线，不预抽通用框架。
+- **v4（2026-09-19）**: **渲染端多平台化进 v1**——协议本就是平台无关的 HTTP/JSON + mDNS，渲染端 = "会说协议、自报家门、自己拉流的程序"，任何设备皆可充当。v1 渲染端目标：① Android TV/盒子 APK（Kotlin+ExoPlayer，主路径不变）；② **macOS/Linux 渲染端**（Go+mpv，与 agent 同语言，成本最低，Mac/Mac mini 可同时扮演 cast-agent 宿主+渲染端双角色）；③ **Apple TV 渲染端**（tvOS，SwiftUI+AVPlayer+NetService，用户持有付费开发者账号，个人签名一年有效）。树莓派渲染端与 iOS 目标留 v2（tvOS 代码族顺带覆盖）。
+- **v5（2026-09-19）**: **内容源新增 Reflux**（用户自有的云端影视库服务器：115/GDrive/本地多源 + TMDB 元数据 + Jellyfin 兼容 API，见 `workspc/reflux`）——排 **v1.1**（v1 收口后第一个任务）。MediaResolver 插入 reflux source：search 走其 Jellyfin `/Items` 接口（TMDB 中文元数据直接提升 search_media 体验），play 取其流地址交渲染端拉流；其按需转码同时兜底"渲染端解不动"场景。API 为稳定契约，预估 1~2 天。
 
 ---
 
@@ -27,6 +30,14 @@
 6. 全程策略管控（default-deny 白名单放行）+ 审计（v1 本地审计日志）。
 
 **对 Lattice 的战略意义**：本特性是 LatticeDNS（设备命名）+ 个人模式（回家组网）+ MCP（自然语言→工具）+ AgentIdentity/Policy（零信任管控）的集大成演示——每项已有资产在链路中都有一席之地；自研渲染端同时为未来 TV 端语音 UI、内容能力预留了自有阵地。
+
+**定位：设备控制骨架的首例**。本特性的链路抽象后是所有远程设备控制的通用骨架：
+
+```
+意图（LLM）→ 身份（AgentIdentity）→ 网络（mesh + Policy）→ 协议（DeviceAdapter）→ 执行（设备）→ 回报（状态 + 审计）
+```
+
+投屏是 DeviceAdapter 模式的第一个实例；灯光、空调（红外网关）、摄像头画面、扫地机等品类可复用同一骨架，lattice 与消费 IoT 平台的差异在于 P2P 直连不过厂商云、策略管控加全量审计——"哪个 agent 被允许碰哪个设备"正是 AgentIdentity/Policy 的主场。两条边界约束：高危设备（门锁等）进入前必须先补"执行前人在环确认"的策略能力；**v1 咬死投屏一条线做完，不预抽通用框架**——待第二个品类（候选：摄像头画面查看）立项时，再基于两例共性沉淀 DeviceAdapter 公共层。
 
 ## 二、需求澄清结论与决策修订（2026-09-18）
 
@@ -54,12 +65,12 @@ cast-agent（Go，家里常开节点，经家里 lattice agent 入网，普通 m
    ├─ MediaResolver：媒体引用 → 渲染端可达的播放 URL
    └─ MCP Server：cast_* 工具集
    ▼ 家庭局域网，自有协议（HTTP/JSON + Bearer Token）
-LatticeCast 渲染端（Android TV / 盒子 APK：ExoPlayer 拉流播放 + 进度回报 + 极简 UI）
+LatticeCast 渲染端（多平台，实现同一协议：Android TV/盒子 APK-ExoPlayer ｜ macOS/Linux-Go+mpv ｜ Apple TV-tvOS+AVPlayer）
 ```
 
 **关键简化**：渲染端**不入 mesh、不跑 WireGuard**——它只在家里局域网收 cast-agent 指令，远程访问的活儿全由 cast-agent（mesh peer）承担，APK 因此可以做得极轻。
 
-**仓库策略（双仓库）**：全部实现放**新仓库** `lattice-cast`（`github.com/alatticeio/lattice-cast`）：
+**仓库策略（双仓库）**：全部实现放**新仓库** `lattice-cast`（`github.com/dayanio/lattice-cast`）：
 
 ```
 cmd/lattice-cast/            # cast-agent 入口
@@ -70,6 +81,8 @@ internal/cast/
   resolve/                   # 媒体解析
   mcp/                       # MCP 工具集
 android/                     # 渲染端 APK（Kotlin + ExoPlayer；借鉴主仓库 apple/ 单仓库多端先例）
+tvos/                        # 渲染端 Apple TV App（SwiftUI + AVPlayer + NetService，XcodeGen 工程）
+cmd/latticecast-renderer/    # 渲染端 macOS/Linux 二进制（Go + mpv，与 APK 共享契约测试）
 docs/protocol.md             # LatticeCast 协议唯一权威定义
 ```
 
@@ -113,9 +126,11 @@ GET  /status  -> { state: playing|paused|idle|error, position_ms, duration_ms, t
 ```jsonc
 list_cast_devices() -> [{ name, room, protocols[], online, now_playing }]
 search_media(query) -> [{ media_id, title, kind, source }]        // NAS 媒体库检索
-cast_play(device, media_id?, url?, title?) -> { status, adapter }  // 二选一传参
+cast_play(device, media_id?, url?, title?, position_ms?) -> { status, adapter }  // media_id/url 二选一；position_ms 用于续播
+cast_pause(device) -> { status }
+cast_seek(device, position_ms) -> { status }   // 负值 -> position_out_of_range
 cast_stop(device) -> { status }
-cast_volume(device, level) -> { status }   // level: 0-100
+cast_volume(device, level) -> { status }   // level: 0-100，越界 -> level_out_of_range
 cast_status(device) -> { now_playing, position_ms, state }        // 协议自带，免费获得
 ```
 
@@ -143,6 +158,7 @@ cast_status(device) -> { now_playing, position_ms, state }        // 协议自�
 - **不可用内容**：用户外部设备上的文件（如公司笔记本上的视频）——渲染端够不着 mesh，v1 明确报错并说明原因，**v2 增加"先中转到 NAS 暂存目录再投"的逃生通道**。
 
 v1 内容范围：NAS 媒体库（本地目录扫描，文件名检索）+ MP4/HLS 直链 + YouTube（yt-dlp 提流）。
+v1.1 新增：**Reflux**（Jellyfin 兼容 API 作内容源——搜索带 TMDB 元数据，播放取流，转码兜底）。
 v2 起再啃：B 站等国内平台解析器（每平台一个、易失效，逐个加）；流媒体 App 操控仅 Android TV（adb）路径可行，排 v3。
 
 ## 八、错误处理
@@ -163,6 +179,7 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效，逐
 
 - **入网**：cast-agent 所在节点经家里 lattice agent 入网（已有）；外部 LLM 客户端经 mesh 访问 MCP 时走 AgentIdentity + 单次 Enrollment Token + agent JWT（已有）；渲染端仅家庭局域网 + Bearer Token，**不入 mesh**（攻击面与配置复杂度同时收敛）；
 - **策略**：LatticePolicy default-deny，v1 仅需放行一类流量——`role=voice-assistant` 的 agent 身份 → 网关节点 MCP 端口（TCP）。渲染端在家局域网内，不涉 mesh 策略（v1 主仓库**零代码改动**，交付策略模板文档）；
+- **媒体端点信任边界（v1 明示决策）**：渲染端拉流的媒体 HTTP 服务（默认 `0.0.0.0:7810`）v1 **无鉴权**——任何局域网设备可按 media_id 拉取媒体文件。有意取舍：只有渲染端需要拉流，家庭内网按可信环境处理；代价是内网其他设备同样可拉。v2 计划在配对时下发共享 Token。此边界已写入 lattice-cast 的 config.example.yaml 与 README Security notes；
 - **命名**：v1 设备命名由 cast-agent 设备表承担（房间名即身份）；LatticeDNS 别名记录（`bedroom-tv.lattice` → 网关 overlay IP）**移至 v2 可选**——那是叙事层面的锦上添花，不是 v1 链路的必需件；
 - **审计**：v1 本地 JSONL 审计日志；v2 提供控制面写入 API 后接入 tool_spans（traceID/agentID/tool/status/durationMs），投屏历史可在 Dashboard 查询。
 
@@ -179,17 +196,20 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效，逐
 ## 十一、分期规划
 
 ### v1（本次实现范围）
-- **`lattice-cast` 仓库**：LatticeCast 协议定义 + cast-agent（Discovery/CastAdapter-LatticeCast/MediaResolver/MCP 工具集/本地审计）+ `android/` 渲染端 APK（ExoPlayer、mDNS 自报、开机自启、极简播放 UI）；
+- **`lattice-cast` 仓库**：LatticeCast 协议定义 + cast-agent（Discovery/CastAdapter-LatticeCast/MediaResolver/MCP 工具集/本地审计）+ 三平台渲染端——`android/` APK（ExoPlayer、mDNS 自报、开机自启、极简播放 UI）、`cmd/latticecast-renderer`（Go+mpv，macOS/Linux）、`tvos/`（SwiftUI+AVPlayer+NetService，付费账号个人签名）；
 - **lattice 主仓库**：零代码，仅 voice-assistant 策略模板文档；
 - 文字入口：任意现有 MCP 客户端（Claude Desktop / Cursor 等）经 mesh 使用。
-- **验收**：在外的手机上说一句"把 NAS 里的 xx 投到卧室电视"，电视播出来；追问"播到哪了"能答上进度。
+- **验收**：在外的手机上说一句"把 NAS 里的 xx 投到卧室电视"，电视播出来；追问"播到哪了"能答上进度；多平台抽查——同一句话能投到 Mac（Go 渲染端）与 Apple TV（tvOS 渲染端）。
+
+### v1.1（v1 验收后紧随）
+- MediaResolver 新增 reflux source：配置 reflux 地址 + API token；search_media 融合 reflux 库（TMDB 标题/海报字段透出）；cast_play 经 reflux 取流（static 直链优先，转码参数留 v2）；错误路径（reflux 不可达/token 失效）进错误矩阵。
 
 ### v2（方向性）
 - DLNA / Chromecast 兜底适配器（现成库，覆盖装不了 APK 的电视）；AirPlay 合规评估；
 - iOS App 按住说话（复用 `apple/` 客户端）+ ASR（云端 API 或网关 whisper.cpp）；
 - 媒体中转逃生通道（外部文件 → NAS 暂存 → 投屏）；
 - LatticeDNS 别名记录类型（主仓库小 PR）+ tool_spans 控制面上报（主仓库写入 API）；
-- 树莓派/旧电脑渲染端（Go + mpv，与 APK 共享协议与契约测试）。
+- 树莓派渲染端（Go + mpv 的 Linux 构建，与 v1 macOS 渲染端同一份代码，契约测试共享）；iOS 渲染端（tvOS 工程加目标）。
 
 ### v3（方向性）
 - 常驻麦克风 + 唤醒词（网关上跑 whisper + openWakeWord/Porcupine）；
