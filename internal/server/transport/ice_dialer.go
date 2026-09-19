@@ -370,6 +370,10 @@ var restartNotifyInterval = 5 * time.Second
 
 const restartNotifyAttempts = 12
 
+// iceConnectTimeout bounds connectivity checks once remote candidates are in.
+// pion gives up on its own (Failed) after 25 s, so this is only a backstop.
+const iceConnectTimeout = 30 * time.Second
+
 // Prepare sends handshake SYN when local is the initiator (localId > remoteId numerically).
 func (i *iceDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) error {
 	i.log.Debug("prepare ice", "localId", i.localId, "remoteId", remoteId, "isInitiator", isInitiator(i.localId, remoteId))
@@ -523,7 +527,15 @@ func (i *iceDialer) Dial(ctx context.Context) (infra.Transport, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = agent.AwaitConnect(dialCtx); err != nil {
+		// The connect phase gets its own budget. dialCtx started ticking while
+		// we waited for the initiator's SYN, so a SYN landing near the end of
+		// that window (the responder waits up to 65 s) left ICE a fraction of a
+		// second: it connected 0.4 s after the deadline, the dial was declared
+		// failed, and the probe never left Probing even though the tunnel came
+		// up through WireGuard roaming.
+		connectCtx, cancelConnect := context.WithTimeout(ctx, iceConnectTimeout)
+		defer cancelConnect()
+		if err = agent.AwaitConnect(connectCtx); err != nil {
 			return nil, err
 		}
 		remoteAddr := iceConn.RemoteAddr().String()
