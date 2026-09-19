@@ -82,6 +82,11 @@ func NewNatsService(ctx context.Context, name, role, url string) (*NatsSignalSer
 		natsgo.Name(clientName),
 		natsgo.MaxReconnects(-1), // Unlimited reconnects to prevent network fluctuations from permanently killing the service
 		natsgo.ReconnectWait(2 * time.Second),
+		// The default 2-minute ping interval leaves a connection that died with
+		// a network switch (wifi to cellular) looking alive for minutes, during
+		// which no handshake signaling gets through. Detect it within ~15s.
+		natsgo.PingInterval(5 * time.Second),
+		natsgo.MaxPingsOutstanding(2),
 		// Key: add disconnect error callback to help diagnose the "hang" issue you mentioned
 		natsgo.DisconnectErrHandler(func(nc *natsgo.Conn, err error) {
 			fmt.Printf("NATS disconnected: %v\n", err)
@@ -227,6 +232,9 @@ func (s *NatsSignalService) Request(ctx context.Context, subject, method string,
 
 	return resp.Data, nil
 }
+
+// Connected reports whether the NATS connection is currently usable.
+func (s *NatsSignalService) Connected() bool { return s.nc.IsConnected() }
 
 // SetReconnectedHandler registers a callback that is invoked each time the
 // NATS client successfully reconnects to the server.  Use this to re-register
