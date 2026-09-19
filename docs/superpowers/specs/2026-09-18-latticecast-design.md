@@ -11,6 +11,7 @@
 - **v1（2026-09-18）**: 初稿。主路径为 DLNA/Chromecast 适配（现成库），自研渲染端排 v2。
 - **v2（2026-09-18）**: 评审决策反转主次——**自研 LatticeCast 渲染端（Android TV/盒子 APK + 自有协议）提前至 v1 主路径**，DLNA/Chromecast 降级为 v2 兜底。依据：Chromecast 接收端为闭源认证制、AirPlay 接收端闭源且协议逆向合规存疑、DLNA 是唯一开放接收端但厂商实现参差；**自建接收端是唯一"零适配统一一切"的路径**——两端都是自家软件，无需任何厂商认证（Google/Apple 能统一协议正因握着接收端，我们能干是因为两端都是自己的）。发送端结论不变：go-chromecast 等 MIT 库无许可障碍，仍用于 v2 兜底。
 - **v3（2026-09-18）**: 增补定位说明——本特性为设备控制骨架（DeviceAdapter 模式）的**首例**，链路骨架可复用于其他设备品类；v1 咬死投屏一条线，不预抽通用框架。
+- **v4（2026-09-19）**: **渲染端多平台化进 v1**——协议本就是平台无关的 HTTP/JSON + mDNS，渲染端 = "会说协议、自报家门、自己拉流的程序"，任何设备皆可充当。v1 渲染端目标：① Android TV/盒子 APK（Kotlin+ExoPlayer，主路径不变）；② **macOS/Linux 渲染端**（Go+mpv，与 agent 同语言，成本最低，Mac/Mac mini 可同时扮演 cast-agent 宿主+渲染端双角色）；③ **Apple TV 渲染端**（tvOS，SwiftUI+AVPlayer+NetService，用户持有付费开发者账号，个人签名一年有效）。树莓派渲染端与 iOS 目标留 v2（tvOS 代码族顺带覆盖）。
 
 ---
 
@@ -63,7 +64,7 @@ cast-agent（Go，家里常开节点，经家里 lattice agent 入网，普通 m
    ├─ MediaResolver：媒体引用 → 渲染端可达的播放 URL
    └─ MCP Server：cast_* 工具集
    ▼ 家庭局域网，自有协议（HTTP/JSON + Bearer Token）
-LatticeCast 渲染端（Android TV / 盒子 APK：ExoPlayer 拉流播放 + 进度回报 + 极简 UI）
+LatticeCast 渲染端（多平台，实现同一协议：Android TV/盒子 APK-ExoPlayer ｜ macOS/Linux-Go+mpv ｜ Apple TV-tvOS+AVPlayer）
 ```
 
 **关键简化**：渲染端**不入 mesh、不跑 WireGuard**——它只在家里局域网收 cast-agent 指令，远程访问的活儿全由 cast-agent（mesh peer）承担，APK 因此可以做得极轻。
@@ -79,6 +80,8 @@ internal/cast/
   resolve/                   # 媒体解析
   mcp/                       # MCP 工具集
 android/                     # 渲染端 APK（Kotlin + ExoPlayer；借鉴主仓库 apple/ 单仓库多端先例）
+tvos/                        # 渲染端 Apple TV App（SwiftUI + AVPlayer + NetService，XcodeGen 工程）
+cmd/latticecast-renderer/    # 渲染端 macOS/Linux 二进制（Go + mpv，与 APK 共享契约测试）
 docs/protocol.md             # LatticeCast 协议唯一权威定义
 ```
 
@@ -189,17 +192,17 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效，逐
 ## 十一、分期规划
 
 ### v1（本次实现范围）
-- **`lattice-cast` 仓库**：LatticeCast 协议定义 + cast-agent（Discovery/CastAdapter-LatticeCast/MediaResolver/MCP 工具集/本地审计）+ `android/` 渲染端 APK（ExoPlayer、mDNS 自报、开机自启、极简播放 UI）；
+- **`lattice-cast` 仓库**：LatticeCast 协议定义 + cast-agent（Discovery/CastAdapter-LatticeCast/MediaResolver/MCP 工具集/本地审计）+ 三平台渲染端——`android/` APK（ExoPlayer、mDNS 自报、开机自启、极简播放 UI）、`cmd/latticecast-renderer`（Go+mpv，macOS/Linux）、`tvos/`（SwiftUI+AVPlayer+NetService，付费账号个人签名）；
 - **lattice 主仓库**：零代码，仅 voice-assistant 策略模板文档；
 - 文字入口：任意现有 MCP 客户端（Claude Desktop / Cursor 等）经 mesh 使用。
-- **验收**：在外的手机上说一句"把 NAS 里的 xx 投到卧室电视"，电视播出来；追问"播到哪了"能答上进度。
+- **验收**：在外的手机上说一句"把 NAS 里的 xx 投到卧室电视"，电视播出来；追问"播到哪了"能答上进度；多平台抽查——同一句话能投到 Mac（Go 渲染端）与 Apple TV（tvOS 渲染端）。
 
 ### v2（方向性）
 - DLNA / Chromecast 兜底适配器（现成库，覆盖装不了 APK 的电视）；AirPlay 合规评估；
 - iOS App 按住说话（复用 `apple/` 客户端）+ ASR（云端 API 或网关 whisper.cpp）；
 - 媒体中转逃生通道（外部文件 → NAS 暂存 → 投屏）；
 - LatticeDNS 别名记录类型（主仓库小 PR）+ tool_spans 控制面上报（主仓库写入 API）；
-- 树莓派/旧电脑渲染端（Go + mpv，与 APK 共享协议与契约测试）。
+- 树莓派渲染端（Go + mpv 的 Linux 构建，与 v1 macOS 渲染端同一份代码，契约测试共享）；iOS 渲染端（tvOS 工程加目标）。
 
 ### v3（方向性）
 - 常驻麦克风 + 唤醒词（网关上跑 whisper + openWakeWord/Porcupine）；
