@@ -83,6 +83,36 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 	}
 }
 
+// reconcileAction is what the reconciler must do with a probe.
+type reconcileAction int
+
+const (
+	reconcileNone    reconcileAction = iota
+	reconcileStart                   // never started (Created)
+	reconcileRevive                  // permanently closed: replace and start
+	reconcileRestart                 // frozen in Probing: restart wholesale
+)
+
+// probingStuckAfter is how long a Probing cycle may run before it is
+// considered frozen: a healthy cycle self-terminates within ~75 s.
+const probingStuckAfter = 90 * time.Second
+
+// reconcileActionFor decides what the reconciler does with a probe given its
+// state and (for Probing) when the current cycle started.
+func reconcileActionFor(state PeerState, startedAtNanos int64, now time.Time) reconcileAction {
+	switch state {
+	case StateCreated:
+		return reconcileStart
+	case StateClosed:
+		return reconcileRevive
+	case StateProbing:
+		if startedAtNanos > 0 && now.Sub(time.Unix(0, startedAtNanos)) > probingStuckAfter {
+			return reconcileRestart
+		}
+	}
+	return reconcileNone
+}
+
 // StartReconciler periodically revives probes that reached StateClosed.
 //
 // Probes close permanently after 60 s of failed discovery (Probe.onFailure),
@@ -105,24 +135,41 @@ func (f *ProbeFactory) StartReconciler(ctx context.Context, interval time.Durati
 			case <-ticker.C:
 				now := time.Now()
 				f.mu.RLock()
-				closed := make([]infra.PeerIdentity, 0, len(f.probes))
-				stuck := make([]infra.PeerIdentity, 0, len(f.probes))
+				var created, closed, stuck []infra.PeerIdentity
 				for _, probe := range f.probes {
-					switch probe.sm.Current() {
-					case StateClosed:
+					switch reconcileActionFor(probe.sm.Current(), probe.startedAt.Load(), now) {
+					case reconcileStart:
+						created = append(created, probe.remoteId)
+					case reconcileRevive:
 						closed = append(closed, probe.remoteId)
-					case StateProbing:
-						// Probing cycles self-terminate within ~75 s (60 s SYN
-						// window + Dial timeout). Still Probing well past that
-						// means the discover goroutine is gone (e.g. it lost
-						// the epoch race) — restart the probe wholesale.
-						if started := probe.startedAt.Load(); started > 0 && now.Sub(time.Unix(0, started)) > 90*time.Second {
-							stuck = append(stuck, probe.remoteId)
-						}
+					case reconcileRestart:
+						// Probing cycles self-terminate within ~75 s (60 s SYN window +
+						// Dial timeout). Still Probing well past that means the discover
+						// goroutine is gone (e.g. it lost the epoch race): restart the
+						// probe wholesale.
+						stuck = append(stuck, probe.remoteId)
 					}
 				}
 				f.mu.RUnlock()
 
+				// Created probes were registered but never started, e.g. a signaling
+				// packet reached a permanently closed probe, Get swapped in a fresh one
+				// and nothing ever started it. Neither the netmap pipeline nor the
+				// Closed/Probing checks would pick it up, leaving the peer dark until
+				// process restart.
+				for _, remoteId := range created {
+					f.mu.RLock()
+					probe := f.probes[remoteId.AppID]
+					f.mu.RUnlock()
+					if probe == nil {
+						continue
+					}
+					if err := probe.Start(ctx, remoteId); err != nil {
+						f.log.Error("reconciler: start probe failed", err, "remoteId", remoteId.AppID)
+						continue
+					}
+					f.log.Info("reconciler: started never-started probe", "remoteId", remoteId.AppID)
+				}
 				for _, remoteId := range closed {
 					probe, err := f.Get(remoteId)
 					if err != nil {
@@ -491,6 +538,14 @@ func (p *ProbeFactory) Handle(ctx context.Context, remoteId infra.PeerID, packet
 	probe, err := p.Get(remoteIdentity)
 	if err != nil {
 		return err
+	}
+	// Get may have just replaced a permanently closed probe with a fresh one.
+	// A responder that receives a SYN needs a running Dial to accept the ICE
+	// session, and an initiator must be running to react to a restart notice,
+	// so start it now instead of waiting for the reconciler tick. Background
+	// context: ctx dies when this packet's handler returns.
+	if probe.State() == StateCreated {
+		_ = probe.Start(context.Background(), remoteIdentity)
 	}
 	return probe.Handle(ctx, remoteIdentity, packet)
 }

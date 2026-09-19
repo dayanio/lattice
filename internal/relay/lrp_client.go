@@ -69,10 +69,19 @@ func splitURLToken(addr string) (cleanAddr, token string) {
 		return addr, ""
 	}
 	cleanAddr = addr[:i]
-	if q, err := url.ParseQuery(addr[i+1:]); err == nil {
-		token = q.Get("token")
+	for _, kv := range strings.Split(addr[i+1:], "&") {
+		v, ok := strings.CutPrefix(kv, "token=")
+		if !ok {
+			continue
+		}
+		// PathUnescape, not QueryUnescape: tokens are base64 and a raw '+'
+		// must not turn into a space. %XX escapes are still decoded.
+		if dec, err := url.PathUnescape(v); err == nil {
+			v = dec
+		}
+		return cleanAddr, v
 	}
-	return cleanAddr, token
+	return cleanAddr, ""
 }
 
 // authChallengeWait bounds how long a client waits for the relay's auth

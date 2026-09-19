@@ -35,6 +35,7 @@ import (
 	"github.com/alatticeio/lattice/internal/server/vo"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 	"gorm.io/gorm"
+	"net/url"
 	"strings"
 	"time"
 
@@ -82,6 +83,11 @@ type peerService struct {
 	// netmapBuilder serves netmaps from the standalone DB registry when
 	// no K8s client exists (client == nil).
 	netmapBuilder *reconcilers.NetmapBuilder
+	// relayURL is the relay address (with auth token) handed to agents at
+	// registration. Agents create their relay client only when the
+	// registration response carries it, so without it the ICE/relay race
+	// never runs and NATed peers have no fallback path.
+	relayURL string
 	// signal notifies already-connected peers to refresh sooner than their
 	// next poll cycle when something in the workspace's netmap changes.
 	// May be nil (e.g. NewPeerService called from token.go's internal use) —
@@ -364,6 +370,7 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
 		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
 			svc.netmapBuilder.SetRelayURL(advertise)
+			svc.relayURL = relayURLWithToken(advertise, agentconfig.Conf.LrpAuthToken)
 		}
 	}
 	return svc
@@ -562,6 +569,7 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		Hostname:   peer.Hostname,
 		Platform:   peer.Platform,
 		NetworkId:  peer.WorkspaceID,
+		LrpUrl:     p.relayURL,
 		// ADR-0003: tells the agent whether the peer is usable yet.
 		ApprovalStatus: peer.ApprovalStatus,
 	}
@@ -905,6 +913,20 @@ func (p *peerService) ListRouteSelections(ctx context.Context, consumerName stri
 		names = append(names, provider.Name)
 	}
 	return names, nil
+}
+
+// relayURLWithToken appends the relay auth token to an advertised relay
+// address: the relay rejects clients that do not present it. An address that
+// already embeds a token is left alone.
+func relayURLWithToken(advertise, token string) string {
+	if token == "" || strings.Contains(advertise, "?token=") || strings.Contains(advertise, "&token=") {
+		return advertise
+	}
+	sep := "?"
+	if strings.Contains(advertise, "?") {
+		sep = "&"
+	}
+	return advertise + sep + "token=" + url.QueryEscape(token)
 }
 
 func (p *peerService) Register(ctx context.Context, dto *dto.PeerDto) (*infra.Peer, error) {

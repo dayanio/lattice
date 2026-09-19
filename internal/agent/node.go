@@ -438,10 +438,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		if cfg.Flags.RelayQuicURL != "" {
 			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, privateKey, node.probeFactory.Handle)
 		} else {
-			lrpUrl := cfg.Flags.RelayURL
-			if lrpUrl == "" {
-				lrpUrl = node.current.LrpUrl
-			}
+			lrpUrl := resolveRelayURL(cfg.Flags.RelayURL, node.current.LrpUrl)
 
 			if lrpUrl != "" {
 				// probeFactory.Handle is passed directly: probeFactory already exists
@@ -453,6 +450,13 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 			return nil, err
 		}
 		node.lrpClient = lrp
+		if lrp != nil {
+			// The ICE/LRP race and the bind's relay receive path are gated on
+			// this flag; a relay client that exists but is never raced or
+			// read leaves NATed peers with no fallback (same as the Apple
+			// engine, which sets it whenever the server advertises a relay).
+			config.Conf.EnableLrp = true
+		}
 	}
 
 	// ── Phase 3: WireGuard data plane ────────────────────────────────────────
