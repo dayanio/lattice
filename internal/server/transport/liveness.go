@@ -14,12 +14,19 @@
 
 package transport
 
-import "time"
+import (
+	"net"
+	"time"
+)
 
 // PeerStats is the WireGuard-side view of a peer used for liveness checks.
 type PeerStats struct {
 	LastHandshake time.Time
 	RxBytes       uint64
+	// Endpoint is where WireGuard currently sends this peer's packets. It
+	// follows the source of the last authenticated packet received, so it can
+	// differ from the transport the probe chose.
+	Endpoint *net.UDPAddr
 }
 
 // rxStallThreshold is how long a keepalive-armed peer may go without any
