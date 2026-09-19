@@ -156,6 +156,57 @@ func TestPeerService_RegisterStandalone_ExpiredTokenRejected(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// A device presents its enrollment token every time it starts or reconnects.
+// Once the token lapsed (7 days by default) the server refused it even for the
+// device that enrolled with it, locking enrolled devices out at their next
+// restart, although GetNetmap accepts the same token with no expiry check.
+func TestPeerService_RegisterStandalone_ExpiredTokenStillResumesItsOwnPeer(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, func(tok *models.EnrollmentToken) {
+		tok.ExpiresAt = time.Now().Add(300 * time.Millisecond)
+	})
+
+	first, err := svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-test-token"})
+	require.NoError(t, err)
+	time.Sleep(400 * time.Millisecond) // the token has now expired
+
+	again, err := svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-test-token"})
+	require.NoError(t, err, "an enrolled device must be able to register again after its token expired")
+	assert.Equal(t, *first.Address, *again.Address, "and it keeps its overlay address")
+}
+
+func TestPeerService_RegisterStandalone_ExpiredTokenStillRejectsANewPeer(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, func(tok *models.EnrollmentToken) {
+		tok.ExpiresAt = time.Now().Add(300 * time.Millisecond)
+	})
+
+	_, err := svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-test-token"})
+	require.NoError(t, err)
+	time.Sleep(400 * time.Millisecond)
+
+	_, err = svc.Register(ctx, &dto.PeerDto{Name: "db", AppID: "app-2", Token: "enr-test-token"})
+	assert.Error(t, err, "an expired token must not enroll a new device")
+}
+
+func TestPeerService_RegisterStandalone_ExpiredTokenCannotTakeOverAnotherTokensPeer(t *testing.T) {
+	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
+	ctx := context.Background()
+	seedEnrollmentToken(t, st, func(tok *models.EnrollmentToken) { tok.Token = "enr-owner" })
+	seedEnrollmentToken(t, st, func(tok *models.EnrollmentToken) {
+		tok.Token = "enr-other"
+		tok.ExpiresAt = time.Now().Add(-time.Minute)
+	})
+
+	_, err := svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-owner"})
+	require.NoError(t, err)
+
+	_, err = svc.Register(ctx, &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-other"})
+	assert.Error(t, err, "an expired token is only good for the peer that enrolled with it")
+}
+
 func TestPeerService_RegisterStandalone_UsageLimitExhaustedRejected(t *testing.T) {
 	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
 	ctx := context.Background()
