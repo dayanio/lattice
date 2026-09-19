@@ -101,7 +101,7 @@ func runSidecar(_ *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	agentconfig.Conf.AppId = agentName
+	agentconfig.Conf.AppId = infra.NormalizeAppID(agentName)
 	agentconfig.Conf.ServerUrl = sidecarServerURL
 	agentconfig.Conf.WgPort = 0 // random port; no kernel wg0
 

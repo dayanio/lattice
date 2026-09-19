@@ -204,7 +204,7 @@ func (e *Engine) run(ctx context.Context) {
 	e.emit(EventConnecting)
 
 	// The agent internals read these globals for NATS identity and endpoints.
-	agentconfig.Conf.AppId = e.cfg.Name
+	agentconfig.Conf.AppId = infra.NormalizeAppID(e.cfg.Name)
 	agentconfig.Conf.ServerUrl = e.cfg.ServerURL
 	agentconfig.Conf.WgPort = 0 // random UDP port inside the NE process
 
