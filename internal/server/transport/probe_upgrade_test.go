@@ -169,3 +169,40 @@ func waitUntil(t *testing.T, timeout time.Duration, cond func() bool, msg string
 	}
 	t.Fatalf("timed out: %s", msg)
 }
+
+type gatedSignal struct {
+	infra.SignalService
+	up atomic.Bool
+}
+
+func (g *gatedSignal) Connected() bool { return g.up.Load() }
+
+// A retry is a restart that needs signaling; with signaling down it must not
+// tear down the working relay path, and it is retried once signaling is back.
+func TestUpgrade_WaitsForSignaling(t *testing.T) {
+	fastUpgrade(t)
+	prev := upgradeSignalRetry
+	upgradeSignalRetry = 20 * time.Millisecond
+	t.Cleanup(func() { upgradeSignalRetry = prev })
+
+	var fired atomic.Int32
+	p := newUpgradeProbe(t, true, &fired)
+	sig := &gatedSignal{}
+	p.signal = sig
+
+	p.onSuccess(&mockTransport{tp: infra.LRP, addr: "fake"})
+
+	time.Sleep(150 * time.Millisecond)
+	if n := fired.Load(); n != 0 {
+		t.Fatalf("upgrade restarted %d time(s) while signaling was down", n)
+	}
+	p.upgradeMu.Lock()
+	tries := p.upgradeTries
+	p.upgradeMu.Unlock()
+	if tries != 0 {
+		t.Fatalf("upgradeTries = %d, a deferred retry must not count as an attempt", tries)
+	}
+
+	sig.up.Store(true)
+	waitUntil(t, time.Second, func() bool { return fired.Load() == 1 }, "retry once signaling is back")
+}

@@ -22,6 +22,10 @@ var upgradeBaseInterval = 2 * time.Minute
 
 const upgradeMaxInterval = 30 * time.Minute
 
+// upgradeSignalRetry is how soon a retry that found signaling down is tried
+// again; it does not count as an attempt.
+var upgradeSignalRetry = 15 * time.Second
+
 // upgradeDelay is the wait before retry number attempts+1: base, 2*base, ...
 // capped at upgradeMaxInterval.
 func upgradeDelay(attempts int) time.Duration {
@@ -47,15 +51,28 @@ func (p *Probe) scheduleUpgrade() {
 	}
 	p.upgradeMu.Lock()
 	defer p.upgradeMu.Unlock()
+	p.armUpgradeLocked(upgradeDelay(p.upgradeTries))
+}
+
+func (p *Probe) armUpgradeLocked(delay time.Duration) {
 	if p.upgradeTimer != nil {
 		p.upgradeTimer.Stop()
 	}
 	epoch := p.epoch.Load()
-	p.upgradeTimer = time.AfterFunc(upgradeDelay(p.upgradeTries), func() { p.tryUpgrade(epoch) })
+	p.upgradeTimer = time.AfterFunc(delay, func() { p.tryUpgrade(epoch) })
 }
 
 func (p *Probe) tryUpgrade(epoch uint64) {
 	if p.epoch.Load() != epoch || p.sm.Current() != StateLRPReady {
+		return
+	}
+	// The retry is a full restart that has to renegotiate over signaling. With
+	// signaling down (e.g. right after a network switch) it cannot complete
+	// and would only tear down the relay path that still works.
+	if cs, ok := p.signal.(interface{ Connected() bool }); ok && !cs.Connected() {
+		p.upgradeMu.Lock()
+		p.armUpgradeLocked(upgradeSignalRetry)
+		p.upgradeMu.Unlock()
 		return
 	}
 	p.upgradeMu.Lock()
