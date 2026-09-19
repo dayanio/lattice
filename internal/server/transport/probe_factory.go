@@ -83,6 +83,24 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 	}
 }
 
+// keepaliveFor returns the WireGuard persistent-keepalive interval this side
+// configures for the peer: only the initiator sends keepalives.
+//
+// wireguard-go re-arms the keepalive timer on every authenticated packet it
+// sends or receives. With keepalives on both sides each received one postpones
+// the local one, the sides alternate, and each receives a keepalive only about
+// every 50 s. That makes a single lost packet look like a 75 s silence and
+// would trip the received-bytes stall check (livenessTracker) on a healthy
+// path. With only the initiator sending, the responder receives one on a fixed
+// 25 s rhythm and can judge liveness by it; the initiator has no such rhythm
+// and relies on the handshake age, or on the responder's restart notice.
+func keepaliveFor(local, remote infra.PeerIdentity) int {
+	if isInitiator(local, remote) {
+		return provision.PersistentKeepalive
+	}
+	return 0
+}
+
 // reconcileAction is what the reconciler must do with a probe.
 type reconcileAction int
 
@@ -390,10 +408,7 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 
 	pubKey := remoteId.PublicKey.String()
 
-	// Both sides send WireGuard keepalives. A keepalive is the only traffic an
-	// idle peer produces, so with both directions active the received-byte
-	// counter doubles as a fast path-liveness signal (see livenessTracker).
-	persistentKA := provision.PersistentKeepalive
+	persistentKA := keepaliveFor(p.localId, remoteId)
 
 	sm.OnTransition(func(from, to PeerState) {
 		p.log.Debug("state transition", "remoteId", remoteId.AppID, "from", from, "to", to)

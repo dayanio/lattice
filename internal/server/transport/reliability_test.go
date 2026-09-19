@@ -129,3 +129,22 @@ func TestICEDialer_RestartNotifyStopsWhenClosed(t *testing.T) {
 		t.Fatalf("restart notify kept firing after Close: %d -> %d", before, after)
 	}
 }
+
+// wireguard-go re-arms a peer's persistent-keepalive timer on every
+// authenticated packet it sends OR receives. With keepalives on both sides
+// each received keepalive postpones the local one, so the sides alternate and
+// each receives one only about every 50 s instead of every 25 s: a single
+// lost keepalive then looks like a 75 s silence and trips the received-bytes
+// stall check on a healthy path. Only the initiator therefore sends them; the
+// responder sees a steady 25 s rhythm to judge liveness by.
+func TestKeepaliveFor_OnlyTheInitiatorSendsKeepalives(t *testing.T) {
+	big := infra.NewPeerIdentity("big", wgtypes.Key{2})
+	small := infra.NewPeerIdentity("small", wgtypes.Key{1})
+
+	if got := keepaliveFor(big, small); got <= 0 {
+		t.Errorf("initiator keepalive = %d, want a positive interval", got)
+	}
+	if got := keepaliveFor(small, big); got != 0 {
+		t.Errorf("responder keepalive = %d, want 0 so the initiator's keepalives stay on a fixed rhythm", got)
+	}
+}
