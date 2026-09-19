@@ -41,6 +41,11 @@ struct JoinView: View {
 
     @State private var useScanner: Bool
     @State private var joinInput = ""
+    /// "Log in and join": an account issues this device's token, instead of an
+    /// invite link or token being pasted.
+    @State private var accountMode = false
+    @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
+    @State private var password = ""
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
     @State private var deviceName = UIDevice.current.name
     @State private var isSavingNetwork = false
@@ -53,7 +58,12 @@ struct JoinView: View {
         (payload?.serverURL ?? serverURL).trimmingCharacters(in: .whitespacesAndNewlines)
     }
     private var effectiveName: String { payload?.name ?? deviceName }
-    private var canJoin: Bool { !effectiveToken.isEmpty && !effectiveServer.isEmpty && !isSavingNetwork }
+    private var canJoin: Bool {
+        if accountMode {
+            return !serverURL.trimmingCharacters(in: .whitespaces).isEmpty && !username.isEmpty && !password.isEmpty && !isSavingNetwork
+        }
+        return !effectiveToken.isEmpty && !effectiveServer.isEmpty && !isSavingNetwork
+    }
 
     init(onFinished: @escaping () -> Void, mode: JoinMode = .manual, initialResetIdentity: Bool = false) {
         self.onFinished = onFinished
@@ -131,36 +141,63 @@ struct JoinView: View {
     private var networkStep: some View {
         Form {
             Section {
-                TextField("粘贴邀请链接或入网令牌", text: $joinInput)
-                    .keyboardType(.URL)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                Button {
-                    pasteFromClipboard()
-                } label: {
-                    Label("从剪贴板粘贴", systemImage: "doc.on.clipboard")
+                Picker("加入方式", selection: $accountMode) {
+                    Text("邀请链接 / 令牌").tag(false)
+                    Text("账号登录").tag(true)
                 }
-                Button {
-                    useScanner = true
-                } label: {
-                    Label("扫描二维码", systemImage: "qrcode.viewfinder")
-                }
-            } header: {
-                Text("邀请链接或令牌")
-            } footer: {
-                if let payload, payload.token != nil, payload.serverURL == nil, serverURL.isEmpty {
-                    Text("这个令牌不含服务器地址，请在下面的“高级”里填写。")
-                } else if let server = payload?.serverURL {
-                    Text("服务器：\(server)")
-                }
+                .pickerStyle(.segmented)
             }
 
-            Section {
-                DisclosureGroup("高级（服务器地址、设备名）") {
+            if accountMode {
+                Section {
                     TextField("服务器 URL (http://…)", text: $serverURL)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                    TextField("用户名", text: $username)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    SecureField("密码", text: $password)
+                } header: {
+                    Text("账号")
+                } footer: {
+                    Text("用账号为这台设备签发入网令牌，登录状态会保留，之后的管理操作不必再登录。")
+                }
+            } else {
+                Section {
+                    TextField("粘贴邀请链接或入网令牌", text: $joinInput)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Button {
+                        pasteFromClipboard()
+                    } label: {
+                        Label("从剪贴板粘贴", systemImage: "doc.on.clipboard")
+                    }
+                    Button {
+                        useScanner = true
+                    } label: {
+                        Label("扫描二维码", systemImage: "qrcode.viewfinder")
+                    }
+                } header: {
+                    Text("邀请链接或令牌")
+                } footer: {
+                    if let payload, payload.token != nil, payload.serverURL == nil, serverURL.isEmpty {
+                        Text("这个令牌不含服务器地址，请在下面的“高级”里填写。")
+                    } else if let server = payload?.serverURL {
+                        Text("服务器：\(server)")
+                    }
+                }
+            }
+
+            Section {
+                DisclosureGroup(accountMode ? "高级（设备名）" : "高级（服务器地址、设备名）") {
+                    if !accountMode {
+                        TextField("服务器 URL (http://…)", text: $serverURL)
+                            .keyboardType(.URL)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                    }
                     TextField("设备名", text: $deviceName)
                     if let stored = DeviceName.preview(effectiveName) {
                         Text("将保存为 \(stored)")
@@ -181,15 +218,15 @@ struct JoinView: View {
 
             Section {
                 Button {
-                    saveAndConnect(server: effectiveServer, token: effectiveToken, name: effectiveName)
+                    join()
                 } label: {
                     if isSavingNetwork {
                         HStack(spacing: 8) {
                             ProgressView()
-                            Text("正在保存配置…")
+                            Text(accountMode ? "正在登录…" : "正在保存配置…")
                         }
                     } else {
-                        Text("加入网络")
+                        Text(accountMode ? "登录并加入" : "加入网络")
                     }
                 }
                 .disabled(!canJoin)
@@ -198,6 +235,35 @@ struct JoinView: View {
             }
         }
         .navigationTitle("加入网络")
+    }
+
+    private func join() {
+        if accountMode {
+            joinWithAccount()
+        } else {
+            saveAndConnect(server: effectiveServer, token: effectiveToken, name: effectiveName)
+        }
+    }
+
+    /// Logs in, has the account issue this device's token, then joins with it.
+    private func joinWithAccount() {
+        isSavingNetwork = true
+        failure = nil
+        let server = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = server.hasSuffix("/") ? String(server.dropLast()) : server
+        Task {
+            do {
+                let issued = try await LatticeAPI.shared.loginAndCreateDeviceToken(server: trimmed, user: username, pass: password)
+                password = ""
+                saveAndConnect(server: trimmed, token: issued, name: deviceName)
+            } catch let error as AccountJoinError {
+                isSavingNetwork = false
+                failure = error.failure
+            } catch {
+                isSavingNetwork = false
+                failure = .tokenNotIssued(error.localizedDescription)
+            }
+        }
     }
 
     private func pasteFromClipboard() {

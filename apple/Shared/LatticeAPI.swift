@@ -224,6 +224,41 @@ final class LatticeAPI {
         try await resolveWorkspaceIfNeeded()
     }
 
+    /// Issues an enrollment token for this device. Single use (one new device),
+    /// but long-lived: the device presents the token every time it registers
+    /// again, and the server rejects an expired token even for a device that is
+    /// already enrolled.
+    func createDeviceToken() async throws -> String {
+        try await resolveWorkspaceIfNeeded()
+        let data = try await request(method: "POST", path: "/api/v1/token/generate",
+                                     body: ["expiry": "8760h", "limit": 1])
+        struct Reply: Decodable {
+            struct Body: Decodable { let token: String? }
+            let data: Body?
+        }
+        guard let token = try? JSONDecoder().decode(Reply.self, from: data).data?.token, !token.isEmpty else {
+            throw LatticeAPIError.server("服务器没有返回入网令牌")
+        }
+        return token
+    }
+
+    /// "Log in and join": logs in against `server`, then issues an enrollment
+    /// token for this device. The login stays, so later management actions
+    /// need no second login. Failures say which step failed.
+    func loginAndCreateDeviceToken(server: String, user: String, pass: String) async throws -> String {
+        UserDefaults.standard.set(server, forKey: "lattice.serverURL")
+        do {
+            try await login(user: user, pass: pass)
+        } catch {
+            throw AccountJoinError.login(error.localizedDescription)
+        }
+        do {
+            return try await createDeviceToken()
+        } catch {
+            throw AccountJoinError.token(error.localizedDescription)
+        }
+    }
+
     /// Ends the management session: the token, the saved password and the cached
     /// workspace. Joining the network and the VPN profile are untouched.
     func logout() {
@@ -546,5 +581,19 @@ final class AuthSession: ObservableObject {
 
     func refresh() {
         isLoggedIn = !AuthTokenStore.standard.read().isEmpty
+    }
+}
+
+
+/// Which step of "log in and join" failed.
+enum AccountJoinError: Error {
+    case login(String)
+    case token(String)
+
+    var failure: JoinFailure {
+        switch self {
+        case .login(let message): return .loginFailed(message)
+        case .token(let message): return .tokenNotIssued(message)
+        }
     }
 }

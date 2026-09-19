@@ -89,6 +89,12 @@ eq(JoinFailure.classify("something entirely new").advice, "something entirely ne
 eq(JoinFailure.classify("token is invalid").display, "入网令牌无效\n检查令牌是否完整，或向管理员重新获取邀请链接。", "display joins title and advice")
 // Order matters: a NATS timeout must not be reported as a generic server failure.
 eq(title("NATS connect: i/o timeout"), "连不上信令端口（4222）", "nats is checked before generic timeouts")
+eq(title("Insufficient permissions"), "这个账号没有权限为设备签发入网令牌", "forbidden to issue tokens")
+eq(JoinFailure.loginFailed("invalid username or password").title, "登录失败", "login failure")
+eq(JoinFailure.loginFailed("invalid username or password").advice, "invalid username or password", "login failure keeps the server's message")
+eq(JoinFailure.tokenNotIssued("Insufficient permissions").title, "这个账号没有权限为设备签发入网令牌", "a known cause is explained")
+eq(JoinFailure.tokenNotIssued("boom").title, "没能为这台设备签发入网令牌", "an unknown cause still says what failed")
+eq(JoinFailure.tokenNotIssued("boom").advice, "boom", "and keeps the raw message")
 // A refresh-token message from the management API is not an enrollment token problem.
 eq(title("refresh token has expired"), "连接失败", "management token expiry is not an enrollment error")
 eq(title("refresh token has been revoked"), "连接失败", "management token revocation is not an enrollment error")
