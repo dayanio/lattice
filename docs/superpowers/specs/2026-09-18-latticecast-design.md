@@ -126,8 +126,10 @@ GET  /status  -> { state: playing|paused|idle|error, position_ms, duration_ms, t
 list_cast_devices() -> [{ name, room, protocols[], online, now_playing }]
 search_media(query) -> [{ media_id, title, kind, source }]        // NAS 媒体库检索
 cast_play(device, media_id?, url?, title?) -> { status, adapter }  // 二选一传参
+cast_pause(device) -> { status }
+cast_seek(device, position_ms) -> { status }   // 负值 -> position_out_of_range
 cast_stop(device) -> { status }
-cast_volume(device, level) -> { status }   // level: 0-100
+cast_volume(device, level) -> { status }   // level: 0-100，越界 -> level_out_of_range
 cast_status(device) -> { now_playing, position_ms, state }        // 协议自带，免费获得
 ```
 
