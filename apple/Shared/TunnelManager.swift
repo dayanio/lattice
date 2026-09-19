@@ -35,6 +35,11 @@ final class TunnelManager: ObservableObject {
     @Published private(set) var isConfigured = false
     @Published private(set) var status: NEVPNStatus = .invalid
     @Published private(set) var lastStartError: String = ""
+
+    /// `lastStartError` in words a user can act on; nil when there is no error.
+    var lastFailure: JoinFailure? {
+        lastStartError.isEmpty ? nil : JoinFailure.classify(lastStartError)
+    }
     /// Per-peer connection quality from the tunnel process
     /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
     @Published private(set) var peerStates: [String: String] = [:]

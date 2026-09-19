@@ -56,7 +56,7 @@ struct OverviewView: View {
                         connectedSince: tunnel.connectedSince,
                         aggregateText: aggregateText,
                         selfAddress: localPeer?.address ?? "",
-                        errorText: tunnel.lastStartError,
+                        errorText: tunnel.lastFailure?.display ?? "",
                         onToggle: { tunnel.connectedBinding.wrappedValue.toggle() }
                     )
 
