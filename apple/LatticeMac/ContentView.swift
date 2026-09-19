@@ -369,8 +369,15 @@ struct ContentView: View {
                         QualityPill(text: summary.text, color: summary.color)
                     }
                 }
-                if !tunnel.lastStartError.isEmpty {
-                    Text(tunnel.lastStartError).font(.caption2).foregroundColor(.red)
+                if let failure = tunnel.lastFailure {
+                    Text(failure.title).font(.caption2.weight(.semibold)).foregroundColor(.red)
+                    if !failure.advice.isEmpty {
+                        Text(failure.advice)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else if let host = URL(string: tunnel.serverURL ?? ""), let hostHeader = host.host {
                     Text(hostHeader)
                         .font(.caption2)
@@ -669,46 +676,94 @@ struct PeerRow: View {
 
 // MARK: - Join (network enrollment)
 
-/// First-run join sheet: collects the control-plane URL and enrollment token,
-/// installs the VPN profile, and connects the tunnel.
+/// First-run join sheet. One input takes an invite link
+/// (lattice://join?server=…&token=…[&name=…]) or a bare enrollment token; the
+/// server address and device name live under "高级" and are only asked for when
+/// the input does not carry them. Saving installs the VPN profile; the caller
+/// connects the tunnel.
 struct JoinView: View {
     var onDone: () -> Void
 
-    @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
-    @State private var token = ""
+    @State private var input = ""
+    @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
     @State private var deviceName = Host.current().localizedName ?? "lattice-mac"
+    @State private var showAdvanced = false
+    @State private var fromClipboard = false
     @State private var isSaving = false
-    @State private var errorText = ""
+    @State private var failure: JoinFailure?
     @State private var showingScanner = false
 
+    private var payload: JoinPayload? { JoinPayload(input) }
+    private var token: String { payload?.token ?? "" }
+    private var effectiveServer: String {
+        (payload?.serverURL ?? serverURL).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private var effectiveName: String { payload?.name ?? deviceName }
+    private var canJoin: Bool { !token.isEmpty && !effectiveServer.isEmpty && !isSaving }
+    private var needsServer: Bool { payload != nil && payload?.serverURL == nil && serverURL.isEmpty }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("加入 Lattice 网络")
                 .font(.system(.headline, design: .rounded))
 
-            LabeledField(label: "服务器地址") {
-                TextField("http://127.0.0.1:8080", text: $serverURL)
+            LabeledField(label: "邀请链接或入网令牌") {
+                TextField("粘贴 lattice://join?… 链接，或入网令牌", text: $input)
                     .textFieldStyle(.plain)
                     .font(.system(.caption, design: .monospaced))
             }
 
-            LabeledField(label: "入网令牌") {
-                SecureField("控制台签发的入网令牌", text: $token)
-                    .textFieldStyle(.plain)
-                    .font(.system(.caption, design: .monospaced))
+            if fromClipboard {
+                Text("已从剪贴板读取邀请信息")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            } else if let payload, payload.serverURL != nil {
+                Text("服务器：\(payload.serverURL ?? "")")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
-            LabeledField(label: "节点名称") {
-                TextField("lattice-mac", text: $deviceName)
-                    .textFieldStyle(.plain)
+            if needsServer {
+                Text("这个令牌不含服务器地址，请在下面填写。")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
             }
 
-            Text("加入后系统会请求授权创建 VPN 配置，本机即可访问网络内的节点。")
+            DisclosureGroup("高级（服务器地址、设备名）", isExpanded: $showAdvanced) {
+                VStack(alignment: .leading, spacing: 10) {
+                    LabeledField(label: "服务器地址") {
+                        TextField("http://服务器地址:18090", text: $serverURL)
+                            .textFieldStyle(.plain)
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                    LabeledField(label: "设备名") {
+                        TextField("lattice-mac", text: $deviceName)
+                            .textFieldStyle(.plain)
+                    }
+                    if let stored = DeviceName.preview(effectiveName) {
+                        Text("将保存为 \(stored)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding(.top, 6)
+            }
+            .font(.caption)
+
+            Text("加入后系统会请求授权创建 VPN 配置，请在弹窗里点“允许”。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
 
-            if !errorText.isEmpty {
-                Text(errorText).font(.caption).foregroundColor(.red)
+            if let failure {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(failure.title).font(.caption.weight(.semibold)).foregroundColor(.red)
+                    if !failure.advice.isEmpty {
+                        Text(failure.advice).font(.caption2).foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
             }
 
             HStack(spacing: 8) {
@@ -721,7 +776,7 @@ struct JoinView: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    pastePayload()
+                    pasteFromClipboard()
                 } label: {
                     Label("粘贴", systemImage: "doc.on.clipboard")
                         .font(.caption)
@@ -732,58 +787,83 @@ struct JoinView: View {
 
                 if isSaving {
                     ProgressView().controlSize(.small)
+                    Text("正在保存配置…").font(.caption2).foregroundColor(.secondary)
                 } else {
                     Button("加入网络") { saveAndConnect() }
                         .buttonStyle(.borderedProminent)
-                        .disabled(serverURL.isEmpty || token.isEmpty)
+                        .disabled(!canJoin)
                 }
             }
         }
         .padding(20)
-        .frame(width: 320)
+        .frame(width: 340)
+        .onAppear { detectClipboardInvite() }
+        .onChange(of: needsServer) { needed in
+            if needed { showAdvanced = true }
+        }
         .sheet(isPresented: $showingScanner) {
             JoinScannerView { payload in
                 showingScanner = false
-                applyPayload(payload)
+                applyPayload(payload, raw: nil)
             } onCancel: {
                 showingScanner = false
             }
         }
     }
 
-    /// Fills server/token from a scanned or pasted lattice://join payload.
-    private func applyPayload(_ payload: JoinPayload) {
-        if let server = payload.serverURL, !server.isEmpty {
-            serverURL = server
-        }
-        if let t = payload.token, !t.isEmpty {
-            token = t
-        }
-        errorText = ""
+    /// Only a complete invite link is picked up from the clipboard on its own; a
+    /// bare word (any copied password, say) would otherwise land in this field.
+    private func detectClipboardInvite() {
+        guard input.isEmpty,
+              let raw = NSPasteboard.general.string(forType: .string),
+              raw.lowercased().hasPrefix("lattice://join"),
+              let payload = JoinPayload(raw), payload.token != nil else { return }
+        applyPayload(payload, raw: raw)
+        fromClipboard = true
     }
 
-    private func pastePayload() {
+    private func applyPayload(_ payload: JoinPayload, raw: String?) {
+        if let raw {
+            input = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let t = payload.token {
+            var link = URLComponents()
+            link.scheme = "lattice"
+            link.host = "join"
+            var items = [URLQueryItem(name: "token", value: t)]
+            if let server = payload.serverURL { items.append(URLQueryItem(name: "server", value: server)) }
+            if let name = payload.name { items.append(URLQueryItem(name: "name", value: name)) }
+            link.queryItems = items
+            input = link.string ?? t
+        }
+        fromClipboard = false
+        failure = nil
+    }
+
+    private func pasteFromClipboard() {
         guard let raw = NSPasteboard.general.string(forType: .string) else {
-            errorText = "剪贴板为空"
+            failure = JoinFailure(title: "剪贴板是空的", advice: "先复制邀请链接或入网令牌。")
             return
         }
         guard let payload = JoinPayload(raw) else {
-            errorText = "剪贴板内容不是有效的入网信息"
+            failure = JoinFailure(title: "剪贴板里不是有效的入网信息", advice: "需要 lattice://join?… 链接，或不含空格的入网令牌。")
             return
         }
-        applyPayload(payload)
+        applyPayload(payload, raw: raw)
     }
 
     private func saveAndConnect() {
         isSaving = true
-        errorText = ""
-        let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
-        UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
-        UserDefaults.standard.set(deviceName, forKey: "lattice.nodeName")
-        TunnelManager.shared.saveJoin(serverURL: trimmed, token: token, name: deviceName) { err in
+        failure = nil
+        let server = effectiveServer.hasSuffix("/") ? String(effectiveServer.dropLast()) : effectiveServer
+        let name = effectiveName
+        UserDefaults.standard.set(server, forKey: "lattice.serverURL")
+        // Peers appear under the server's normalized name; keep the same form so
+        // "this device" is recognised in the list.
+        UserDefaults.standard.set(DeviceName.normalized(name), forKey: "lattice.nodeName")
+        TunnelManager.shared.saveJoin(serverURL: server, token: token, name: name) { err in
             isSaving = false
             if let err {
-                errorText = "保存失败: \(err)"
+                failure = JoinFailure(title: "保存 VPN 配置失败", advice: "\(err)。请在系统弹窗里点“允许”后重试。")
             } else {
                 onDone()
             }
