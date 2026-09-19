@@ -254,3 +254,41 @@ func TestIntegration_LenientUpgrade(t *testing.T) {
 		return srv.Manager().IsVerified(uint64(id))
 	}, "session must be upgraded to verified in lenient mode")
 }
+
+// A relayed frame carries no other sender information, so the receiving
+// client derives the peer's identity (and WireGuard its roaming endpoint)
+// from the header. The relay must therefore put the SENDER's ID there:
+// forwarding the sender's frame untouched left the receiver's own ID in it,
+// so WireGuard re-pointed every peer at itself and no handshake over the
+// relay could ever complete.
+func TestIntegration_ForwardedFrameCarriesSenderID(t *testing.T) {
+	srv, ts := startTestRelay(t, false)
+
+	_, idA := newClientKey(t)
+	_, idB := newClientKey(t)
+	a, _ := dialUpgrade(t, ts)
+	writeRegister(t, a, idA)
+	b, breader := dialUpgrade(t, ts)
+	writeRegister(t, b, idB)
+	waitFor(t, 2*time.Second, func() bool {
+		return srv.Manager().Get(uint64(idA)) != nil && srv.Manager().Get(uint64(idB)) != nil
+	}, "both sessions registered")
+
+	if h, _ := readFrame(t, breader); h.Cmd != AuthChallenge {
+		t.Fatalf("expected the opportunistic auth challenge first, got cmd=%d", h.Cmd)
+	}
+
+	fwd := Header{Cmd: Forward, PayloadLen: 3, ToID: idB}
+	if _, err := a.Write(append(fwd.Marshal(), []byte("hey")...)); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = b.SetReadDeadline(time.Now().Add(2 * time.Second))
+	got, payload := readFrame(t, breader)
+	if got.Cmd != Forward || string(payload) != "hey" {
+		t.Fatalf("unexpected frame cmd=%d payload=%q", got.Cmd, payload)
+	}
+	if got.ToID != idA {
+		t.Fatalf("received frame carries ID %d, want the sender's %d (receiver's own is %d)", got.ToID, idA, idB)
+	}
+}

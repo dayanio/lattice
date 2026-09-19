@@ -284,6 +284,9 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 				}
 			}
 
+			if h.Cmd == Forward {
+				stampSender(frame, fromId)
+			}
 			if relayErr := s.sessionMgr.Relay(uint64(h.ToID), frame); relayErr != nil {
 				s.log.Warn("relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
 			}

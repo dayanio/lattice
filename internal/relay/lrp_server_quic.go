@@ -246,6 +246,9 @@ func (s *QUICServer) relayDatagrams(conn *quic.Conn, fromId uint64) {
 			continue
 		}
 
+		if h.Cmd == Forward {
+			stampSender(data, fromId)
+		}
 		if relayErr := s.sessionMgr.Relay(uint64(h.ToID), data); relayErr != nil {
 			s.log.Warn("datagram relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
 		} else {
