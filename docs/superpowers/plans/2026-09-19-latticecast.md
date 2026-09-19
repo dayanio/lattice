@@ -850,3 +850,34 @@ func (r *RefluxSource) StreamURL(ctx, id string) (string, error) // {Base}/Video
 - 错误路径：reflux 不可达 / token 失效 → 结构化错误（LLM 可转述），不拖垮本地库搜索。
 - 前置：一台可达的 reflux 实例做手工 e2e（单元测试用 fake）。
 - Commit: `feat(resolve): reflux source via jellyfin-compatible api`
+
+---
+
+### Task 21: LatticeCastKit Swift 包 + reflux Swift 客户端接线（v4 新增，用户决策：嵌入自有播放器）
+
+**Files:**
+- Create（lattice-cast 仓）: `swift/LatticeCastKit/Package.swift`、`swift/LatticeCastKit/Sources/LatticeCastKit/{RendererServer.swift,Announcer.swift,Provisioning.swift,LatticeCastRenderer.swift}`
+- Test: `swift/LatticeCastKit/Tests/LatticeCastKitTests/`（契约夹具照搬 testdata/contract）
+- Modify（reflux 主仓，dev 分支）: `apple/project.yml`（包依赖）、`apple/Shared/LatticeCast/RendererBridge.swift`（PlayerController → LatticeCastKit PlaybackController 桥接）、首启配对 UI 挂钩
+
+**Interfaces:**
+```swift
+public struct LatticeCastConfig { public var name, room, token: String; public var port: Int }  // port 默认 7822
+public protocol PlaybackController {
+    func load(url: URL, title: String?, positionMS: Int64) throws
+    func pause() throws; func stop() throws
+    func seek(positionMS: Int64) throws; func volume(level: Int) throws
+    func status() -> Status
+}
+public final class LatticeCastRenderer {
+    public init(config: LatticeCastConfig, controller: PlaybackController)
+    public func start() throws   // 起 HTTP + NSNetService 自报（TXT room/v=1）
+    public func stop()
+}
+```
+
+**行为权威**：`docs/protocol.md` + Go renderer（internal/cast/renderer/server.go）。HTTP 层复用 Swifter（SPM 钉 revision，同 tvOS T18 先例）。状态机含 sticky error 与 eof→idle（T19 语义）。tvOS（T18）后续收编进本包——先标注不去动它。
+
+- [ ] T21a：包实现 + macOS XCTest 契约测试（swift test）+ 提交 lattice-cast
+- [ ] T21b：reflux 主仓 dev 分支接线（**前置硬检查：工作树干净**；PlayerKit 桥接 + 配对 UI + 双 target 构建门禁）+ 提交推送
+- [ ] T21c（手动·用户）：Xcode 起 RefluxAppleMac → cast-agent 配置加设备 → 说一句话投到 reflux 播放器
