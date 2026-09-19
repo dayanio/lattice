@@ -754,6 +754,11 @@ struct JoinView: View {
     @State private var deviceName = Host.current().localizedName ?? "lattice-mac"
     @State private var showAdvanced = false
     @State private var fromClipboard = false
+    /// "Log in and join": an account issues this device's token, instead of an
+    /// invite link or token being pasted.
+    @State private var accountMode = false
+    @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
+    @State private var password = ""
     @State private var isSaving = false
     @State private var failure: JoinFailure?
     @State private var showingScanner = false
@@ -764,7 +769,12 @@ struct JoinView: View {
         (payload?.serverURL ?? serverURL).trimmingCharacters(in: .whitespacesAndNewlines)
     }
     private var effectiveName: String { payload?.name ?? deviceName }
-    private var canJoin: Bool { !token.isEmpty && !effectiveServer.isEmpty && !isSaving }
+    private var canJoin: Bool {
+        if accountMode {
+            return !serverURL.trimmingCharacters(in: .whitespaces).isEmpty && !username.isEmpty && !password.isEmpty && !isSaving
+        }
+        return !token.isEmpty && !effectiveServer.isEmpty && !isSaving
+    }
     private var needsServer: Bool { payload != nil && payload?.serverURL == nil && serverURL.isEmpty }
 
     var body: some View {
@@ -772,13 +782,42 @@ struct JoinView: View {
             Text("加入 Lattice 网络")
                 .font(.system(.headline, design: .rounded))
 
-            LabeledField(label: "邀请链接或入网令牌") {
-                TextField("粘贴 lattice://join?… 链接，或入网令牌", text: $input)
-                    .textFieldStyle(.plain)
-                    .font(.system(.caption, design: .monospaced))
+            Picker("", selection: $accountMode) {
+                Text("邀请链接 / 令牌").tag(false)
+                Text("账号登录").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if accountMode {
+                LabeledField(label: "服务器地址") {
+                    TextField("http://服务器地址:18090", text: $serverURL)
+                        .textFieldStyle(.plain)
+                        .font(.system(.caption, design: .monospaced))
+                }
+                LabeledField(label: "用户名") {
+                    TextField("admin", text: $username)
+                        .textFieldStyle(.plain)
+                }
+                LabeledField(label: "密码") {
+                    SecureField("••••••••", text: $password)
+                        .textFieldStyle(.plain)
+                }
+                Text("用账号为这台设备签发入网令牌，登录状态会保留，之后的管理操作不必再登录。")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                LabeledField(label: "邀请链接或入网令牌") {
+                    TextField("粘贴 lattice://join?… 链接，或入网令牌", text: $input)
+                        .textFieldStyle(.plain)
+                        .font(.system(.caption, design: .monospaced))
+                }
             }
 
-            if fromClipboard {
+            if accountMode {
+                EmptyView()
+            } else if fromClipboard {
                 Text("已从剪贴板读取邀请信息")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -790,18 +829,20 @@ struct JoinView: View {
                     .truncationMode(.middle)
             }
 
-            if needsServer {
+            if needsServer && !accountMode {
                 Text("这个令牌不含服务器地址，请在下面填写。")
                     .font(.caption2)
                     .foregroundColor(.orange)
             }
 
-            DisclosureGroup("高级（服务器地址、设备名）", isExpanded: $showAdvanced) {
+            DisclosureGroup(accountMode ? "高级（设备名）" : "高级（服务器地址、设备名）", isExpanded: $showAdvanced) {
                 VStack(alignment: .leading, spacing: 10) {
-                    LabeledField(label: "服务器地址") {
-                        TextField("http://服务器地址:18090", text: $serverURL)
-                            .textFieldStyle(.plain)
-                            .font(.system(.caption, design: .monospaced))
+                    if !accountMode {
+                        LabeledField(label: "服务器地址") {
+                            TextField("http://服务器地址:18090", text: $serverURL)
+                                .textFieldStyle(.plain)
+                                .font(.system(.caption, design: .monospaced))
+                        }
                     }
                     LabeledField(label: "设备名") {
                         TextField("lattice-mac", text: $deviceName)
@@ -832,21 +873,23 @@ struct JoinView: View {
             }
 
             HStack(spacing: 8) {
-                Button {
-                    showingScanner = true
-                } label: {
-                    Label("扫码入网", systemImage: "qrcode.viewfinder")
-                        .font(.caption)
-                }
-                .buttonStyle(.bordered)
+                if !accountMode {
+                    Button {
+                        showingScanner = true
+                    } label: {
+                        Label("扫码入网", systemImage: "qrcode.viewfinder")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
 
-                Button {
-                    pasteFromClipboard()
-                } label: {
-                    Label("粘贴", systemImage: "doc.on.clipboard")
-                        .font(.caption)
+                    Button {
+                        pasteFromClipboard()
+                    } label: {
+                        Label("粘贴", systemImage: "doc.on.clipboard")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
                 }
-                .buttonStyle(.bordered)
 
                 Spacer()
 
@@ -854,7 +897,7 @@ struct JoinView: View {
                     ProgressView().controlSize(.small)
                     Text("正在保存配置…").font(.caption2).foregroundColor(.secondary)
                 } else {
-                    Button("加入网络") { saveAndConnect() }
+                    Button(accountMode ? "登录并加入" : "加入网络") { join() }
                         .buttonStyle(.borderedProminent)
                         .disabled(!canJoin)
                 }
@@ -916,11 +959,39 @@ struct JoinView: View {
         applyPayload(payload, raw: raw)
     }
 
-    private func saveAndConnect() {
+    private func join() {
+        if accountMode {
+            joinWithAccount()
+        } else {
+            saveAndConnect(server: effectiveServer, token: token, name: effectiveName)
+        }
+    }
+
+    /// Logs in, has the account issue this device's token, then joins with it.
+    private func joinWithAccount() {
         isSaving = true
         failure = nil
-        let server = effectiveServer.hasSuffix("/") ? String(effectiveServer.dropLast()) : effectiveServer
-        let name = effectiveName
+        let server = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = server.hasSuffix("/") ? String(server.dropLast()) : server
+        Task {
+            do {
+                let issued = try await LatticeAPI.shared.loginAndCreateDeviceToken(server: trimmed, user: username, pass: password)
+                password = ""
+                saveAndConnect(server: trimmed, token: issued, name: deviceName)
+            } catch let error as AccountJoinError {
+                isSaving = false
+                failure = error.failure
+            } catch {
+                isSaving = false
+                failure = .tokenNotIssued(error.localizedDescription)
+            }
+        }
+    }
+
+    private func saveAndConnect(server rawServer: String, token: String, name: String) {
+        isSaving = true
+        failure = nil
+        let server = rawServer.hasSuffix("/") ? String(rawServer.dropLast()) : rawServer
         UserDefaults.standard.set(server, forKey: "lattice.serverURL")
         // Peers appear under the server's normalized name; keep the same form so
         // "this device" is recognised in the list.

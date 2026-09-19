@@ -95,6 +95,11 @@ struct JoinFailure: Equatable {
         if has("token is invalid", "invalid token") {
             return JoinFailure(title: "入网令牌无效", advice: "检查令牌是否完整，或向管理员重新获取邀请链接。")
         }
+        if has("insufficient permissions") {
+            return JoinFailure(
+                title: "这个账号没有权限为设备签发入网令牌",
+                advice: "向管理员获取邀请链接，或换用有权限的账号。")
+        }
         if has("exhausted") {
             return JoinFailure(title: "网络地址已分配完", advice: "联系管理员清理不用的节点或扩容。")
         }
@@ -115,5 +120,19 @@ struct JoinFailure: Equatable {
                 advice: "检查服务器地址和网络；使用代理时请给服务器地址添加直连规则。")
         }
         return JoinFailure(title: "连接失败", advice: raw)
+    }
+
+    /// "Log in and join": the account login itself failed.
+    static func loginFailed(_ raw: String) -> JoinFailure {
+        JoinFailure(title: "登录失败", advice: raw)
+    }
+
+    /// "Log in and join": the login worked but issuing this device's enrollment
+    /// token did not.
+    static func tokenNotIssued(_ raw: String) -> JoinFailure {
+        let known = classify(raw)
+        return known.title == "连接失败"
+            ? JoinFailure(title: "没能为这台设备签发入网令牌", advice: raw)
+            : known
     }
 }
