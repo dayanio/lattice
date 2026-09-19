@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -559,25 +558,7 @@ func (i *iceDialer) getAgent(remoteId infra.PeerIdentity) (*ice.Agent, error) {
 	disconnectedTimeout := 10 * time.Second
 	failedTimeout := 15 * time.Second
 	iceAgent, err := ice.NewAgentWithOptions(
-		ice.WithInterfaceFilter(func(name string) bool {
-			name = strings.ToLower(name)
-			// Filter out all virtual network interfaces and WireGuard TUN interfaces.
-			// The mesh tunnel cannot be used as an ICE candidate: if selected, WireGuard
-			// would configure the peer endpoint to the mesh address, causing encrypted
-			// packets to pass through wf0 again, forming a routing loop.
-			// Linux names the tunnel wf0; macOS allocates a utunN device for it, so
-			// both prefixes must be filtered or macOS agents advertise their own
-			// mesh address as a host candidate and every connectivity check
-			// loops into the tunnel and dies (observed live, 2026-09-19).
-			if strings.Contains(name, "docker") ||
-				strings.Contains(name, "veth") ||
-				strings.Contains(name, "br-") ||
-				strings.HasPrefix(name, "wf") ||
-				strings.HasPrefix(name, "utun") {
-				return false
-			}
-			return true
-		}),
+		ice.WithInterfaceFilter(infra.ICEInterfaceAllowed),
 		ice.WithUDPMux(i.udpMux()),
 		ice.WithUDPMuxSrflx(i.filteringMux.UDPMuxSrflx()),
 		ice.WithNetworkTypes(i.networkTypes()),

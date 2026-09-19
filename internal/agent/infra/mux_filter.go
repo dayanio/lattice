@@ -93,14 +93,15 @@ func (f *FilteringUDPMux) SetPassThrough(ch chan<- PassThroughPacket) {
 }
 
 // UDPMux returns the UDPMux interface for ice.WithUDPMux (host candidates).
+// Listen addresses of interfaces rejected by ICEInterfaceAllowed are hidden.
 func (f *FilteringUDPMux) UDPMux() ice.UDPMux {
-	return f.inner.UDPMuxDefault
+	return iceFilteredMux{f.inner.UDPMuxDefault}
 }
 
 // UDPMuxSrflx returns the UniversalUDPMux interface for ice.WithUDPMuxSrflx
-// (server-reflexive candidates).
+// (server-reflexive candidates), with the same address filtering as UDPMux.
 func (f *FilteringUDPMux) UDPMuxSrflx() ice.UniversalUDPMux {
-	return f.inner
+	return iceFilteredUniversalMux{f.inner}
 }
 
 // Start launches the sole-reader goroutine. Must be called after SetPassThrough
