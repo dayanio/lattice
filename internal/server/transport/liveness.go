@@ -51,6 +51,11 @@ const (
 //   - received-byte growth (fast), used only once a peer has shown a
 //     keepalive-like rhythm, so peers that send no keepalives (older agents)
 //     are never declared dead merely for being quiet.
+//
+// In practice only the responder ever arms the fast check: just the initiator
+// sends keepalives (see keepaliveFor), so the responder receives one every
+// 25 s while the initiator receives nothing periodic. A dead path is therefore
+// caught by the responder, whose probe restart notifies the initiator.
 type livenessTracker struct {
 	seen         bool
 	lastRx       uint64
