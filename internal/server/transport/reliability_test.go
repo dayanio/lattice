@@ -16,11 +16,13 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
+	"github.com/alatticeio/lattice/internal/agent/log"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -146,5 +148,44 @@ func TestKeepaliveFor_OnlyTheInitiatorSendsKeepalives(t *testing.T) {
 	}
 	if got := keepaliveFor(small, big); got != 0 {
 		t.Errorf("responder keepalive = %d, want 0 so the initiator's keepalives stay on a fixed rhythm", got)
+	}
+}
+
+// After a minute of failed discovery the probe is meant to close, but the state
+// machine only allows Probing -> Failed -> Closed. Asking for Closed straight
+// from Probing was rejected (and the error dropped), so the "peer unreachable
+// for 60s, closing probe" log was followed by a probe left in Probing with no
+// discovery running. Its dialers then answered a returning peer's signaling
+// (an OFFER even made the LRP dialer ready) while nothing waited in Dial, so
+// the probe never reached a ready state and the peer could never connect.
+func TestProbe_onFailure_AfterAMinuteReallyClosesTheProbe(t *testing.T) {
+	sm := NewStateMachine(StateProbing)
+	p := &Probe{sm: sm, log: log.GetLogger("test-probe")}
+	p.muFail.Lock()
+	p.firstFailureAt = time.Now().Add(-61 * time.Second)
+	p.muFail.Unlock()
+
+	p.onFailure(errors.New("lrpDialer: timed out waiting for ready"))
+
+	if got := sm.Current(); got != StateClosed {
+		t.Fatalf("state = %s after a minute of failures, want closed (a probe left in %s has no discovery running)", got, got)
+	}
+}
+
+// Closing must still tear the WireGuard peer down (that hangs off the Failed
+// transition), even though the probe passes through Failed on its way.
+func TestProbe_onFailure_ClosingStillFiresTheFailedCleanup(t *testing.T) {
+	sm := NewStateMachine(StateProbing)
+	var saw []PeerState
+	sm.OnTransition(func(_, to PeerState) { saw = append(saw, to) })
+	p := &Probe{sm: sm, log: log.GetLogger("test-probe")}
+	p.muFail.Lock()
+	p.firstFailureAt = time.Now().Add(-61 * time.Second)
+	p.muFail.Unlock()
+
+	p.onFailure(errors.New("timeout"))
+
+	if len(saw) != 2 || saw[0] != StateFailed || saw[1] != StateClosed {
+		t.Fatalf("transitions = %v, want [failed closed]", saw)
 	}
 }
