@@ -17,6 +17,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -40,6 +41,20 @@ func RegisterSandboxViaNATS(
 	ctx context.Context,
 	serverURL, enrollmentToken, agentName string,
 	privKey wgtypes.Key,
+) (*infra.Peer, error) {
+	return RegisterSandboxViaNATSNotify(ctx, serverURL, enrollmentToken, agentName, privKey, nil)
+}
+
+// RegisterSandboxViaNATSNotify is RegisterSandboxViaNATS for callers that want to
+// know when the workspace holds the registration for administrator approval
+// (ADR-0003). onPending runs once, the first time the control plane reports
+// that; the call then keeps waiting, with slower polling, until the device is
+// approved (or ctx ends) instead of giving up after the usual allocation wait.
+func RegisterSandboxViaNATSNotify(
+	ctx context.Context,
+	serverURL, enrollmentToken, agentName string,
+	privKey wgtypes.Key,
+	onPending func(),
 ) (*infra.Peer, error) {
 	pubKey := privKey.PublicKey().String()
 
@@ -80,7 +95,7 @@ func RegisterSandboxViaNATS(
 		return nil, fmt.Errorf("server returned empty JWT")
 	}
 
-	return fetchNetMap(ctx, natsClient, agentName, pubKey, agentJWT, privKey)
+	return fetchNetMap(ctx, natsClient, agentName, pubKey, agentJWT, privKey, onPending)
 }
 
 // ResumeSandboxViaNATS resumes a previously-registered sandbox using persisted
@@ -103,51 +118,119 @@ func ResumeSandboxViaNATS(
 	}
 	defer func() { _ = natsClient.Close() }()
 
-	return fetchNetMap(ctx, natsClient, agentName, privKey.PublicKey().String(), agentJWT, privKey)
+	return fetchNetMap(ctx, natsClient, agentName, privKey.PublicKey().String(), agentJWT, privKey, nil)
 }
 
-// fetchNetMap polls GetNetMap until the controller has assigned a VPN IP.
+// ErrDeviceRevoked is returned when the administrator has revoked this device.
+var ErrDeviceRevoked = errors.New("device access was revoked by the administrator")
+
+// netmapPhase is what a GetNetMap reply says about this device.
+type netmapPhase int
+
+const (
+	netmapWaiting netmapPhase = iota // no address yet; allocation is in progress
+	netmapPending                    // registered, waiting for administrator approval
+	netmapRevoked
+	netmapReady
+)
+
+// classifyNetmap reads a GetNetMap reply. A pending or revoked device gets a
+// netmap whose Current carries the approval status and an empty address
+// (netmap_builder pendingMessage).
+func classifyNetmap(msg *infra.Message) netmapPhase {
+	if msg == nil || msg.Current == nil {
+		return netmapWaiting
+	}
+	switch msg.Current.ApprovalStatus {
+	case "pending":
+		return netmapPending
+	case "revoked":
+		return netmapRevoked
+	}
+	if msg.Current.Address != nil && *msg.Current.Address != "" {
+		return netmapReady
+	}
+	return netmapWaiting
+}
+
+var (
+	// netmapWait bounds how long an address may take to be allocated.
+	netmapWait = 60 * time.Second
+	// netmapPoll is the first poll interval; a pending device backs off from it
+	// up to pendingPollMax.
+	netmapPoll     = 500 * time.Millisecond
+	pendingPollMax = 15 * time.Second
+)
+
+// netmapRequester is the part of the NATS client fetchNetMap needs.
+type netmapRequester interface {
+	Request(ctx context.Context, subject, method string, data []byte) ([]byte, error)
+}
+
+// fetchNetMap polls GetNetMap until the controller has assigned a VPN IP. A
+// device waiting for approval is announced once through onPending and then
+// waited for without the allocation deadline; a revoked device is an error.
 func fetchNetMap(
 	ctx context.Context,
-	natsClient *managementnats.NatsSignalService,
+	natsClient netmapRequester,
 	agentName, pubKey, agentJWT string,
 	privKey wgtypes.Key,
+	onPending func(),
 ) (*infra.Peer, error) {
 	getMapPayload, _ := json.Marshal(&dto.PeerDto{
 		AppID:     agentName,
 		PublicKey: pubKey,
 		Token:     agentJWT,
 	})
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().Add(netmapWait)
+	poll := netmapPoll
+	announced := false
+	for {
 		data, reqErr := natsClient.Request(ctx, "lattice.signals.peer", "GetNetMap", getMapPayload)
 		if reqErr == nil {
 			var msg infra.Message
-			if json.Unmarshal(data, &msg) == nil && msg.Current != nil &&
-				msg.Current.Address != nil && *msg.Current.Address != "" {
-				peer := msg.Current
-				// The control plane owns the WireGuard keypair and returns the
-				// private key to its owner in the netmap — using it keeps the
-				// node's signaling identity (peerID = hash of public key) in
-				// sync with what the server announces to other peers. Only
-				// fall back to the locally generated key when the server did
-				// not provide one (legacy K8s netmaps).
-				if peer.PrivateKey == "" {
-					peer.PrivateKey = privKey.String()
+			if json.Unmarshal(data, &msg) == nil {
+				switch classifyNetmap(&msg) {
+				case netmapReady:
+					peer := msg.Current
+					// The control plane owns the WireGuard keypair and returns the
+					// private key to its owner in the netmap — using it keeps the
+					// node's signaling identity (peerID = hash of public key) in
+					// sync with what the server announces to other peers. Only
+					// fall back to the locally generated key when the server did
+					// not provide one (legacy K8s netmaps).
+					if peer.PrivateKey == "" {
+						peer.PrivateKey = privKey.String()
+					}
+					if peer.AppID == "" {
+						peer.AppID = agentName
+					}
+					// Store JWT so node.Start() → GetNetworkMap can authenticate.
+					peer.Token = agentJWT
+					return peer, nil
+				case netmapRevoked:
+					return nil, ErrDeviceRevoked
+				case netmapPending:
+					if !announced {
+						announced = true
+						if onPending != nil {
+							onPending()
+						}
+					}
+					// Waiting for a person: no allocation deadline while the
+					// server keeps answering, and poll less often.
+					deadline = time.Now().Add(netmapWait)
+					poll = min(poll*2, pendingPollMax)
 				}
-				if peer.AppID == "" {
-					peer.AppID = agentName
-				}
-				// Store JWT so node.Start() → GetNetworkMap can authenticate.
-				peer.Token = agentJWT
-				return peer, nil
 			}
+		}
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("timed out waiting for VPN IP allocation")
 		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		case <-time.After(poll):
 		}
 	}
-	return nil, fmt.Errorf("timed out waiting for VPN IP allocation")
 }

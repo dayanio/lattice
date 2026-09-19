@@ -74,12 +74,21 @@ struct JoinFailure: Equatable {
 
     var display: String { advice.isEmpty ? title : "\(title)\n\(advice)" }
 
+    /// Waiting for a person, not a failure: shown without the error colour.
+    static let awaitingApproval = JoinFailure(title: "等待管理员批准", advice: "管理员批准后会自动连接。")
+    var isNotice: Bool { self == .awaitingApproval }
+
     static func classify(_ raw: String) -> JoinFailure {
         let e = raw.lowercased()
         func has(_ needles: String...) -> Bool { needles.contains { e.contains($0) } }
 
         if has("awaiting approval", "pending approval") {
-            return JoinFailure(title: "等待管理员批准", advice: "管理员批准后会自动连接。")
+            return .awaitingApproval
+        }
+        if has("revoked by the administrator") {
+            return JoinFailure(
+                title: "这台设备已被管理员停用",
+                advice: "联系管理员恢复，或退出网络后重新入网。")
         }
         if has("requires re-enrollment", "public key mismatch") {
             return JoinFailure(

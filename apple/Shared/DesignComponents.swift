@@ -231,6 +231,8 @@ struct ConnectionHero: View {
     let aggregateText: String
     var selfAddress: String = ""
     var errorText: String = ""
+    /// The text is a notice (e.g. waiting for approval), not a failure.
+    var errorIsNotice: Bool = false
     let onToggle: () -> Void
 
     @State private var breathe = false
@@ -267,7 +269,7 @@ struct ConnectionHero: View {
                 if !errorText.isEmpty {
                     Text(errorText)
                         .font(.caption)
-                        .foregroundColor(LatticePalette.blocked)
+                        .foregroundColor(errorIsNotice ? .orange : LatticePalette.blocked)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 8)
                 }
