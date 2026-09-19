@@ -36,6 +36,11 @@ final class TunnelManager: ObservableObject {
     @Published private(set) var status: NEVPNStatus = .invalid
     @Published private(set) var lastStartError: String = ""
 
+    /// Nodes as the tunnel reports them; lets the device list work without a
+    /// management login. Empty while the tunnel is not connected.
+    @Published private(set) var tunnelPeers: [PeerNode] = []
+    private var tunnelPeerRaw: [TunnelPeer] = []
+
     /// `lastStartError` in words a user can act on; nil when there is no error.
     var lastFailure: JoinFailure? {
         lastStartError.isEmpty ? nil : JoinFailure.classify(lastStartError)
@@ -237,6 +242,10 @@ final class TunnelManager: ObservableObject {
             if peerStates.isEmpty == false {
                 peerStates = [:]
             }
+            if !tunnelPeerRaw.isEmpty {
+                tunnelPeerRaw = []
+                tunnelPeers = []
+            }
         }
     }
 
@@ -301,6 +310,7 @@ final class TunnelManager: ObservableObject {
         let lastError: String?
         let publicKey: String?
         let overlayIP: String?
+        let peers: [TunnelPeer]?
     }
 
     /// Asks the tunnel process for its latest peer-state snapshot over the
@@ -321,6 +331,10 @@ final class TunnelManager: ObservableObject {
                     }
                     guard let snap = try? JSONDecoder().decode(ProviderSnapshot.self, from: data) else { return }
                     self.peerStates = snap.peerStates
+                    if let list = snap.peers, list != self.tunnelPeerRaw {
+                        self.tunnelPeerRaw = list
+                        self.tunnelPeers = list.map(\.node)
+                    }
                     if let publicKey = snap.publicKey, !publicKey.isEmpty {
                         self.localPublicKey = publicKey
                     }

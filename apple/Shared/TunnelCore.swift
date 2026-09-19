@@ -23,7 +23,9 @@ enum TunnelError: Error {
 // MARK: - Shared Models
 
 struct PeerNode: Identifiable {
-    let id = UUID()
+    /// Stable across refreshes (the list is rebuilt every few seconds); a fresh
+    /// UUID per build made SwiftUI treat every row as new.
+    var id: String { appID.isEmpty ? name : appID }
     let name: String
     let address: String
     let online: Bool
@@ -43,4 +45,33 @@ struct PeerNode: Identifiable {
     var sandbox: String? = nil
 
     var shownName: String { displayName.isEmpty ? name : displayName }
+}
+
+/// One remote node as the tunnel itself reports it (Engine.Peers()), so the
+/// device list works without a management login.
+struct TunnelPeer: Codable, Equatable {
+    let appId: String
+    let name: String
+    let address: String
+    let platform: String?
+    /// probing, ice-ready (direct), lrp-ready (relayed), failed, closed, none.
+    let state: String
+    let online: Bool
+
+    var node: PeerNode {
+        PeerNode(name: name.isEmpty ? appId : name, address: address, online: online,
+                 os: platform ?? "", appID: appId)
+    }
+}
+
+enum PeerListMerge {
+    /// The management API knows things the tunnel does not (display names,
+    /// labels, routes, disabled state), so its entries win. Nodes only the
+    /// tunnel knows about are appended, and the tunnel's list stands alone when
+    /// the API has nothing (not logged in).
+    static func merged(api: [PeerNode], tunnel: [PeerNode]) -> [PeerNode] {
+        guard !api.isEmpty else { return tunnel }
+        let known = Set(api.flatMap { [$0.appID, $0.name] }.filter { !$0.isEmpty })
+        return api + tunnel.filter { !known.contains($0.appID) && !known.contains($0.name) }
+    }
 }

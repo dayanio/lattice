@@ -22,13 +22,16 @@ struct OverviewView: View {
 
     private var selfName: String { UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "" }
     private var localPeer: PeerNode? { peers.first { $0.name == selfName } }
+    /// Management-API peers merged with the tunnel's own list, so the list works
+    /// without a login.
+    private var displayPeers: [PeerNode] { PeerListMerge.merged(api: peers, tunnel: tunnel.tunnelPeers) }
     /// 服务器地址为空 = 未加入（退出网络会清掉它），此时只应引导加入。
     private var joined: Bool { tunnel.isConfigured && !serverAddress.isEmpty }
 
     private var serverAddress: String { UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "" }
 
     private var aggregateText: String {
-        let states = peers.compactMap { tunnel.peerStates[$0.appID] }
+        let states = displayPeers.compactMap { tunnel.peerStates[$0.appID] }
         if states.contains("ice-ready") { return "直连" }
         if states.contains("lrp-ready") { return "经中继" }
         return ""
@@ -36,8 +39,8 @@ struct OverviewView: View {
 
     private var filtered: [PeerNode] {
         let kw = searchText.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !kw.isEmpty else { return peers }
-        return peers.filter { $0.shownName.lowercased().contains(kw) || $0.address.lowercased().contains(kw) }
+        guard !kw.isEmpty else { return displayPeers }
+        return displayPeers.filter { $0.shownName.lowercased().contains(kw) || $0.address.lowercased().contains(kw) }
     }
     private var favoritePeers: [PeerNode] {
         filtered.filter { favorites.isFavorite($0.name) }.sorted { $0.shownName < $1.shownName }
@@ -55,21 +58,22 @@ struct OverviewView: View {
                         state: tunnel.connectionState,
                         connectedSince: tunnel.connectedSince,
                         aggregateText: aggregateText,
-                        selfAddress: localPeer?.address ?? "",
+                        selfAddress: localPeer?.address ?? tunnel.localOverlayIP,
                         errorText: tunnel.lastFailure?.display ?? "",
                         onToggle: { tunnel.connectedBinding.wrappedValue.toggle() }
                     )
 
                     if !joined {
                         joinPrompt
-                    } else if authToken.isEmpty {
-                        loginPrompt
                     } else {
+                        if authToken.isEmpty {
+                            loginPrompt
+                        }
                         PanelSearchField(text: $searchText)
 
-                        if isLoading && peers.isEmpty {
+                        if isLoading && displayPeers.isEmpty {
                             ProgressView().padding(.top, 30)
-                        } else if !errorMsg.isEmpty {
+                        } else if !errorMsg.isEmpty && displayPeers.isEmpty {
                             Text(errorMsg)
                                 .font(.caption)
                                 .foregroundColor(LatticePalette.blocked)
@@ -195,9 +199,9 @@ struct OverviewView: View {
                     .font(.system(size: 22))
                     .foregroundColor(LatticePalette.accent)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("登录后可查看与管理设备")
+                    Text("登录后可管理设备")
                         .font(.system(.body, weight: .medium))
-                    Text("隧道连接不受影响，点击登录管理后台")
+                    Text("设备列表与连接不受影响，点击登录管理后台")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -286,6 +290,11 @@ struct OverviewView: View {
         isLoading = true
         errorMsg = ""
         defer { isLoading = false }
+        // Not logged in: skip the management API; the list comes from the tunnel.
+        guard !authToken.isEmpty else {
+            peers = []
+            return
+        }
         do {
             peers = try await LatticeAPI.shared.listPeers()
         } catch {

@@ -14,7 +14,7 @@
 
 import Foundation
 
-// Run with apple/Scripts/test_join_logic.sh (no Xcode test target needed: the
+// Run with apple/Scripts/test_apple_logic.sh (no Xcode test target needed: the
 // code under test is Foundation-only).
 
 var failures = 0
@@ -93,8 +93,51 @@ eq(title("NATS connect: i/o timeout"), "连不上信令端口（4222）", "nats 
 eq(title("refresh token has expired"), "连接失败", "management token expiry is not an enrollment error")
 eq(title("refresh token has been revoked"), "连接失败", "management token revocation is not an enrollment error")
 
+// MARK: Tunnel peers and the merged device list
+
+do {
+    // The shape Engine.Peers() emits.
+    let json = #"[{"appId":"cloud-node-1","name":"cloud-node-1","address":"10.96.0.2","platform":"linux","state":"lrp-ready","online":true},{"appId":"iPhone15","name":"","address":"10.96.0.5","state":"probing","online":false}]"#
+    let list = try? JSONDecoder().decode([TunnelPeer].self, from: Data(json.utf8))
+    eq(list?.count, 2, "decodes the engine's peer array")
+    eq(list?[0].node.name, "cloud-node-1", "node name")
+    eq(list?[0].node.os, "linux", "platform becomes os")
+    eq(list?[0].node.online, true, "online flag")
+    eq(list?[1].node.name, "iPhone15", "a missing name falls back to the appId")
+    eq(list?[1].node.os, "", "a missing platform is empty")
+    eq(list?[1].node.online, false, "not online while probing")
+}
+
+do {
+    let a = PeerNode(name: "cloud-node-1", address: "10.96.0.2", online: true, appID: "cloud-node-1")
+    let noAppID = PeerNode(name: "legacy", address: "10.96.0.9", online: false)
+    eq(a.id, "cloud-node-1", "id follows the appID")
+    eq(noAppID.id, "legacy", "id falls back to the name")
+    eq(a.id, PeerNode(name: "cloud-node-1", address: "10.96.0.2", online: false, appID: "cloud-node-1").id, "id is stable across rebuilds")
+}
+
+do {
+    let tunnel = [
+        PeerNode(name: "cloud-node-1", address: "10.96.0.2", online: true, appID: "cloud-node-1"),
+        PeerNode(name: "iPhone15", address: "10.96.0.5", online: true, appID: "iPhone15"),
+    ]
+    eq(PeerListMerge.merged(api: [], tunnel: tunnel).count, 2, "without API data the tunnel's list stands alone")
+
+    var apiPeer = PeerNode(name: "cloud-node-1", address: "10.96.0.2", online: false, appID: "cloud-node-1")
+    apiPeer.displayName = "Cloud"
+    let merged = PeerListMerge.merged(api: [apiPeer], tunnel: tunnel)
+    eq(merged.count, 2, "a node both sides know appears once")
+    eq(merged[0].displayName, "Cloud", "the API entry wins for what only it knows")
+    eq(merged[0].online, false, "the API entry is kept as is")
+    eq(merged[1].name, "iPhone15", "a tunnel-only node is appended")
+
+    let byName = PeerListMerge.merged(api: [PeerNode(name: "iPhone15", address: "10.96.0.5", online: true)], tunnel: tunnel)
+    eq(byName.count, 2, "an API entry without an appID still matches by name")
+    eq(PeerListMerge.merged(api: [], tunnel: []).count, 0, "both empty")
+}
+
 if failures > 0 {
     print("\(failures) check(s) failed")
     exit(1)
 }
-print("join logic: all checks passed")
+print("apple logic: all checks passed")

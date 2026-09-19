@@ -100,6 +100,7 @@ type Engine struct {
 	privKey  wgtypes.Key
 
 	mu       sync.Mutex
+	node     *latticeagent.Node // set once the node exists; read by Peers
 	running  bool
 	cancel   context.CancelFunc
 	done     chan struct{}
@@ -285,6 +286,15 @@ func (e *Engine) run(ctx context.Context) {
 		return
 	}
 
+	e.mu.Lock()
+	e.node = node
+	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		e.node = nil
+		e.mu.Unlock()
+	}()
+
 	node.GetNetworkMap = func() (*infra.Message, error) {
 		return node.GetNetMap(peer.Token)
 	}
@@ -449,6 +459,20 @@ func (e *Engine) PublicKey() string {
 		return ""
 	}
 	return e.privKey.PublicKey().String()
+}
+
+// Peers returns the remote nodes this device knows about as a JSON array:
+// [{"appId","name","address","platform","state","online"}]. It comes from the
+// tunnel's own network map, so the app can list devices without a management
+// login. "[]" until the node exists.
+func (e *Engine) Peers() string {
+	e.mu.Lock()
+	node := e.node
+	e.mu.Unlock()
+	if node == nil {
+		return "[]"
+	}
+	return peerListJSON(node.GetPeerManager().GetAll(), node.ConnectionStates(), infra.NormalizeAppID(e.cfg.Name))
 }
 
 // ResetIdentity deletes the persisted WireGuard identity file, if any, so
