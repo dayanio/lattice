@@ -61,6 +61,7 @@ type FilteringUDPMux struct {
 
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
+	echo         pathEchoState
 	droppedCount atomic.Uint64 // count of dropped pass-through packets
 }
 
@@ -133,6 +134,9 @@ func (f *FilteringUDPMux) readLoop() {
 		pkt := buf[:n]
 		udpAddr, _ := addr.(*net.UDPAddr)
 
+		if f.handlePathEcho(pkt, addr) {
+			continue
+		}
 		if stun.IsMessage(pkt) {
 			// STUN: inject into the mux so connWorker can dispatch by ufrag.
 			f.chanConn.inject(pkt, addr)

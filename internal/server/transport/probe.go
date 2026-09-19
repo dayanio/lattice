@@ -87,6 +87,11 @@ type Probe struct {
 	upgradeTimer   *time.Timer
 	upgradeTries   int
 	upgradeRestart func() // test hook; defaults to restart
+
+	// pathPing sends a direct-path echo (nil disables the check); pathRestart
+	// is a test hook that replaces restart when the path is declared dead.
+	pathPing    pathPinger
+	pathRestart func()
 }
 
 // State returns the peer's current connection lifecycle state
@@ -327,6 +332,7 @@ func (p *Probe) onSuccess(transport infra.Transport) {
 		_ = p.sm.Transition(StateICEReady)
 		p.cancelUpgrade(true)
 		p.startEndpointGuard()
+		p.startPathPing()
 	} else {
 		_ = p.sm.Transition(StateLRPReady)
 		p.scheduleUpgrade()
@@ -497,5 +503,6 @@ func (p *Probe) handleUpgradeTransport(newTransport infra.Transport) error {
 	_ = p.sm.Transition(StateICEReady)
 	p.cancelUpgrade(true)
 	p.startEndpointGuard()
+	p.startPathPing()
 	return nil
 }
