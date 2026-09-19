@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 交付 spec（`docs/superpowers/specs/2026-09-18-latticecast-design.md` v3）定义的 v1：新仓库 `lattice-cast` 内的 cast-agent（发现/适配/解析/MCP/审计）+ Android 渲染端 APK，达成"在外手机说一句'把 NAS 里的 xx 投到卧室电视'，电视播出并能答进度"。
+**Goal:** 交付 spec（`docs/superpowers/specs/2026-09-18-latticecast-design.md` v4）定义的 v1：新仓库 `lattice-cast` 内的 cast-agent（发现/适配/解析/MCP/审计）+ 三平台渲染端（Android APK / macOS-Linux Go+mpv / Apple TV tvOS），达成"在外手机说一句'把 NAS 里的 xx 投到卧室电视'，电视播出并能答进度"。
 
 **Architecture:** cast-agent 是家里常开节点上的 Go 进程（经宿主 lattice agent 入网），通过 mDNS 发现局域网内的 LatticeCast 渲染端 APK，用自有 HTTP/JSON 协议（play/pause/stop/seek/volume/status）指挥其拉流播放；对外暴露 MCP 工具集供 LLM 调用；渲染端不入 mesh。
 
@@ -771,3 +771,56 @@ git commit -am "docs: record v1 e2e acceptance run"
 ```
 
 **验收即 v1 完成。** 任何一步失败：按 spec 第八节错误矩阵定位；APK 侧载/协议问题回 Task 13；MCP 连通问题回 Task 11。
+
+---
+
+### Task 17: macOS/Linux 渲染端（Go + mpv）【v4 新增，无门禁依赖】
+
+**Files:**
+- Create: `internal/cast/renderer/server.go`、`internal/cast/renderer/mpv.go`、`internal/cast/renderer/announce.go`、`cmd/latticecast-renderer/main.go`
+- Test: `internal/cast/renderer/server_test.go`
+
+**Interfaces:**
+- Consumes: `adapter` 类型（Status/PlayRequest 等直接 import 复用）、`docs/protocol.md`、`testdata/contract/*.json`、`github.com/grandcat/zeroconf`（Register）。
+- Produces:
+
+```go
+package renderer // internal/cast/renderer/
+// Controller 抽象播放后端（mpv 真实现 + 测试假实现）
+type Controller interface {
+    Load(ctx context.Context, url, title string) error
+    Pause() error; Stop() error; Seek(ms int64) error; Volume(level int) error
+    Status() adapter.Status
+}
+// NewServer(token, room, name string, port int, ctl Controller) *Server —— 实现 protocol.md 五端点+401/404/405/400 语义与 idle→playing⇄paused→idle/error 状态机（与 fakerenderer 同构但为产品代码）
+func (s *Server) Handler() http.Handler
+// Announce(ctx, name, room string, port int) (stop func(), err error) —— zeroconf.RegisterProxy "_latticecast._tcp" TXT: room, v=1
+```
+
+`cmd/latticecast-renderer/main.go`：flags `-name`（必填，mDNS 实例名=cast-agent 配置 key）、`-room`、`-token`（必填）、`-port`（默认 7822）、`-mpv`（默认 "mpv"）。mpv 控制：`mpv --input-ipc-server=<unix sock> --idle=yes --keep-open=yes --fullscreen` + JSON IPC（loadfile/pause/stop/seek/volume 属性轮询或事件）。mpv 不存在 → 启动即报错退出，错误信息给安装提示（`brew install mpv`）。
+
+**测试策略**：`Controller` 用假实现跑协议契约（用 Task 4 的 `latticecast.Client` 从外部驱动 `Server.Handler()` —— 渲染端一致性测试，断言与 fakerenderer 相同的全序列行为 + 401/404/405）；mpv IPC 层用假 mpv 脚本（shell 假 unix-socket server）测 loadfile 参数与 status 解析；Announce 冒烟测试放 `-short` 跳过保护内。
+
+- [ ] Step 1 RED：renderer 一致性测试（外部 client 驱动）→ Step 2 实现 Server → Step 3 GREEN
+- [ ] Step 4 mpv IPC（假脚本 RED→GREEN）→ Step 5 Announce + main 装配
+- [ ] Step 6 真机冒烟：本机 `brew install mpv`（若未装）→ 起两个不同 -name 的渲染端 → cast-agent `list_cast_devices` 可见两台 → 投一个 NAS 文件到 Mac 全屏播出
+- [ ] Step 7 Commit：`feat(renderer): macos/linux latticecast renderer (go+mpv)` 并推送
+
+---
+
+### Task 18: Apple TV 渲染端（tvOS + AVPlayer）【v4 新增，含用户签名步骤】
+
+**Files:**
+- Create: `tvos/project.yml`（XcodeGen）、`tvos/LatticeCastRenderer/`（SwiftUI App：`RendererApp.swift`、`PlaybackController.swift`（AVPlayer 包装）、`RendererServer.swift`（GCDWebServer 或等价轻量 HTTP server，实现 protocol.md 五端点）、`Announcer.swift`（NSNetService 发布 `_latticecast._tcp`，TXT room/v=1）、`Prefs.swift`（token/room/name 录入 UI））
+- Test: `tvos/LatticeCastRendererTests/RendererServerTests.kt`→`.swift`（复制 `testdata/contract/*.json` 进测试 bundle，逐夹具断言）
+
+**Interfaces:** 与 APK（Task 13/14）完全同构：Bearer Token、五端点、mDNS TXT room/v=1；实例名 = App 首启录入的 name（cast-agent 配置 key，字节级一致）。
+
+**签名约束（用户有付费账号）**：Xcode 选个人 Team → Apple TV（同网）经 Xcode 安装；分发仅限个人设备（一年有效）。不进 App Store。
+
+- [ ] Step 1 XcodeGen 工程 + 空 App 可构建（`xcodegen generate && xcodebuild -project ... -destination 'platform=tvOS Simulator' build`）
+- [ ] Step 2【测试先行】XCTest 契约测试（五端点 + 401，夹具驱动）→ RED
+- [ ] Step 3 RendererServer（AVPlayer 包装 + 状态机）→ GREEN（tvOS 模拟器跑 connected test）
+- [ ] Step 4 Announcer + 首启配置 UI（name/room/token）+ 常显状态
+- [ ] Step 5【手动·用户】Xcode 真机装到自家 Apple TV，`dns-sd -B _latticecast._tcp` 可见
+- [ ] Step 6 Commit：`feat(tvos): apple tv renderer (avplayer+netservice, contract-tested)` 并推送
