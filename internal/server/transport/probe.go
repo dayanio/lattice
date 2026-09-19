@@ -362,6 +362,11 @@ func (p *Probe) onFailure(err error) {
 
 	if elapsed >= 60*time.Second {
 		p.log.Info("peer unreachable for 60s, closing probe", "remoteId", p.remoteId.AppID)
+		// Probing -> Closed is not a legal transition, so go through Failed
+		// (which also removes the WireGuard peer). Asking for Closed directly
+		// was silently rejected and left the probe in Probing with no
+		// discovery running.
+		_ = p.sm.Transition(StateFailed)
 		_ = p.sm.Transition(StateClosed)
 		// Factory handles probe removal externally.
 		return
