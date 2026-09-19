@@ -27,6 +27,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/provision"
+	"github.com/alatticeio/lattice/internal/relay"
 	"github.com/alatticeio/lattice/internal/signal"
 )
 
@@ -339,13 +340,19 @@ func (a *wgConfigAdapter) SetupNAT(iface string) error {
 	return pr.SetupNAT(iface)
 }
 
+// relayClient returns the relay client, or nil when the node has none.
+func (p *ProbeFactory) relayClient() infra.Lrp {
+	if p.getLrp == nil {
+		return nil
+	}
+	return p.getLrp()
+}
+
 func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 	getLocalPeer := func() *infra.Peer {
-		lp := p.peerManager.GetPeer(p.localId.AppID)
+		lp := signalingPeer(p.peerManager.GetPeer(p.localId.AppID))
 		if lp != nil && lp.AllowedIPs == "" && lp.Address != nil {
-			lpCopy := *lp
-			lpCopy.AllowedIPs = fmt.Sprintf("%s/32", *lp.Address)
-			return &lpCopy
+			lp.AllowedIPs = fmt.Sprintf("%s/32", *lp.Address)
 		}
 		return lp
 	}
@@ -425,6 +432,25 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 	// the configurator, NOT direct provisioner calls.
 	sm := NewStateMachine(StateCreated)
 
+	signaler := newPeerSignaler(p.log, remoteId.AppID, p.signal.Send,
+		func() bool {
+			cs, ok := p.signal.(interface{ Connected() bool })
+			return !ok || cs.Connected()
+		},
+		func(ctx context.Context, to infra.PeerID, data []byte) error {
+			lrp := p.relayClient()
+			if lrp == nil {
+				return errRelayUnready
+			}
+			return lrp.Send(ctx, to.ToUint64(), relay.Probe, data)
+		},
+		func() bool {
+			lrp := p.relayClient()
+			return lrp != nil && lrp.Connected()
+		},
+	)
+	sm.OnTransition(signaler.onState)
+
 	pubKey := remoteId.PublicKey.String()
 
 	persistentKA := keepaliveFor(p.localId, remoteId)
@@ -500,7 +526,7 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 			LocalId:        p.localId,
 			RemoteId:       remoteId,
 			Lrp:            p.getLrp(),
-			Sender:         p.signal.Send,
+			Sender:         signaler.Send,
 			GetLocalPeer:   getLocalPeer,
 			OnPeerReceived: onPeerReceived,
 			OnRestart:      func() { probe.restart() },
@@ -522,7 +548,7 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		return NewIceDialer(&ICEDialerConfig{
 			LocalId:        p.localId,
 			RemoteId:       remoteId,
-			Sender:         p.signal.Send,
+			Sender:         signaler.Send,
 			GetLocalPeer:   getLocalPeer,
 			OnPeerReceived: onPeerReceived,
 			FilteringMux:   p.FilteringMux,

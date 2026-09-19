@@ -62,6 +62,7 @@ type QUICServer struct {
 	sessionMgr      *SessionManager
 	authToken       string
 	requirePeerAuth bool
+	failLog         relayFailLimiter
 }
 
 // NewQUICServer creates a new QUICServer backed by the given SessionManager.
@@ -250,7 +251,9 @@ func (s *QUICServer) relayDatagrams(conn *quic.Conn, fromId uint64) {
 			stampSender(data, fromId)
 		}
 		if relayErr := s.sessionMgr.Relay(uint64(h.ToID), data); relayErr != nil {
-			s.log.Warn("datagram relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
+			if s.failLog.allow(h.ToID, time.Now()) {
+				s.log.Warn("datagram relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
+			}
 		} else {
 			s.log.Debug("datagram relayed", "from", fromId, "to", h.ToID)
 		}
