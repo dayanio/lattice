@@ -756,6 +756,7 @@ func (c *Node) StatusSnapshot(pid int) daemon.StatusInfo {
 		AppID:          c.Name,
 		AppliedVersion: c.AppliedVersion(),
 		UptimeSeconds:  int64(time.Since(c.startedAt).Seconds()),
+		Peers:          buildPeerStatuses(c.manager.peerManager.GetAll(), c.ConnectionStates()),
 	}
 	if c.current != nil && c.current.Address != nil {
 		snapshot.Address = *c.current.Address

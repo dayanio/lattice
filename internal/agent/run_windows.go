@@ -226,7 +226,7 @@ func Stop(flags *config.Config) error {
 }
 
 func Status(flags *config.Config) error {
-	return wireguard.PrintStatus(flags.InterfaceName)
+	return wireguard.PrintStatus(flags.InterfaceName, nil)
 }
 
 // stop lattice daemon via sock file
