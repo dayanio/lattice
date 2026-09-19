@@ -83,6 +83,52 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 	}
 }
 
+// StartReconciler periodically revives probes that reached StateClosed.
+//
+// Probes close permanently after 60 s of failed discovery (Probe.onFailure),
+// and the netmap pipeline cannot be relied on to recreate them: the poll loop
+// skips re-applying an unchanged ConfigVersion, so a node whose first probe
+// window overlapped a peer outage or a control-plane incident stayed dark
+// until process restart even though every dependency had recovered (observed
+// live: Mac initiator probes closed during the STUN outage and never
+// restarted, 2026-09-19). This reconciler replaces every closed probe with a
+// fresh one (Get swaps StateClosed entries) and starts it, restoring the
+// initiate/answer role it had before.
+func (f *ProbeFactory) StartReconciler(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				f.mu.RLock()
+				closed := make([]infra.PeerIdentity, 0, len(f.probes))
+				for _, probe := range f.probes {
+					if probe.sm.Current() == StateClosed {
+						closed = append(closed, probe.remoteId)
+					}
+				}
+				f.mu.RUnlock()
+
+				for _, remoteId := range closed {
+					probe, err := f.Get(remoteId)
+					if err != nil {
+						f.log.Error("reconciler: recreate probe failed", err, "remoteId", remoteId.AppID)
+						continue
+					}
+					if err := probe.Start(ctx, remoteId); err != nil {
+						f.log.Error("reconciler: restart probe failed", err, "remoteId", remoteId.AppID)
+						continue
+					}
+					f.log.Info("reconciler: revived closed probe", "remoteId", remoteId.AppID)
+				}
+			}
+		}
+	}()
+}
+
 func (f *ProbeFactory) Register(remoteId infra.PeerIdentity, probe *Probe) {
 	f.probes[remoteId.AppID] = probe
 }
