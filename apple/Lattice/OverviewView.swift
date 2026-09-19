@@ -17,7 +17,7 @@ struct OverviewView: View {
     @State private var disablingPeer: PeerNode?
     @State private var showingJoin: JoinMode?
     @State private var showingLogin = false
-    @AppStorage("lattice.authToken") private var authToken = ""
+    @ObservedObject private var auth = AuthSession.shared
     @Environment(\.scenePhase) private var scenePhase
 
     private var selfName: String { UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "" }
@@ -66,7 +66,7 @@ struct OverviewView: View {
                     if !joined {
                         joinPrompt
                     } else {
-                        if authToken.isEmpty {
+                        if !auth.isLoggedIn {
                             loginPrompt
                         }
                         PanelSearchField(text: $searchText)
@@ -99,6 +99,9 @@ struct OverviewView: View {
             .navigationTitle("Lattice")
             .refreshable { await loadPeers() }
             .task { await loadPeers() }
+            .onChange(of: auth.isLoggedIn) { _, _ in
+                Task { await loadPeers() }
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active { Task { await loadPeers() } }
             }
@@ -291,7 +294,7 @@ struct OverviewView: View {
         errorMsg = ""
         defer { isLoading = false }
         // Not logged in: skip the management API; the list comes from the tunnel.
-        guard !authToken.isEmpty else {
+        guard auth.isLoggedIn else {
             peers = []
             return
         }

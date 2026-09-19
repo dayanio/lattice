@@ -43,7 +43,7 @@ struct SettingsView: View {
     @State private var showingResetIdentityConfirm = false
     @State private var showedCopiedFeedback = false
     @AppStorage("lattice.theme") private var theme = LatticeTheme.system.rawValue
-    @AppStorage("lattice.authToken") private var authToken = ""
+    @ObservedObject private var auth = AuthSession.shared
 
     private var truncatedPublicKey: String {
         let key = tunnel.localPublicKey
@@ -55,7 +55,7 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 Section {
-                    if authToken.isEmpty {
+                    if !auth.isLoggedIn {
                         Button { showingLogin = true } label: {
                             Label("登录管理后台", systemImage: "person.crop.circle.badge.plus")
                         }
@@ -171,9 +171,7 @@ struct SettingsView: View {
 
     /// 退出管理会话：只清除登录态，保留加入信息与 VPN 配置。
     private func logout() {
-        UserDefaults.standard.removeObject(forKey: "lattice.authToken")
-        UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
-        KeychainStore.delete("lattice.password")
+        LatticeAPI.shared.logout()
     }
 
     private func leaveNetwork() {
@@ -181,10 +179,7 @@ struct SettingsView: View {
         tunnel.removeProfile {
             UserDefaults.standard.removeObject(forKey: "lattice.serverURL")
             UserDefaults.standard.removeObject(forKey: "lattice.nodeName")
-            UserDefaults.standard.removeObject(forKey: "lattice.authToken")
-            UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
-            UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
-            KeychainStore.delete("lattice.password")
+            LatticeAPI.shared.logout()
             tunnel.load()
         }
     }
@@ -196,10 +191,7 @@ struct SettingsView: View {
         tunnel.removeProfile {
             UserDefaults.standard.removeObject(forKey: "lattice.serverURL")
             UserDefaults.standard.removeObject(forKey: "lattice.nodeName")
-            UserDefaults.standard.removeObject(forKey: "lattice.authToken")
-            UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
-            UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
-            KeychainStore.delete("lattice.password")
+            LatticeAPI.shared.logout()
             tunnel.load()
             pendingIdentityReset = true
             showingJoin = true

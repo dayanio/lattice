@@ -49,3 +49,17 @@ enum KeychainStore {
                        kSecAttrAccount as String: key] as CFDictionary)
     }
 }
+
+/// KeychainStore behind the SecretStoring interface.
+struct KeychainSecrets: SecretStoring {
+    func secret(_ key: String) -> String? { KeychainStore.get(key) }
+    func setSecret(_ value: String, forKey key: String) { KeychainStore.set(value, forKey: key) }
+    func deleteSecret(_ key: String) { KeychainStore.delete(key) }
+}
+
+extension AuthTokenStore {
+    /// The app's real store: Keychain, migrating from UserDefaults.
+    static var standard: AuthTokenStore {
+        AuthTokenStore(secrets: KeychainSecrets(), legacy: UserDefaults.standard)
+    }
+}

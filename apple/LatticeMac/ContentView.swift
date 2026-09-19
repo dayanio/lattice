@@ -46,6 +46,8 @@ struct ContentView: View {
     /// The management API is unavailable (not logged in, or the login expired);
     /// the device list still shows what the tunnel knows.
     @State private var needsLogin = false
+    @ObservedObject private var loginCoordinator = LoginCoordinator.shared
+    @ObservedObject private var auth = AuthSession.shared
     @State private var searchQuery = ""
     @ObservedObject private var ui = UIState.shared
     @Environment(\.openWindow) private var openAIWindow
@@ -196,7 +198,7 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                     Text("没有已连接的节点").foregroundColor(.secondary)
                     if needsLogin {
-                        Button("登录以查看和管理设备") { showingSettings = true }
+                        Button("登录以查看和管理设备") { requestManageLogin() }
                             .buttonStyle(.bordered)
                     }
                 }
@@ -210,6 +212,18 @@ struct ContentView: View {
         .task {
             tunnel.load()
             await loadPeers()
+        }
+        .onChange(of: auth.isLoggedIn) { _ in
+            Task { await loadPeers() }
+        }
+        // A management action (rename, delete, ...) that needs a login asks for
+        // one here and carries on once it succeeds. Only the main window presents
+        // it; the menu-bar panel cannot host a sheet.
+        .sheet(isPresented: Binding(
+            get: { loginCoordinator.isPresenting && !inPanel },
+            set: { if !$0 { loginCoordinator.finish(success: false) } }
+        )) {
+            ManageLoginView { loginCoordinator.finish(success: $0) }
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView {
@@ -242,7 +256,7 @@ struct ContentView: View {
     /// Shown when the management API is unavailable: the list above still works,
     /// only rename / disable / delete and the extra details need a login.
     private var loginHint: some View {
-        Button { showingSettings = true } label: {
+        Button { requestManageLogin() } label: {
             HStack(spacing: 8) {
                 Image(systemName: "person.crop.circle.badge.exclamationmark")
                     .foregroundColor(.accentColor)
@@ -258,6 +272,10 @@ struct ContentView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func requestManageLogin() {
+        Task { _ = await LoginCoordinator.shared.requestLogin() }
     }
 
     private var deviceList: some View {
@@ -914,6 +932,85 @@ struct JoinView: View {
             } else {
                 onDone()
             }
+        }
+    }
+}
+
+// MARK: - Manage login (on demand)
+
+/// Compact login for a management action that needs one. The server is the one
+/// the device joined; only the account is asked for.
+struct ManageLoginView: View {
+    var onFinished: (Bool) -> Void
+
+    @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
+    @State private var password = ""
+    @State private var isLoggingIn = false
+    @State private var loginError = ""
+
+    private var serverURL: String { UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("登录以管理设备")
+                .font(.system(.headline, design: .rounded))
+            Text("改名、下线、删除等管理操作需要账号；设备列表和连接不受影响。")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if serverURL.isEmpty {
+                Text("尚未加入网络，请先加入。")
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            } else {
+                Text(serverURL)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            LabeledField(label: "用户名") {
+                TextField("admin", text: $username)
+                    .textFieldStyle(.plain)
+            }
+            LabeledField(label: "密码") {
+                SecureField("••••••••", text: $password)
+                    .textFieldStyle(.plain)
+            }
+
+            if !loginError.isEmpty {
+                Text(loginError).font(.caption).foregroundColor(.red)
+            }
+
+            HStack {
+                Button("取消") { onFinished(false) }
+                    .buttonStyle(.bordered)
+                Spacer()
+                if isLoggingIn {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("登录") { Task { await login() } }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(serverURL.isEmpty || username.isEmpty || password.isEmpty)
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 300)
+    }
+
+    private func login() async {
+        isLoggingIn = true
+        loginError = ""
+        defer { isLoggingIn = false }
+        do {
+            try await LatticeAPI.shared.login(user: username, pass: password)
+            onFinished(true)
+        } catch {
+            loginError = "登录失败: \(error.localizedDescription)"
         }
     }
 }
