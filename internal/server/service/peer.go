@@ -441,7 +441,19 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	if err != nil {
 		return nil, fmt.Errorf("token not exists")
 	}
-	if time.Now().After(tok.ExpiresAt) {
+	// Re-registration always resumes, regardless of the usage limit — and,
+	// for a peer that enrolled with this very token, regardless of expiry. The
+	// device presents its token every time it starts or its NATS connection
+	// comes back, and GetNetmap already accepts that token for it with no expiry
+	// check, so refusing here only locked enrolled devices out once the token
+	// lapsed (a 7-day default) without protecting anything. An expired token
+	// still cannot enroll a new peer or take over another token's peer.
+	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
+	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
+		return nil, existingErr
+	}
+	resumesOwnPeer := existingErr == nil && existing.Token != "" && existing.Token == dto.Token
+	if time.Now().After(tok.ExpiresAt) && !resumesOwnPeer {
 		return nil, fmt.Errorf("token is expired")
 	}
 	// ADR-0003: approval gating is a per-workspace flag. Legacy deployments
@@ -450,11 +462,6 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 	workspace, wsErr := p.store.Workspaces().GetByID(ctx, tok.WorkspaceID)
 	if wsErr != nil && !stderrors.Is(wsErr, gorm.ErrRecordNotFound) {
 		return nil, wsErr
-	}
-	// Re-registration always resumes, regardless of the usage limit.
-	existing, existingErr := p.store.Peers().GetByAppID(ctx, dto.AppID)
-	if existingErr != nil && !stderrors.Is(existingErr, gorm.ErrRecordNotFound) {
-		return nil, existingErr
 	}
 	if existingErr == nil && existing.WorkspaceID != tok.WorkspaceID {
 		return nil, fmt.Errorf("peer %q is bound to another workspace", dto.AppID)
