@@ -43,6 +43,9 @@ struct ContentView: View {
     @State private var detailPeer: PeerNode?
     @State private var showingNetworkSettings = false
     @State private var showingShare = false
+    /// The management API is unavailable (not logged in, or the login expired);
+    /// the device list still shows what the tunnel knows.
+    @State private var needsLogin = false
     @State private var searchQuery = ""
     @ObservedObject private var ui = UIState.shared
     @Environment(\.openWindow) private var openAIWindow
@@ -171,11 +174,11 @@ struct ContentView: View {
                         .buttonStyle(.borderedProminent)
                 }
                 Spacer()
-            } else if isLoading {
+            } else if isLoading && displayPeers.isEmpty {
                 Spacer()
                 ProgressView("加载中…")
                 Spacer()
-            } else if !errorMsg.isEmpty {
+            } else if !errorMsg.isEmpty && displayPeers.isEmpty {
                 Spacer()
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
@@ -185,13 +188,17 @@ struct ContentView: View {
                         .buttonStyle(.bordered)
                 }
                 Spacer()
-            } else if peers.isEmpty {
+            } else if displayPeers.isEmpty {
                 Spacer()
                 VStack(spacing: 8) {
                     Image(systemName: "personalhotspot")
                         .font(.system(size: 32))
                         .foregroundColor(.secondary)
                     Text("没有已连接的节点").foregroundColor(.secondary)
+                    if needsLogin {
+                        Button("登录以查看和管理设备") { showingSettings = true }
+                            .buttonStyle(.bordered)
+                    }
                 }
                 Spacer()
             } else {
@@ -232,11 +239,35 @@ struct ContentView: View {
         }
     }
 
+    /// Shown when the management API is unavailable: the list above still works,
+    /// only rename / disable / delete and the extra details need a login.
+    private var loginHint: some View {
+        Button { showingSettings = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "person.crop.circle.badge.exclamationmark")
+                    .foregroundColor(.accentColor)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("登录后可管理设备").font(.caption.weight(.medium))
+                    Text("列表与连接不受影响").font(.caption2).foregroundColor(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2).foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var deviceList: some View {
         ScrollView {
             VStack(spacing: 0) {
+                if needsLogin {
+                    loginHint
+                }
                 SectionHead(title: "设备", trailing: "\(filteredPeers.count) 台在线")
-                if !inPanel, peers.count >= 4 {
+                if !inPanel, displayPeers.count >= 4 {
                     PanelSearchField(text: $searchQuery)
                 }
                 NavRow(
@@ -403,10 +434,16 @@ struct ContentView: View {
         return nil
     }
 
+    /// Management-API peers merged with the tunnel's own list, so the list works
+    /// without a login.
+    private var displayPeers: [PeerNode] {
+        PeerListMerge.merged(api: peers, tunnel: tunnel.tunnelPeers)
+    }
+
     private var filteredPeers: [PeerNode] {
         let q = searchQuery.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return peers }
-        return peers.filter {
+        guard !q.isEmpty else { return displayPeers }
+        return displayPeers.filter {
             $0.shownName.localizedCaseInsensitiveContains(q)
                 || $0.name.localizedCaseInsensitiveContains(q)
                 || $0.address.contains(q)
@@ -485,6 +522,13 @@ struct ContentView: View {
         isLoading = true
         errorMsg = ""
         defer { isLoading = false }
+        // Not logged in: skip the management API; the list comes from the tunnel.
+        guard LatticeAPI.shared.isLoggedIn else {
+            needsLogin = true
+            peers = []
+            return
+        }
+        needsLogin = false
         do {
             var loaded = try await LatticeAPI.shared.listPeers()
             // Badge AI agents: an AgentIdentity referencing the peer makes it
@@ -505,8 +549,11 @@ struct ContentView: View {
             let description = error.localizedDescription
             if description.contains("Invalid token") || description.contains("log in first")
                 || description.contains("token has been revoked") {
-                errorMsg = "登录已过期"
-                showingSettings = true
+                needsLogin = true
+                if tunnel.tunnelPeers.isEmpty {
+                    errorMsg = "登录已过期"
+                    showingSettings = true
+                }
             } else {
                 errorMsg = "加载失败: \(description)"
             }

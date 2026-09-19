@@ -56,11 +56,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // latestPeerStates 本身是 map 的 JSON 字符串——先解成对象再装进
             // 信封，避免把整个 map 当字符串二次编码（App 端会解码失败）。
             let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: String] ?? [:]
+            let peers = (try? JSONSerialization.jsonObject(with: Data((engine?.peers() ?? "[]").utf8))) as? [[String: Any]] ?? []
             let snapshot: [String: Any] = [
                 "peerStates": states,
                 "lastError": latestError,
                 "publicKey": engine?.publicKey() ?? "",
                 "overlayIP": currentOverlayIP,
+                "peers": peers,
             ]
             completionHandler?(try? JSONSerialization.data(withJSONObject: snapshot))
             return
