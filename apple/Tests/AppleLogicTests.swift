@@ -136,6 +136,94 @@ do {
     eq(PeerListMerge.merged(api: [], tunnel: []).count, 0, "both empty")
 }
 
+// MARK: AuthTokenStore (management token: Keychain first, migrate from UserDefaults)
+
+final class FakeSecrets: SecretStoring {
+    var values: [String: String] = [:]
+    var failWrites = false
+    func secret(_ key: String) -> String? { values[key] }
+    func setSecret(_ value: String, forKey key: String) { if !failWrites { values[key] = value } }
+    func deleteSecret(_ key: String) { values[key] = nil }
+}
+
+final class FakePlain: PlainStoring {
+    var values: [String: String] = [:]
+    func string(forKey key: String) -> String? { values[key] }
+    func removeObject(forKey key: String) { values[key] = nil }
+}
+
+do {
+    let secrets = FakeSecrets(), plain = FakePlain()
+    let store = AuthTokenStore(secrets: secrets, legacy: plain)
+    eq(store.read(), "", "nothing stored")
+
+    plain.values[AuthTokenStore.key] = "old-token"
+    eq(store.read(), "old-token", "a legacy token is still returned")
+    eq(secrets.values[AuthTokenStore.key], "old-token", "and moved into the secret store")
+    eq(plain.values[AuthTokenStore.key], nil, "the plain copy is removed after the move")
+    eq(store.read(), "old-token", "later reads come from the secret store")
+}
+do {
+    let secrets = FakeSecrets(), plain = FakePlain()
+    secrets.failWrites = true
+    plain.values[AuthTokenStore.key] = "old-token"
+    let store = AuthTokenStore(secrets: secrets, legacy: plain)
+    eq(store.read(), "old-token", "still usable when the Keychain write fails")
+    eq(plain.values[AuthTokenStore.key], "old-token", "the plain copy is kept when the move did not stick")
+}
+do {
+    let secrets = FakeSecrets(), plain = FakePlain()
+    let store = AuthTokenStore(secrets: secrets, legacy: plain)
+    store.write("new-token")
+    eq(secrets.values[AuthTokenStore.key], "new-token", "write goes to the secret store")
+    eq(plain.values[AuthTokenStore.key], nil, "write never leaves a plain copy")
+    plain.values[AuthTokenStore.key] = "stale"
+    eq(store.read(), "new-token", "the secret store wins over a stale plain value")
+    eq(plain.values[AuthTokenStore.key], nil, "and the stale plain value is cleaned up")
+    store.clear()
+    eq(store.read(), "", "clear removes it everywhere")
+}
+
+// MARK: LoginCoordinator
+
+@MainActor
+func runLoginCoordinatorChecks() async {
+    let c = LoginCoordinator()
+    check(!c.isPresenting, "idle at start")
+
+    // Two actions ask at once; both resume with the login's outcome.
+    async let a = c.requestLogin()
+    async let b = c.requestLogin()
+    while !c.isPresenting { await Task.yield() }
+    await Task.yield()
+    c.finish(success: true)
+    let (ra, rb) = await (a, b)
+    check(ra && rb, "every waiting action resumes with success")
+    check(!c.isPresenting, "the sheet closes when the login finishes")
+
+    async let cancelled = c.requestLogin()
+    while !c.isPresenting { await Task.yield() }
+    await Task.yield()
+    c.finish(success: false)
+    let rc = await cancelled
+    check(!rc, "a cancelled login resumes the action with false")
+
+    // A dismissal after the result must not resume anything twice.
+    c.finish(success: false)
+    check(!c.isPresenting, "a late finish is harmless")
+}
+
+var coordinatorDone = false
+Task { @MainActor in
+    await runLoginCoordinatorChecks()
+    coordinatorDone = true
+}
+let deadline = Date().addingTimeInterval(5)
+while !coordinatorDone && Date() < deadline {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+}
+check(coordinatorDone, "the coordinator checks finished")
+
 if failures > 0 {
     print("\(failures) check(s) failed")
     exit(1)
