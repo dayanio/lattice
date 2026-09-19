@@ -103,11 +103,22 @@ func (f *ProbeFactory) StartReconciler(ctx context.Context, interval time.Durati
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				now := time.Now()
 				f.mu.RLock()
 				closed := make([]infra.PeerIdentity, 0, len(f.probes))
+				stuck := make([]infra.PeerIdentity, 0, len(f.probes))
 				for _, probe := range f.probes {
-					if probe.sm.Current() == StateClosed {
+					switch probe.sm.Current() {
+					case StateClosed:
 						closed = append(closed, probe.remoteId)
+					case StateProbing:
+						// Probing cycles self-terminate within ~75 s (60 s SYN
+						// window + Dial timeout). Still Probing well past that
+						// means the discover goroutine is gone (e.g. it lost
+						// the epoch race) — restart the probe wholesale.
+						if started := probe.startedAt.Load(); started > 0 && now.Sub(time.Unix(0, started)) > 90*time.Second {
+							stuck = append(stuck, probe.remoteId)
+						}
 					}
 				}
 				f.mu.RUnlock()
@@ -123,6 +134,16 @@ func (f *ProbeFactory) StartReconciler(ctx context.Context, interval time.Durati
 						continue
 					}
 					f.log.Info("reconciler: revived closed probe", "remoteId", remoteId.AppID)
+				}
+				for _, remoteId := range stuck {
+					f.mu.RLock()
+					probe := f.probes[remoteId.AppID]
+					f.mu.RUnlock()
+					if probe == nil {
+						continue
+					}
+					f.log.Warn("reconciler: restarting probe stuck in Probing", "remoteId", remoteId.AppID)
+					probe.restart()
 				}
 			}
 		}
