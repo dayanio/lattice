@@ -32,6 +32,10 @@ var (
 	_ infra.Dialer = (*lrpDialer)(nil)
 )
 
+// lrpSynGrace is how long after a session forms a SYN is still treated as a
+// retransmit of the handshake that formed it rather than as a remote restart.
+const lrpSynGrace = 5 * time.Second
+
 type lrpDialer struct {
 	mu             sync.Mutex
 	log            *log.Logger
@@ -41,6 +45,7 @@ type lrpDialer struct {
 	readyChan      chan struct{}
 	readyOnce      sync.Once // guards close(readyChan)
 	active         bool      // true once SYN/ACK exchange completes; guarded by mu
+	activeAt       time.Time // when active became true; guarded by mu
 	cancel         context.CancelFunc
 	sender         func(ctx context.Context, peerId infra.PeerID, data []byte) error
 	getLocalPeer   func() *infra.Peer
@@ -198,10 +203,22 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		// iceDialer's "SYN on active agent" handling.
 		w.mu.Lock()
 		isActive := w.active
-		if isActive {
+		retransmit := isActive && time.Since(w.activeAt) < lrpSynGrace
+		if isActive && !retransmit {
 			w.active = false
 		}
 		w.mu.Unlock()
+
+		// The peer resends its SYN every 2 s until it sees our ACK, so one can
+		// land just after our session formed. That is the tail of the handshake
+		// that formed it, not a restart: answer it (the ACK stops the peer's
+		// retransmits) and keep the session. Restarting here made both ends
+		// restart on every retransmit, indefinitely, once signaling latency
+		// was high enough for retransmits to cross the handshake (a phone after
+		// switching from wifi to cellular: 22 restart cycles in one minute).
+		if retransmit {
+			return w.sendPacket(ctx, remoteId, signal.PacketType_HANDSHAKE_ACK, nil)
+		}
 
 		if isActive {
 			w.log.Debug("SYN on active LRP session — remote restarted, triggering restart", "remoteId", remoteId)
@@ -243,6 +260,7 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		w.onPeerReceived(peer)
 		w.mu.Lock()
 		w.active = true
+		w.activeAt = time.Now()
 		cancel := w.cancel
 		w.cancel = nil
 		w.mu.Unlock()
@@ -264,6 +282,7 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		w.onPeerReceived(peer)
 		w.mu.Lock()
 		w.active = true
+		w.activeAt = time.Now()
 		cancel := w.cancel
 		w.cancel = nil
 		w.mu.Unlock()
