@@ -63,6 +63,11 @@ type TCPClient struct {
 
 	sendCh chan []byte
 
+	// writeMu serialises writes to the buffered writer. writerLoop and the
+	// per-peer auth exchange (run from the ReceiveFunc goroutine right after a
+	// connect) both write to it; without this their frames could interleave.
+	writeMu sync.Mutex
+
 	// connected is a fresh channel per connection lifetime: non-nil while
 	// a connection is up, closed and nil'ed when it drops. Snapshotted by
 	// goroutines that need to wait out a disconnect.
@@ -253,6 +258,11 @@ func (c *TCPClient) RemoteAddr() net.Addr {
 // Send enqueues a pre-marshaled LRP frame for the writer goroutine. While
 // disconnected, frames are dropped: they are stale encrypted datagrams and
 // WireGuard retransmits them itself.
+// Connected reports whether the relay TCP connection is currently up.
+func (c *TCPClient) Connected() bool {
+	return c.connectedCh() != nil
+}
+
 func (c *TCPClient) Send(ctx context.Context, targetId uint64, lrpType uint8, data []byte) error {
 	if c.connectedCh() == nil {
 		return errors.New("lrp: disconnected")
@@ -299,17 +309,23 @@ func (c *TCPClient) writeFrames(frames [][]byte) bool {
 	if conn == nil || w == nil {
 		return false
 	}
-	for _, f := range frames {
-		if _, err := w.Write(f); err != nil {
-			c.disconnectIfCurrent(conn)
-			return false
-		}
-	}
-	if err := w.Flush(); err != nil {
+	if !c.flushFrames(w, frames) {
 		c.disconnectIfCurrent(conn)
 		return false
 	}
 	return true
+}
+
+// flushFrames appends the frames to w and flushes, under writeMu.
+func (c *TCPClient) flushFrames(w *bufio.Writer, frames [][]byte) bool {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	for _, f := range frames {
+		if _, err := w.Write(f); err != nil {
+			return false
+		}
+	}
+	return w.Flush() == nil
 }
 
 func (c *TCPClient) dropPending() {
@@ -406,13 +422,7 @@ func (c *TCPClient) writeFramesTo(conn net.Conn, frames [][]byte) bool {
 	if cur != conn || w == nil {
 		return false
 	}
-	for _, f := range frames {
-		if _, err := w.Write(f); err != nil {
-			c.disconnectIfCurrent(conn)
-			return false
-		}
-	}
-	if err := w.Flush(); err != nil {
+	if !c.flushFrames(w, frames) {
 		c.disconnectIfCurrent(conn)
 		return false
 	}
@@ -481,7 +491,12 @@ func (c *TCPClient) ReceiveFunc() wgconn.ReceiveFunc {
 			switch header.Cmd {
 			case Probe:
 				if header.PayloadLen > MaxProbePayload {
-					c.log.Warn("probe payload too large", "bytes", header.PayloadLen)
+					// The payload is still on the stream: leaving it unread makes
+					// the next header parse start in the middle of it.
+					c.log.Warn("probe payload too large, discarded", "bytes", header.PayloadLen)
+					if _, err = io.CopyN(io.Discard, reader, int64(header.PayloadLen)); err != nil {
+						c.disconnectIfCurrent(conn)
+					}
 					return 0, nil
 				}
 				buf := make([]byte, header.PayloadLen)
@@ -498,7 +513,10 @@ func (c *TCPClient) ReceiveFunc() wgconn.ReceiveFunc {
 
 			case Forward:
 				if int(header.PayloadLen) > len(packets[0]) {
-					c.log.Warn("forward payload exceeds buffer", "need", header.PayloadLen, "have", len(packets[0]))
+					c.log.Warn("forward payload exceeds buffer, discarded", "need", header.PayloadLen, "have", len(packets[0]))
+					if _, err = io.CopyN(io.Discard, reader, int64(header.PayloadLen)); err != nil {
+						c.disconnectIfCurrent(conn)
+					}
 					return 0, nil
 				}
 				if _, err = io.ReadFull(reader, packets[0][:header.PayloadLen]); err != nil {
