@@ -31,6 +31,7 @@ func TestIPC_StatusRoundtrip(t *testing.T) {
 		}
 		return Response{OK: true, Status: &StatusInfo{
 			State: "running", PID: 4242, Address: "10.96.0.2",
+			Peers: []PeerStatus{{AppID: "cloud-node-1", PublicKey: "k", Transport: "ice-ready"}},
 		}}
 	}
 
@@ -50,6 +51,9 @@ func TestIPC_StatusRoundtrip(t *testing.T) {
 	}
 	if !resp.OK || resp.Status == nil || resp.Status.Address != "10.96.0.2" {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if len(resp.Status.Peers) != 1 || resp.Status.Peers[0].Transport != "ice-ready" {
+		t.Fatalf("peers not carried over IPC: %+v", resp.Status.Peers)
 	}
 }
 
