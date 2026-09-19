@@ -17,7 +17,9 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -81,6 +83,23 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 		getOnMessage:   cfg.GetOnMessage,
 		getStats:       cfg.GetPeerStats,
 	}
+}
+
+// pingDirect sends a path echo to a direct address through the shared UDP
+// socket of the matching address family.
+func (p *ProbeFactory) pingDirect(ctx context.Context, addr string, timeout time.Duration) (time.Duration, error) {
+	ua, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return 0, err
+	}
+	mux := p.FilteringMux
+	if ua.IP.To4() == nil && p.FilteringMux6 != nil {
+		mux = p.FilteringMux6
+	}
+	if mux == nil {
+		return 0, errors.New("no UDP mux for path echo")
+	}
+	return mux.Ping(ctx, ua, timeout)
 }
 
 // keepaliveFor returns the WireGuard persistent-keepalive interval this side
@@ -496,6 +515,7 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		sm:           sm,
 		configurator: configurator,
 		getStats:     p.getStats,
+		pathPing:     p.pingDirect,
 	}
 
 	makeIceDialer := func() infra.Dialer {
