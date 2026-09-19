@@ -1,210 +1,121 @@
-# ADR-0006: Peer signaling falls back to the relay
+# ADR-0006：对端信令在 NATS 不通时回退到中继
 
-- **Status**: Proposed
-- **Date**: 2026-09-19
-- **Related**: ADR-0005 (FERRY relay protocol; this ADR makes its "`Probe` stays
-  as a fallback" line concrete), ADR-0004 (LRP per-peer authentication)
+- **状态**：提议中（Proposed）
+- **日期**：2026-09-19
+- **关联**：ADR-0005（FERRY 中继协议；本文把其中"`Probe` 保留为回退通道"一句落实为设计）、ADR-0004（LRP 对端认证）
 
-## Summary
+## 摘要
 
-Every peer-to-peer signaling packet (`HANDSHAKE_SYN`, `HANDSHAKE_ACK`, `OFFER`,
-`ANSWER`, `RESTART_NOTIFY`) travels over NATS. When a node's NATS connection is
-dead or half-dead, no probe can be (re)negotiated, even though the node's relay
-connection is healthy and would carry the data. We add a second signaling
-channel that already exists on the wire, the relay's `Probe` frame, and use it
-when the NATS channel is not making progress.
+节点之间的信令包（`HANDSHAKE_SYN`、`HANDSHAKE_ACK`、`OFFER`、`ANSWER`、`RESTART_NOTIFY`）目前全部走 NATS。一旦某个节点的 NATS 连接已死或半死，探测（probe）就无法重新协商，哪怕这个节点到中继的连接完全正常、本可以承载数据。
 
-## Context
+本文提议启用线路上早已存在的第二条信令通道，即中继的 `Probe` 帧：当 NATS 通道迟迟没有进展时，同一个信令包再通过中继发送一份。
 
-### What signaling does and how it travels today
+## 背景
 
-- A probe negotiates a transport with one remote peer (ICE and LRP race in
-  `Probe.discover`). Both dialers are built with `Sender: p.signal.Send`
-  (`probe_factory.go`), which publishes to the remote's NATS subject.
-- The relay carries WireGuard packets (`Forward`) and, since the first LRP
-  version, signaling packets (`Probe`). Today the only sender of `Probe` is the
-  LRP dialer's OFFER/ANSWER (`lrpDialer.sendOfferFromLrp`).
-- The receive side is already shared: the relay client's `probeWorker`
-  unmarshals a `Probe` payload into a `SignalPacket` and calls
-  `node.probeFactory.Handle`, the same entry point NATS messages use
-  (`node.go`, `lrp_client.go`). A peer therefore already understands SYN, ACK,
-  OFFER, ANSWER and RESTART_NOTIFY arriving over the relay.
-- `MESSAGE` packets (netmap pushes) come from the control plane, not from peers,
-  and stay NATS-only.
+### 信令现在怎么走
 
-### The failure
+- 一个探测负责与一个对端协商传输方式（ICE 与 LRP 在 `Probe.discover` 里竞速）。两个拨号器都以 `Sender: p.signal.Send` 构造（`probe_factory.go`），即发布到对端的 NATS 主题。
+- 中继承载 WireGuard 数据包（`Forward` 帧），也支持承载信令包（`Probe` 帧）。目前 `Probe` 的唯一发送方是 LRP 拨号器的 OFFER/ANSWER（`lrpDialer.sendOfferFromLrp`）。
+- 接收侧已经是共用的：中继客户端的 `probeWorker` 把 `Probe` 载荷反序列化为 `SignalPacket`，交给 `node.probeFactory.Handle`，与 NATS 消息是同一个入口（`node.go`、`lrp_client.go`）。因此节点本来就能处理经中继到达的 SYN、ACK、OFFER、ANSWER 和 RESTART_NOTIFY。
+- `MESSAGE` 包（网络图推送）来自控制面，不是对端发的，仍然只走 NATS。
 
-Test of 2026-09-19, macOS app on wifi, iPhone switched wifi to cellular, twice:
+### 故障现象
 
-| Run | Mac app to phone | Phone NATS |
+2026-09-19 测试：macOS App 在 wifi 上，iPhone 从 wifi 切到蜂窝，共两次：
+
+| 次数 | Mac App 到手机中断 | 手机的 NATS |
 |---|---|---|
-| 1 | 108 s | `nats: stale connection`, six reconnects about 17 s apart |
-| 2 | 23 s | no reconnects |
+| 1 | 108 s | 出现 `nats: stale connection`，约每 17 s 重连一次，共 6 次 |
+| 2 | 23 s | 没有重连 |
 
-In run 1 the Mac noticed the dead direct path after 10 s and sent SYN every 2 s
-from then on; the phone received the first one at about 105 s. Meanwhile:
+第 1 次里，Mac 在 10 s 后发现直连路径已断，之后每 2 s 发一次 SYN，手机大约在第 105 s 才收到第一个。同一时段：
 
-- the phone's relay TCP connection re-registered about 20 s after the switch and stayed healthy;
-- the container, which only needs relay data, recovered in 22 s;
-- on the server, three of the phone's cellular connections to `:4222` held 485
-  unacknowledged bytes in the send queue, while its `:6266` connection had none.
+- 手机到中继的 TCP 连接在切网后约 20 s 重新注册成功，此后一直正常；
+- 只依赖中继数据的容器 22 s 就恢复了；
+- 服务器上，手机蜂窝出口的 3 条到 `:4222` 的连接，发送队列里各积压 485 字节未被确认，而它到 `:6266` 的连接没有积压。
 
-We do not know why those NATS flows were unusable (the working assumption is
-the carrier path for new flows to that port). It does not matter for the
-design: NATS is a second, independent dependency that gates re-negotiation, and
-when it fails the relay is up but unused for signaling.
+这些 NATS 连接为什么不可用，目前不清楚（暂时的推测是运营商网络对该端口新连接的处理）。对设计而言这不重要：NATS 是重新协商所依赖的第二个独立依赖，它失效时，中继明明可用，却没有被用来做信令。
 
-Related work already done: NATS ping every 5 s with 2 outstanding (a dead
-connection is noticed in about 15 s instead of minutes), and the upgrade retry
-no longer restarts a probe while signaling is down. Those shorten the failure;
-they do not remove the dependency.
+已经做过的相关改动：NATS 每 5 s 探活、最多允许 2 次未应答（死连接约 15 s 内发现，之前要几分钟），以及信令不可用时中继转直连的重试不再重启探测。这些缩短了故障时间，但没有消除这个依赖。
 
-## Goals
+## 目标
 
-1. A node whose NATS is unusable, but whose relay session is up, still reaches
-   `lrp-ready` with any peer that is also on the relay, and can still upgrade
-   to direct through ICE candidates exchanged over the relay.
-2. No behaviour change when NATS is healthy, apart from a small amount of extra
-   traffic during a probe attempt that is not progressing.
-3. Works between new and old agents in both directions, without a relay upgrade.
+1. NATS 不可用、但中继会话正常的节点，仍能与同样在中继上的对端达到 `lrp-ready`，并且能通过经中继交换的 ICE 候选升级为直连。
+2. NATS 健康时行为不变，只是在探测迟迟没有进展的那段时间里多一点流量。
+3. 新旧版本节点互通，任何方向都不要求先升级中继。
 
-Non-goals: replacing NATS, relay-to-relay routing, changing what the relay
-forwards (ADR-0005), hiding signaling metadata from the relay.
+非目标：取代 NATS、中继之间互联、改变中继转发的内容（属于 ADR-0005）、对中继运营方隐藏信令元数据。
 
-## Decision
+## 决策
 
-### 1. One sender for both dialers
+### 1. 两个拨号器共用一个发送器
 
-Add `peerSignaler` in `internal/server/transport`. It implements the
-`Send(ctx, to PeerID, data []byte) error` shape the dialers already use and
-replaces `p.signal.Send` in `probe_factory.go` for both dialers. It owns two
-channels:
+在 `internal/server/transport` 新增 `peerSignaler`。它实现拨号器现在使用的 `Send(ctx, to PeerID, data []byte) error` 形态，在 `probe_factory.go` 中替换两个拨号器的 `p.signal.Send`。它管理两条通道：
 
-- NATS: `infra.SignalService.Send`.
-- Relay: `Lrp.Send(ctx, to, relay.Probe, data)`, available when the relay
-  client is connected. `infra.Lrp` gains `Connected() bool`.
+- NATS：`infra.SignalService.Send`。
+- 中继：`Lrp.Send(ctx, to, relay.Probe, data)`，中继客户端已连接时可用。`infra.Lrp` 增加 `Connected() bool`。
 
-### 2. Escalation rule
+### 2. 升级规则
 
-The sender cannot see the receiver's NATS: a publish to a peer whose
-subscription is dead still succeeds. So the trigger is lack of progress, not the
-sender's own NATS health.
+发送方看不到接收方的 NATS 状态：向一个订阅已死的对端发布消息，发布本身仍然成功。所以触发条件是"没有进展"，而不是"自己的 NATS 出问题"。
 
-For each probe attempt (from `Start` or `restart` until the probe leaves
-`probing`):
+对每一次探测尝试（从 `Start` 或 `restart` 起，到探测离开 `probing` 为止）：
 
-- send over NATS only, as today;
-- once `relaySignalAfter` (2 s, one SYN period) has passed without any
-  signaling packet received from that remote, also send every packet over the
-  relay while the relay is connected;
-- if the local NATS reports `Connected() == false`, or a NATS send returns an
-  error, use the relay immediately;
-- stop escalating when the probe leaves `probing`, or when a packet from the
-  remote arrives over the relay (the relay path is then proven, and it stays
-  in use for the rest of the attempt).
+- 先只走 NATS，与现在一致；
+- 超过 `relaySignalAfter`（2 s，即一个 SYN 周期）仍没有收到该对端的任何信令包，此后每个包在中继已连接时**同时**经中继再发一份；
+- 如果本地 NATS 报告 `Connected() == false`，或某次 NATS 发送返回错误，立即改用中继；
+- 探测离开 `probing` 时停止升级；如果收到了经中继到达的对端信令，说明中继这条路已被证明可用，这次尝试的剩余时间里继续使用它。
 
-"Received anything from the remote" is tracked in `Probe.Handle`, which already
-sees every inbound packet regardless of channel.
+"是否收到对端任何包"在 `Probe.Handle` 里统计，它本来就会看到所有入站包，与通道无关。
 
-Sending on both channels from the first packet is simpler and 2 s faster. It is
-rejected because it doubles duplicate delivery on every attempt of every healthy
-peer, and duplicates are the main risk (below).
+一开始就两条通道同时发更简单，也快 2 s。不采用的原因：这会让每个健康对端的每次尝试都多出重复包，而重复包正是主要风险（见下）。
 
-### 3. Receiver
+### 3. 接收端
 
-No change to the receive path. Packets arriving over the relay reach
-`probeFactory.Handle` exactly like NATS ones. The sender identity comes from
-`SignalPacket.SenderID`, as on NATS.
+接收路径不变。经中继到达的包与 NATS 的包一样进入 `probeFactory.Handle`，发送者身份取自 `SignalPacket.SenderID`，与 NATS 一致。
 
-Trust: today any authenticated NATS client can publish a packet with any
-`SenderID`. The relay is authenticated by the shared relay token, and by
-ADR-0004 when peer auth is on. The relay channel is therefore not weaker than
-NATS. Hardening comes with ADR-0005: the relay overwrites the source ID on
-`Probe` as well as `Forward`, and receivers drop a packet whose `SenderID`
-disagrees. It is not part of this change because enforcing it would break the
-LRP OFFER/ANSWER path against relays that do not stamp `Probe` yet.
+信任程度：目前任何通过认证的 NATS 客户端都可以发布带任意 `SenderID` 的包；中继由共享中继令牌认证，开启对端认证后还有 ADR-0004。所以中继通道的可信度不低于 NATS。
 
-### 4. Duplicates
+加固方案随 ADR-0005 一起做：中继对 `Probe` 也像对 `Forward` 一样，改写来源 ID，接收端丢弃 `SenderID` 与之不符的包。本次不做，因为在中继还不改写 `Probe` 的情况下强制校验，会让现有的 LRP OFFER/ANSWER 路径失效。
 
-With two channels a packet can arrive twice, possibly seconds apart. The
-handlers are already retransmission-tolerant: SYN is resent every 2 s, ICE
-candidates are cached and resent, and an LRP SYN within 5 s of the session
-forming is treated as a retransmit (`lrpSynGrace`, commit 20fda9c2). The
-remaining risk is a late duplicate SYN arriving on an active session after that
-window and being read as "remote restarted", which restarts the probe.
+### 4. 重复包
 
-Phase 2 removes the time heuristic: each probe attempt gets a random
-`attempt_id` in `SignalPacket` (a new optional field, ignored by old agents).
-Receivers treat a SYN with the current attempt's id as a retransmit whatever the
-channel or delay, and a different id as a real restart. Old agents send no id
-and keep the grace rule.
+两条通道会让同一个包可能到达两次，间隔甚至可达数秒。现有处理逻辑本来就能容忍重传：SYN 每 2 s 重发一次，ICE 候选会缓存并重发，LRP 会话形成后 5 s 内收到的 SYN 视为重传（`lrpSynGrace`，提交 20fda9c2）。剩下的风险是：一个迟到的重复 SYN 在这个窗口之后到达已建立的会话，被误判为"对端重启"，从而重启探测。
 
-### 5. Limits and pre-existing issues to fix with it
+第 2 阶段去掉这个时间启发式：每次探测尝试生成一个随机 `attempt_id`，放入 `SignalPacket`（新增可选字段，旧版本会忽略）。接收方对带当前尝试 id 的 SYN 一律视为重传，不论走哪条通道、延迟多久；id 不同才算真正的重启。旧版本不发送 id，继续使用时间窗口规则。
 
-- `MaxProbePayload` is 2048 bytes. A SYN carries the sender's peer record; its
-  size must be measured against that limit before enabling escalation. If it can
-  exceed it, raise the limit (the server allows 64 KiB).
-- On an oversized `Probe` frame the TCP client logs a warning and returns
-  without reading the payload (`lrp_client_tcp.go`), which desynchronises the
-  stream. It must discard the payload instead. Escalation makes the path busier,
-  so fix it first.
-- Relaying to a peer that is not registered logs `relay target not found` at
-  warn level once per packet. During escalation that is one line per 2 s per
-  offline peer. Rate-limit it.
+### 5. 需要一并处理的限制与已有问题
 
-### 6. Observability
+- `MaxProbePayload` 是 2048 字节。SYN 携带发送方的节点记录，启用升级之前必须实测它的大小是否会超过限制；如果可能超过，就调大（服务器端允许 64 KiB）。
+- 遇到超长的 `Probe` 帧时，TCP 客户端只打印警告就返回，没有读取载荷，这会让数据流错位（`lrp_client_tcp.go`）。必须改成读取并丢弃载荷。升级会让这条路径更繁忙，所以要先修。
+- 向一个未注册的对端中继时，服务器每个包打一行 warn 日志 `relay target not found`。升级期间就是每 2 s 每个离线对端一行，需要限频。
 
-One info log per attempt when escalation starts (`signaling escalated to relay`,
-with the reason: no progress, NATS disconnected, or NATS send error), and one
-when the first packet arrives over the relay. `lattice status` is unchanged.
+### 6. 可观测性
 
-## Alternatives considered
+每次尝试开始升级时打一条 info 日志（`signaling escalated to relay`，带原因：没有进展、NATS 断开、NATS 发送错误），第一个经中继到达的包也打一条。`lattice status` 不变。
 
-- **Move all signaling to the relay.** Loses the NATS dependency, but also
-  NATS's role for netmap pushes and presence, and puts every handshake on the
-  relay. Rejected by ADR-0005's non-goals.
-- **Harden NATS instead** (a second endpoint on a different port, NATS over
-  WebSocket, racing connections). Useful and orthogonal, but it only helps when
-  the failure is port-specific. It cannot help when the server side of the flow
-  is the problem, and the relay is already the connection we trust for data.
-- **Always send on both channels.** See Decision 2.
-- **Do nothing beyond faster NATS failure detection.** Shortens the outage to
-  about 15 s plus reconnect time when it works, but a reconnect can land on
-  another unusable flow, as the six cycles in run 1 show.
+## 备选方案
 
-## Rollout
+- **信令全部改走中继**：可以彻底摆脱 NATS 依赖，但同时失去 NATS 在网络图推送和在线状态上的作用，并且所有握手都压到中继上。与 ADR-0005 的非目标冲突，不采用。
+- **只加固 NATS**（第二个端口的入口、NATS over WebSocket、并发多连接）：有用，与本方案互不冲突，但只在故障和端口有关时才有效；如果问题出在服务端到客户端这条流本身，就帮不上忙，而中继本来就是我们信任、用来传数据的连接。
+- **从第一个包起两条通道都发**：见决策第 2 点。
+- **只保留更快的 NATS 故障检测**：能把中断缩短到约 15 s 加重连时间，但重连可能又落到另一条不可用的连接上，第 1 次测试里的 6 轮循环就是例子。
 
-1. Client only: `peerSignaler`, `Connected()`, the payload limit and discard fix.
-   Servers and old agents are untouched, because they already accept `Probe`
-   frames. Old agents receive escalated packets fine; an old agent that is the
-   one with dead NATS still cannot send over the relay, so the fix helps when the
-   new agent is on either end and the relay reaches the other side.
-2. `attempt_id` in `SignalPacket`, then remove the dependence on `lrpSynGrace`.
-3. Relay stamps `Probe` (ADR-0005), receivers verify.
+## 落地步骤
 
-## Test plan
+1. **只改客户端**：`peerSignaler`、`Connected()`、载荷上限与丢弃载荷的修复。服务器和旧版本节点都不用动，因为它们本来就接受 `Probe` 帧。旧版本收到升级后的包没有问题；但如果 NATS 不通的恰好是旧版本节点，它自己还是不会经中继发信令，所以只要任意一端是新版本、且中继能连到另一端，就有帮助。
+2. **`SignalPacket` 增加 `attempt_id`**，然后去掉对 `lrpSynGrace` 的依赖。
+3. **中继改写 `Probe` 的来源 ID**（ADR-0005），接收端校验。
 
-- Unit: the escalation timeline with a fake NATS sender that swallows packets
-  and a fake relay (nothing before 2 s, both channels after, relay at once when
-  NATS is disconnected or errors, stops when the probe leaves `probing`);
-  duplicate SYN, ACK and OFFER over both channels leave one session.
-- Integration: two agents and one relay, NATS between them dropped in both
-  directions, probe reaches `lrp-ready`; then ICE candidates over the relay
-  reach `ice-ready`.
-- Live, reproducible without waiting for cellular flakiness: on the cloud host,
-  drop the container's traffic to `:4222` with an `iptables -t raw` rule (the
-  test-environment notes explain why `raw`), restart the Mac agent, and expect
-  the container and Mac to reach `lrp-ready` within about 10 s of relay
-  registration. Remove the rule and verify it is gone.
-- Regression: repeat the phone wifi to cellular switch several times; there
-  should be no outage over 30 s.
+## 测试计划
 
-## Open questions
+- **单元测试**：用一个会吞包的假 NATS 发送器和一个假中继，验证升级时间线（2 s 之前只走 NATS、之后两条都发、NATS 断开或出错时立即走中继、探测离开 `probing` 后停止）；SYN、ACK、OFFER 经两条通道重复到达时，只形成一个会话。
+- **集成测试**：两个节点加一个中继，双向丢弃它们之间的 NATS，探测应到达 `lrp-ready`；随后经中继交换的 ICE 候选应能到达 `ice-ready`。
+- **真机复现，不必再等蜂窝抖动**：在云主机上用 `iptables -t raw` 规则丢弃容器到 `:4222` 的流量（为什么用 `raw` 表，见测试环境备忘），重启 Mac 节点，预期容器与 Mac 在中继注册后约 10 s 内到达 `lrp-ready`。测完删除规则并确认已删除。
+- **回归**：手机 wifi 切蜂窝多做几次，不应出现超过 30 s 的中断。
 
-1. Is `relaySignalAfter` = 2 s right, or should the first attempt of a
-   restart (where the remote is more likely to be waiting) go on both channels
-   at once?
-2. Should escalation keep running for the whole `probing` window (up to 65 s)
-   or give up after a bounded number of relay sends?
-3. Phase 2 needs a `signal.proto` field. Is the generated Go file
-   regenerated in-tree, and do the Apple bindings need a rebuild?
+## 待确认的问题
+
+1. `relaySignalAfter` 取 2 s 是否合适？还是重启后的第一次尝试（对端更可能正在等待）就应该两条通道同时发？
+2. 升级要在整个 `probing` 窗口（最长 65 s）内一直进行，还是发送有限次数后放弃？
+3. 第 2 阶段需要改 `signal.proto`：生成的 Go 文件是否在仓库内重新生成？Apple 端的绑定是否需要重新构建？
