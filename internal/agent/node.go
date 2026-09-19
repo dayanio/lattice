@@ -428,7 +428,17 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 			return lrp
 		},
 		GetPeerStats: func(pubKey string) (transport.PeerStats, error) {
-			hs, rx, ep, statsErr := wireguard.PeerStats(node.Name, pubKey)
+			// In-process IpcGet, not wgctrl: the engine embedded in the iOS
+			// network extension is built with NewNode and never opens the UAPI
+			// socket file wgctrl needs, so every liveness signal would fail there.
+			if node.iface == nil {
+				return transport.PeerStats{}, errors.New("wireguard device not ready")
+			}
+			conf, ipcErr := node.iface.IpcGet()
+			if ipcErr != nil {
+				return transport.PeerStats{}, ipcErr
+			}
+			hs, rx, ep, statsErr := wireguard.PeerStatsFromIpc(conf, pubKey)
 			return transport.PeerStats{LastHandshake: hs, RxBytes: rx, Endpoint: ep}, statsErr
 		},
 	})
