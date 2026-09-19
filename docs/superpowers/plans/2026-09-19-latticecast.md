@@ -824,3 +824,29 @@ func (s *Server) Handler() http.Handler
 - [ ] Step 4 Announcer + 首启配置 UI（name/room/token）+ 常显状态
 - [ ] Step 5【手动·用户】Xcode 真机装到自家 Apple TV，`dns-sd -B _latticecast._tcp` 可见
 - [ ] Step 6 Commit：`feat(tvos): apple tv renderer (avplayer+netservice, contract-tested)` 并推送
+
+---
+
+### Task 20: Reflux 内容源（v1.1，v1 验收后执行）
+
+**Files:**
+- Create: `internal/cast/resolve/reflux.go`
+- Modify: `internal/cast/config/config.go`（新增 `reflux_url` / `reflux_token` 可选字段）、`internal/cast/resolve/resolve.go`（Resolver 挂 RefluxSource，search_media 结果融合）
+- Test: `internal/cast/resolve/reflux_test.go`（fake reflux：Jellyfin 风格 JSON 夹具）
+
+**Interfaces:**
+- Consumes: `Resolver`、`config`；reflux 的 Jellyfin 兼容 API（`GET /Items?searchTerm=`、`GET /Videos/{id}/stream?static=true`，鉴权 `X-Api-Key`/`api_key`）。
+- Produces:
+
+```go
+package resolve
+type RefluxSource struct{ Base, Token string; HC *http.Client }
+func NewRefluxSource(base, token string) *RefluxSource
+func (r *RefluxSource) Search(ctx, q string) ([]Item, error)   // Item.Title=TMDB 标题, ID=reflux item id
+func (r *RefluxSource) StreamURL(ctx, id string) (string, error) // {Base}/Videos/{id}/stream?static=true&api_key=
+```
+
+- Resolver 集成：`search_media` 结果 = NAS 库 ∪ reflux 库（Item 增 `source` 字段区分）；`cast_play` 对 reflux item 走 StreamURL（透传给渲染端拉流；渲染端与 reflux 同在家庭网，可达性成立）。
+- 错误路径：reflux 不可达 / token 失效 → 结构化错误（LLM 可转述），不拖垮本地库搜索。
+- 前置：一台可达的 reflux 实例做手工 e2e（单元测试用 fake）。
+- Commit: `feat(resolve): reflux source via jellyfin-compatible api`
