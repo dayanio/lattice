@@ -326,6 +326,7 @@ func (p *Probe) onSuccess(transport infra.Transport) {
 	if transportType == infra.ICE {
 		_ = p.sm.Transition(StateICEReady)
 		p.cancelUpgrade(true)
+		p.startEndpointGuard()
 	} else {
 		_ = p.sm.Transition(StateLRPReady)
 		p.scheduleUpgrade()
@@ -495,5 +496,6 @@ func (p *Probe) handleUpgradeTransport(newTransport infra.Transport) error {
 	// Transition LRPReady -> ICEReady: WG config handled by state machine callbacks.
 	_ = p.sm.Transition(StateICEReady)
 	p.cancelUpgrade(true)
+	p.startEndpointGuard()
 	return nil
 }

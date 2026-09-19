@@ -17,31 +17,33 @@ package wireguard
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl"
 )
 
-// PeerStats returns the LastHandshakeTime and the received-byte counter for
-// the peer identified by publicKey (base64) on the given WireGuard interface.
-// Returns an error if the interface is not found or the peer is not configured.
-func PeerStats(ifaceName, publicKey string) (lastHandshake time.Time, rxBytes uint64, err error) {
+// PeerStats returns the LastHandshakeTime, the received-byte counter and the
+// current endpoint for the peer identified by publicKey (base64) on the given
+// WireGuard interface. Returns an error if the interface is not found or the
+// peer is not configured.
+func PeerStats(ifaceName, publicKey string) (lastHandshake time.Time, rxBytes uint64, endpoint *net.UDPAddr, err error) {
 	ctr, err := wgctrl.New()
 	if err != nil {
-		return time.Time{}, 0, fmt.Errorf("wgctrl: %w", err)
+		return time.Time{}, 0, nil, fmt.Errorf("wgctrl: %w", err)
 	}
 	defer ctr.Close() //nolint:errcheck
 
 	dev, err := ctr.Device(ifaceName)
 	if err != nil {
-		return time.Time{}, 0, fmt.Errorf("device %s: %w", ifaceName, err)
+		return time.Time{}, 0, nil, fmt.Errorf("device %s: %w", ifaceName, err)
 	}
 	for _, p := range dev.Peers {
 		if p.PublicKey.String() == publicKey {
-			return p.LastHandshakeTime, uint64(p.ReceiveBytes), nil
+			return p.LastHandshakeTime, uint64(p.ReceiveBytes), p.Endpoint, nil
 		}
 	}
-	return time.Time{}, 0, fmt.Errorf("peer %s not found on %s", publicKey, ifaceName)
+	return time.Time{}, 0, nil, fmt.Errorf("peer %s not found on %s", publicKey, ifaceName)
 }
 
 // WatchFirstHandshake polls the WireGuard interface every 500 ms until any

@@ -428,8 +428,8 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 			return lrp
 		},
 		GetPeerStats: func(pubKey string) (transport.PeerStats, error) {
-			hs, rx, statsErr := wireguard.PeerStats(node.Name, pubKey)
-			return transport.PeerStats{LastHandshake: hs, RxBytes: rx}, statsErr
+			hs, rx, ep, statsErr := wireguard.PeerStats(node.Name, pubKey)
+			return transport.PeerStats{LastHandshake: hs, RxBytes: rx, Endpoint: ep}, statsErr
 		},
 	})
 
