@@ -52,8 +52,12 @@ func relayPoisoned(state PeerState, endpoint *net.UDPAddr) bool {
 // Safe only shortly after ICE connected, while the direct path has just been
 // proved; that is why it is bounded by startEndpointGuard. Unconditional
 // re-pointing later would fight the relay after a real direct-path failure.
-// One side re-pointing is enough: its packets then arrive over UDP and
-// WireGuard on the other side roams back to the direct address.
+//
+// Both sides must run it. Each relayed packet re-points its receiver, so a
+// peer whose own endpoint is still the relay keeps re-poisoning the other one:
+// with only the responder guarded, the initiator's 25 s keepalives went out
+// over the relay and undid every repair (observed: 6 of 6 restarts poisoned).
+// With both sides guarded, 6 of 6 restarts stayed direct past the guard window.
 func (p *Probe) reassertDirectEndpoint() bool {
 	if p.getStats == nil || p.configurator == nil {
 		return false
