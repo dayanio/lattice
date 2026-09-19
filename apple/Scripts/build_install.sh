@@ -8,7 +8,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 FILTER="${1:-iPhone}"
 SCHEME="Lattice"
 DERIVED="${DERIVED:-build}"
-BUNDLE_ID="${BUNDLE_ID:-io.lattice.Lattice}"
+BUNDLE_ID="${BUNDLE_ID:-io.lattice.ios}"
 
 info() { echo -e "\033[32m[build_install]\033[0m $1"; }
 fail() { echo -e "\033[31m[build_install][FAIL]\033[0m $*" >&2; exit 1; }
@@ -24,8 +24,10 @@ grep -q "BUILD SUCCEEDED" "$BUILD_LOG" || fail "未见 BUILD SUCCEEDED"
 APP="$DERIVED/Build/Products/Debug-iphoneos/Lattice.app"
 [ -d "$APP" ] || fail "找不到构建产物 $APP"
 
-info "查找已连接设备（过滤：$FILTER）"
-DEV=$(xcrun devicectl list devices 2>/dev/null | grep -i "$FILTER" | grep -i available | head -1 | awk '{print $NF}')
+info "查找已连接设备（过滤：${FILTER}）"
+# 状态列在新版 Xcode 里是 connected（旧版是 available）；设备标识符是 UUID，
+# 不是最后一列（最后一列现在是型号），所以按 UUID 形态提取。
+DEV=$(xcrun devicectl list devices 2>/dev/null | grep -i "$FILTER" | grep -Ei "available|connected" | grep -oE '[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}' | head -1)
 [ -n "$DEV" ] || fail "未找到已连接的设备——请解锁并信任后重试"
 info "目标设备 $DEV"
 
