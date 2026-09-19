@@ -63,6 +63,12 @@ type Probe struct {
 	running           atomic.Bool
 	restartInProgress atomic.Bool
 
+	// startedAt records when the current Probing cycle began, so the factory
+	// reconciler can restart probes frozen in Probing. A discover goroutine
+	// that loses the epoch race returns without touching the probe state,
+	// which would otherwise leave the probe in Probing forever.
+	startedAt atomic.Int64
+
 	// currentTransport holds the active transport.
 	currentTransport infra.Transport
 
@@ -266,6 +272,7 @@ func (p *Probe) Start(ctx context.Context, remoteId infra.PeerIdentity) error {
 		p.log.Debug("probe already connected, skipping start", "state", p.sm.Current())
 		return nil
 	}
+	p.startedAt.Store(time.Now().UnixNano())
 
 	go func() {
 		t, err := p.discover(ctx)
