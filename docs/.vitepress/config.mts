@@ -70,6 +70,7 @@ function userSidebar() {
       text: 'Deployment',
       items: [
         { text: 'All-in-One', link: '/deploy/all-in-one' },
+        { text: 'End-to-End (三端全流程)', link: '/deploy/end-to-end' },
         { text: 'Helm Chart', link: '/deploy/helm' },
         { text: 'K8s Operator', link: '/deploy/k8s-operator' },
         { text: 'Configuration', link: '/config/reference' },
