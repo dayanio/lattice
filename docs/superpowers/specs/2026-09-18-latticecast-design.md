@@ -172,6 +172,7 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效，逐
 
 - **入网**：cast-agent 所在节点经家里 lattice agent 入网（已有）；外部 LLM 客户端经 mesh 访问 MCP 时走 AgentIdentity + 单次 Enrollment Token + agent JWT（已有）；渲染端仅家庭局域网 + Bearer Token，**不入 mesh**（攻击面与配置复杂度同时收敛）；
 - **策略**：LatticePolicy default-deny，v1 仅需放行一类流量——`role=voice-assistant` 的 agent 身份 → 网关节点 MCP 端口（TCP）。渲染端在家局域网内，不涉 mesh 策略（v1 主仓库**零代码改动**，交付策略模板文档）；
+- **媒体端点信任边界（v1 明示决策）**：渲染端拉流的媒体 HTTP 服务（默认 `0.0.0.0:7810`）v1 **无鉴权**——任何局域网设备可按 media_id 拉取媒体文件。有意取舍：只有渲染端需要拉流，家庭内网按可信环境处理；代价是内网其他设备同样可拉。v2 计划在配对时下发共享 Token。此边界已写入 lattice-cast 的 config.example.yaml 与 README Security notes；
 - **命名**：v1 设备命名由 cast-agent 设备表承担（房间名即身份）；LatticeDNS 别名记录（`bedroom-tv.lattice` → 网关 overlay IP）**移至 v2 可选**——那是叙事层面的锦上添花，不是 v1 链路的必需件；
 - **审计**：v1 本地 JSONL 审计日志；v2 提供控制面写入 API 后接入 tool_spans（traceID/agentID/tool/status/durationMs），投屏历史可在 Dashboard 查询。
 
