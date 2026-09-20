@@ -39,7 +39,7 @@ type Probe struct {
 	localId   infra.PeerIdentity
 	remoteId  infra.PeerIdentity
 	iceDialer infra.Dialer
-	lrpDialer infra.Dialer
+	relayDialer infra.Dialer
 	iceState  ice.ConnectionState
 	signal    infra.SignalService
 	log       *log.Logger
@@ -52,7 +52,7 @@ type Probe struct {
 
 	// Factory funcs for creating fresh dialers on restart.
 	newIceDialer func() infra.Dialer
-	newLrpDialer func() infra.Dialer
+	newRelayDialer func() infra.Dialer
 
 	// onBeforeRestart is called before rebuilding dialers to clean up
 	// stale WireGuard peer state.
@@ -95,7 +95,7 @@ type Probe struct {
 }
 
 // State returns the peer's current connection lifecycle state
-// (probing / ice-ready / lrp-ready / failed / closed).
+// (probing / ice-ready / relay-ready / failed / closed).
 func (p *Probe) State() PeerState {
 	return p.sm.Current()
 }
@@ -115,9 +115,9 @@ func (p *Probe) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet 
 			return nil
 		}
 		return d.Handle(ctx, p.remoteId, packet)
-	case signal.DialerType_LRP:
+	case signal.DialerType_Relay:
 		p.mu.RLock()
-		d := p.lrpDialer
+		d := p.relayDialer
 		p.mu.RUnlock()
 		if d == nil {
 			return nil
@@ -175,7 +175,7 @@ func (p *Probe) runLiveness(ctx context.Context) {
 		case <-ticker.C:
 			// Only monitor liveness when a transport is established.
 			state := p.sm.Current()
-			if state != StateICEReady && state != StateLRPReady {
+			if state != StateICEReady && state != StateRelayReady {
 				return
 			}
 			stats, err := p.getStats(pubKey)
@@ -229,15 +229,15 @@ func (p *Probe) restart() {
 	}
 	p.mu.Lock()
 	p.iceDialer = p.newIceDialer()
-	if p.newLrpDialer != nil {
-		p.lrpDialer = p.newLrpDialer()
+	if p.newRelayDialer != nil {
+		p.relayDialer = p.newRelayDialer()
 	}
 	p.mu.Unlock()
 
 	p.epoch.Add(1)
 	// Ensure the state machine is in Failed (or already there) so that Start()
 	// can transition to Probing. This handles the case where restart() is called
-	// directly from a connected state (e.g. ICEReady/LRPReady via LRP OnRestart).
+	// directly from a connected state (e.g. ICEReady/RelayReady via Relay OnRestart).
 	// The transition is a no-op if state is already Failed.
 	_ = p.sm.Transition(StateFailed)
 	p.running.Store(false)
@@ -250,11 +250,11 @@ func (p *Probe) Close() {
 	p.cancelUpgrade(true)
 	p.mu.Lock()
 	p.newIceDialer = nil
-	p.newLrpDialer = nil
+	p.newRelayDialer = nil
 	d := p.iceDialer
 	p.iceDialer = nil
-	wd := p.lrpDialer
-	p.lrpDialer = nil
+	wd := p.relayDialer
+	p.relayDialer = nil
 	p.mu.Unlock()
 
 	if d != nil {
@@ -282,7 +282,7 @@ func (p *Probe) Start(ctx context.Context, remoteId infra.PeerIdentity) error {
 	p.log.Debug("Start probe peer", "localId", p.localId, "remoteId", remoteId)
 
 	// Transition to Probing (valid from Created or Failed).
-	// If the transition is rejected (e.g. already ICEReady/LRPReady), the probe
+	// If the transition is rejected (e.g. already ICEReady/RelayReady), the probe
 	// is already connected — reset the running flag and return without starting a
 	// new discovery goroutine. This prevents the closed ICE dialer from being
 	// re-used, which would immediately return ErrDialerClosed, trigger StateFailed,
@@ -334,7 +334,7 @@ func (p *Probe) onSuccess(transport infra.Transport) {
 		p.startEndpointGuard()
 		p.startPathPing()
 	} else {
-		_ = p.sm.Transition(StateLRPReady)
+		_ = p.sm.Transition(StateRelayReady)
 		p.scheduleUpgrade()
 	}
 
@@ -377,24 +377,24 @@ func (p *Probe) onFailure(err error) {
 	time.AfterFunc(10*time.Second, p.restart)
 }
 
-// discover races ICE and LRP dialers concurrently.
+// discover races ICE and Relay dialers concurrently.
 func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 	dialerCount := 1
-	if config.Conf.EnableLrp {
+	if config.Conf.EnableRelay {
 		dialerCount = 2
 	}
 
 	// Capture dialers under the read-lock so that a concurrent restart() cannot
-	// swap p.iceDialer/p.lrpDialer between Prepare() and Dial() calls below.
+	// swap p.iceDialer/p.relayDialer between Prepare() and Dial() calls below.
 	p.mu.RLock()
 	iceD := p.iceDialer
-	lrpD := p.lrpDialer
+	relayD := p.relayDialer
 	p.mu.RUnlock()
 
 	result := make(chan infra.Transport, dialerCount)
 	errs := make(chan error, dialerCount)
-	var lrpWon atomic.Bool
-	// upgradeTarget records the transport claimed by the LRP→ICE upgrade
+	var relayWon atomic.Bool
+	// upgradeTarget records the transport claimed by the Relay→ICE upgrade
 	// path: it is also delivered via result, and the loser-drainer below
 	// must not close it (it lives on as currentTransport).
 	var upgradeTarget atomic.Value
@@ -415,7 +415,7 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 			return
 		}
 		result <- t
-		if lrpWon.Load() {
+		if relayWon.Load() {
 			upgradeTarget.Store(t)
 			if err = p.handleUpgradeTransport(t); err != nil {
 				p.log.Error("Upgrade transport failed", err)
@@ -423,15 +423,15 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 		}
 	}()
 
-	if config.Conf.EnableLrp {
+	if config.Conf.EnableRelay {
 		go func() {
 			defer racers.Done()
-			p.log.Debug("Starting lrp dialer", "remoteId", p.remoteId)
-			if err := lrpD.Prepare(ctx, p.remoteId); err != nil {
+			p.log.Debug("Starting relay dialer", "remoteId", p.remoteId)
+			if err := relayD.Prepare(ctx, p.remoteId); err != nil {
 				errs <- err
 				return
 			}
-			t, err := lrpD.Dial(ctx)
+			t, err := relayD.Dial(ctx)
 			if err != nil {
 				errs <- err
 				return
@@ -441,7 +441,7 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 	}
 
 	// When this discovery settles, close losing transports that still
-	// arrive: without this, the LRP dial completing after ICE already won
+	// arrive: without this, the Relay dial completing after ICE already won
 	// leaves an open relay session parked in the buffered channel until
 	// process restart. racers.Wait() guarantees the upgrade path (which
 	// sets upgradeTarget before its goroutine exits) is fully decided
@@ -467,13 +467,13 @@ func (p *Probe) discover(ctx context.Context) (infra.Transport, error) {
 	for {
 		select {
 		case t := <-result:
-			if t.Type() == infra.LRP && config.Conf.EnableLrp {
+			if t.Type() == infra.Relay && config.Conf.EnableRelay {
 				select {
 				case iceT := <-result:
 					_ = t.Close()
 					return iceT, nil
 				case <-time.After(500 * time.Millisecond):
-					lrpWon.Store(true)
+					relayWon.Store(true)
 				}
 			}
 			return t, nil
@@ -504,7 +504,7 @@ func (p *Probe) handleUpgradeTransport(newTransport infra.Transport) error {
 		}()
 	}
 
-	// Transition LRPReady -> ICEReady: WG config handled by state machine callbacks.
+	// Transition RelayReady -> ICEReady: WG config handled by state machine callbacks.
 	_ = p.sm.Transition(StateICEReady)
 	p.cancelUpgrade(true)
 	p.startEndpointGuard()

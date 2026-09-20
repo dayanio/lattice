@@ -48,7 +48,7 @@ type DefaultBind struct {
 	logger      *log.Logger
 	PublicKey   wgtypes.Key
 	keyManager  KeyManager
-	lrperClient Lrp
+	relayerClient RelayChannel
 
 	// passThroughCh receives non-STUN packets forwarded by FilteringUDPMux (v4).
 	// makeReceiveIPv4 reads from here instead of the raw socket.
@@ -80,7 +80,7 @@ type BindConfig struct {
 	V6Conn       *net.UDPConn
 	PassThrough  <-chan PassThroughPacket // non-STUN v4 packets from FilteringUDPMux
 	PassThrough6 <-chan PassThroughPacket // non-STUN v6 packets from FilteringUDPMux (v6)
-	LrpClient    Lrp
+	RelayClient    RelayChannel
 	KeyManager   KeyManager
 }
 
@@ -92,7 +92,7 @@ func NewBind(cfg *BindConfig) *DefaultBind {
 		passThroughCh:  cfg.PassThrough,
 		passThrough6Ch: cfg.PassThrough6,
 		keyManager:     cfg.KeyManager,
-		lrperClient:    cfg.LrpClient,
+		relayerClient:    cfg.RelayClient,
 		udpAddrPool: sync.Pool{
 			New: func() any {
 				return &net.UDPAddr{
@@ -135,28 +135,28 @@ func (b *DefaultBind) GetPackectConn6() net.PacketConn {
 }
 
 func (b *DefaultBind) ParseEndpoint(s string) (conn.Endpoint, error) {
-	if strings.HasPrefix(s, "lrp:") {
-		_, after, ok := strings.Cut(s, "lrp://")
+	if strings.HasPrefix(s, "relay:") {
+		_, after, ok := strings.Cut(s, "relay://")
 		if !ok {
-			return nil, errors.New("invalid lrp endpoint")
+			return nil, errors.New("invalid relay endpoint")
 		}
 		remoteId, err := strconv.ParseUint(after, 10, 64)
 		if err != nil {
 			return nil, err
 		}
-		// Addr is not used for LRP routing (Send routes via RemoteId through
-		// lrperClient), so we don't require a valid relay IP here.
+		// Addr is not used for Relay routing (Send routes via RemoteId through
+		// relayerClient), so we don't require a valid relay IP here.
 		// We opportunistically fill it from the connected client for debugging.
 		var addr netip.AddrPort
-		if b.lrperClient != nil {
-			if ra := b.lrperClient.RemoteAddr(); ra != nil {
+		if b.relayerClient != nil {
+			if ra := b.relayerClient.RemoteAddr(); ra != nil {
 				addr, _ = netip.ParseAddrPort(ra.String())
 			}
 		}
-		return &LRPEndpoint{
+		return &RelayEndpoint{
 			Addr:          addr,
 			RemoteId:      remoteId,
-			TransportType: LRP,
+			TransportType: Relay,
 		}, nil
 	}
 	e, err := netip.ParseAddrPort(s)
@@ -164,15 +164,15 @@ func (b *DefaultBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 		return nil, err
 	}
 
-	if IsLrpFakeAddr(e.Addr()) {
-		return &LRPEndpoint{
+	if IsRelayFakeAddr(e.Addr()) {
+		return &RelayEndpoint{
 			Addr:          e,
-			RemoteId:      RemoteIdFromLrpFakeAddr(e.Addr()),
-			TransportType: LRP,
+			RemoteId:      RemoteIdFromRelayFakeAddr(e.Addr()),
+			TransportType: Relay,
 		}, nil
 	}
 
-	return &LRPEndpoint{
+	return &RelayEndpoint{
 		Addr:          e,
 		TransportType: ICE,
 	}, nil
@@ -249,8 +249,8 @@ func (b *DefaultBind) Open(uport uint16) ([]conn.ReceiveFunc, uint16, error) {
 		return nil, 0, syscall.EAFNOSUPPORT
 	}
 
-	if config.Conf.EnableLrp {
-		fns = append(fns, b.lrperClient.ReceiveFunc())
+	if config.Conf.EnableRelay {
+		fns = append(fns, b.relayerClient.ReceiveFunc())
 	}
 
 	return fns, uint16(port), nil
@@ -267,7 +267,7 @@ func (b *DefaultBind) makeReceiveIPv4() conn.ReceiveFunc {
 			return 0, net.ErrClosed
 		}
 		sizes[0] = copy(bufs[0], pkt.Data)
-		eps[0] = &LRPEndpoint{
+		eps[0] = &RelayEndpoint{
 			Addr:          pkt.Addr.AddrPort(),
 			TransportType: ICE,
 		}
@@ -286,7 +286,7 @@ func (b *DefaultBind) makeReceiveIPv6() conn.ReceiveFunc {
 			return 0, net.ErrClosed
 		}
 		sizes[0] = copy(bufs[0], pkt.Data)
-		eps[0] = &LRPEndpoint{
+		eps[0] = &RelayEndpoint{
 			Addr:          pkt.Addr.AddrPort(),
 			TransportType: ICE,
 		}
@@ -333,15 +333,15 @@ func (b *DefaultBind) Close() error {
 
 func (b *DefaultBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
 	// add drp write
-	var e *LRPEndpoint
+	var e *RelayEndpoint
 	var ok bool
-	if e, ok = endpoint.(*LRPEndpoint); !ok {
-		return fmt.Errorf("endpoint is not LRPEndpoint")
+	if e, ok = endpoint.(*RelayEndpoint); !ok {
+		return fmt.Errorf("endpoint is not RelayEndpoint")
 	}
 
-	if e.TransportType == LRP {
+	if e.TransportType == Relay {
 		for _, buf := range bufs {
-			err := b.lrperClient.Send(context.Background(), e.RemoteId, LrpForward, buf)
+			err := b.relayerClient.Send(context.Background(), e.RemoteId, RelayForward, buf)
 			if err != nil {
 				return err
 			}
@@ -386,12 +386,12 @@ func (b *DefaultBind) send4(udpConn *net.UDPConn, pc *ipv4.PacketConn, ep conn.E
 	as4 := ep.DstIP().As4()
 	copy(ua.IP, as4[:])
 	ua.IP = ua.IP[:4]
-	ua.Port = int(ep.(*LRPEndpoint).Addr.Port())
+	ua.Port = int(ep.(*RelayEndpoint).Addr.Port())
 	msgs := b.ipv4MsgsPool.Get().(*[]ipv4.Message)
 	for i, buf := range bufs {
 		(*msgs)[i].Buffers[0] = buf
 		(*msgs)[i].Addr = ua
-		setSrcControl(&(*msgs)[i].OOB, ep.(*LRPEndpoint))
+		setSrcControl(&(*msgs)[i].OOB, ep.(*RelayEndpoint))
 	}
 	var (
 		n     int
@@ -428,12 +428,12 @@ func (b *DefaultBind) send6(udpConn *net.UDPConn, pc *ipv6.PacketConn, ep conn.E
 	as16 := ep.DstIP().As16()
 	ua.IP = ua.IP[:16]
 	copy(ua.IP, as16[:])
-	ua.Port = int(ep.(*LRPEndpoint).Addr.Port())
+	ua.Port = int(ep.(*RelayEndpoint).Addr.Port())
 	msgs := b.ipv6MsgsPool.Get().(*[]ipv6.Message)
 	for i, buf := range bufs {
 		(*msgs)[i].Buffers[0] = buf
 		(*msgs)[i].Addr = ua
-		setSrcControl(&(*msgs)[i].OOB, ep.(*LRPEndpoint))
+		setSrcControl(&(*msgs)[i].OOB, ep.(*RelayEndpoint))
 	}
 	var (
 		n     int

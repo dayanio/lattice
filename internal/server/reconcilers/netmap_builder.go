@@ -65,7 +65,7 @@ type NetmapBuilder struct {
 	identities      store.PeerIdentityRepository
 	routeSelections store.PeerRouteSelectionRepository
 	logger          logr.Logger
-	// relayURL, when set, is stamped into every peer's LrpUrl so agents
+	// relayURL, when set, is stamped into every peer's RelayURL so agents
 	// fall back to the control-plane relay when ICE cannot traverse.
 	relayURL string
 	// selfRelayURL is relayURL plus the relay's auth token, given only to the
@@ -87,7 +87,7 @@ func NewNetmapBuilder(peers store.PeerRepository, policies store.PolicyRepositor
 	}
 }
 
-// SetRelayURL stamps relayURL into every netmap peer's LrpUrl.
+// SetRelayURL stamps relayURL into every netmap peer's RelayURL.
 func (b *NetmapBuilder) SetRelayURL(url string) { b.relayURL = url }
 
 // SetSelfRelayURL sets the relay address (with its auth token) placed on the
@@ -134,7 +134,7 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 	current := dbToInfraPeer(peer)
 	current.PrivateKey = peer.PrivateKey // the owner gets its own key back
 	if b.selfRelayURL != "" {
-		current.LrpUrl = b.selfRelayURL
+		current.RelayURL = b.selfRelayURL
 	}
 	network := &infra.Network{
 		NetworkId:   peer.WorkspaceID,
@@ -160,7 +160,7 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 		}
 		p := dbToInfraPeer(row)
 		if b.relayURL != "" {
-			p.LrpUrl = b.relayURL
+			p.RelayURL = b.relayURL
 		}
 		if _, ok := selected[row.ID]; ok {
 			if extra := parseAdvertisedRoutes(row.AdvertisedRoutes); len(extra) > 0 {

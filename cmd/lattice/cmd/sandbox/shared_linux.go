@@ -229,9 +229,9 @@ func runSandbox(
 	localIP := overlayAddr(currentPeer)
 	fmt.Printf("[sandbox-run] %q registered, overlay IP=%s\n", agentName, localIP)
 
-	if currentPeer.LrpUrl != "" {
-		agentconfig.Conf.EnableLrp = true
-		agentconfig.Conf.RelayURL = currentPeer.LrpUrl
+	if currentPeer.RelayURL != "" {
+		agentconfig.Conf.EnableRelay = true
+		agentconfig.Conf.RelayURL = currentPeer.RelayURL
 	}
 
 	agentJWT := currentPeer.Token

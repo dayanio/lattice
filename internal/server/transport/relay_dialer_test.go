@@ -55,30 +55,30 @@ func (s *sentPackets) count(t signal.PacketType) int {
 	return n
 }
 
-func newSynTestDialer(t *testing.T, restarts *atomic.Int32) (*lrpDialer, *sentPackets) {
+func newSynTestDialer(t *testing.T, restarts *atomic.Int32) (*relayDialer, *sentPackets) {
 	t.Helper()
 	sent := &sentPackets{}
-	d := NewLrpDialer(&LrpDialerConfig{
+	d := NewRelayDialer(&RelayDialerConfig{
 		LocalId:        infra.NewPeerIdentity("phone", wgtypes.Key{1}),
 		RemoteId:       infra.NewPeerIdentity("mac", wgtypes.Key{2}),
 		Sender:         sent.send,
 		GetLocalPeer:   func() *infra.Peer { return nil },
 		OnPeerReceived: func(infra.Peer) {},
 		OnRestart:      func() { restarts.Add(1) },
-	}).(*lrpDialer)
+	}).(*relayDialer)
 	return d, sent
 }
 
 func synPacket() *signal.SignalPacket {
-	return &signal.SignalPacket{Type: signal.PacketType_HANDSHAKE_SYN, Dialer: signal.DialerType_LRP}
+	return &signal.SignalPacket{Type: signal.PacketType_HANDSHAKE_SYN, Dialer: signal.DialerType_Relay}
 }
 
 // The peer retransmits its SYN every 2 s until it sees our ACK. A retransmit
 // that lands just after our session formed is not a restart; treating it as
 // one made both ends restart on every retransmit, forever (observed on a phone
 // after a wifi to cellular switch: 22 restart cycles in a minute, each caused
-// by "SYN on active LRP session", and the Mac could not reach the phone).
-func TestLRPDialer_SynRightAfterTheSessionFormedIsARetransmitNotARestart(t *testing.T) {
+// by "SYN on active Relay session", and the Mac could not reach the phone).
+func TestRelayDialer_SynRightAfterTheSessionFormedIsARetransmitNotARestart(t *testing.T) {
 	var restarts atomic.Int32
 	d, sent := newSynTestDialer(t, &restarts)
 	d.mu.Lock()
@@ -104,11 +104,11 @@ func TestLRPDialer_SynRightAfterTheSessionFormedIsARetransmitNotARestart(t *test
 }
 
 // A genuine restart still has to be recognised, only a little later.
-func TestLRPDialer_SynLongAfterTheSessionFormedIsARestart(t *testing.T) {
+func TestRelayDialer_SynLongAfterTheSessionFormedIsARestart(t *testing.T) {
 	var restarts atomic.Int32
 	d, _ := newSynTestDialer(t, &restarts)
 	d.mu.Lock()
-	d.active, d.activeAt = true, time.Now().Add(-2*lrpSynGrace)
+	d.active, d.activeAt = true, time.Now().Add(-2*relaySynGrace)
 	d.mu.Unlock()
 
 	if err := d.Handle(context.Background(), d.remoteId, synPacket()); err != nil {
@@ -120,7 +120,7 @@ func TestLRPDialer_SynLongAfterTheSessionFormedIsARestart(t *testing.T) {
 	}
 }
 
-func TestLRPDialer_SynOnAnInactiveDialerIsSimplyAcked(t *testing.T) {
+func TestRelayDialer_SynOnAnInactiveDialerIsSimplyAcked(t *testing.T) {
 	var restarts atomic.Int32
 	d, sent := newSynTestDialer(t, &restarts)
 

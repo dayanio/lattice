@@ -42,7 +42,7 @@ func TestReconcileActionFor(t *testing.T) {
 		"probing within its window":        {StateProbing, fresh, reconcileNone},
 		"probing without a start stamp":    {StateProbing, 0, reconcileNone},
 		"ice-ready is healthy":             {StateICEReady, 0, reconcileNone},
-		"lrp-ready is healthy":             {StateLRPReady, 0, reconcileNone},
+		"relay-ready is healthy":             {StateRelayReady, 0, reconcileNone},
 		"failed already has a retry timer": {StateFailed, 0, reconcileNone},
 	} {
 		if got := reconcileActionFor(tc.state, tc.started, now); got != tc.want {
@@ -156,7 +156,7 @@ func TestKeepaliveFor_OnlyTheInitiatorSendsKeepalives(t *testing.T) {
 // from Probing was rejected (and the error dropped), so the "peer unreachable
 // for 60s, closing probe" log was followed by a probe left in Probing with no
 // discovery running. Its dialers then answered a returning peer's signaling
-// (an OFFER even made the LRP dialer ready) while nothing waited in Dial, so
+// (an OFFER even made the Relay dialer ready) while nothing waited in Dial, so
 // the probe never reached a ready state and the peer could never connect.
 func TestProbe_onFailure_AfterAMinuteReallyClosesTheProbe(t *testing.T) {
 	sm := NewStateMachine(StateProbing)
@@ -165,7 +165,7 @@ func TestProbe_onFailure_AfterAMinuteReallyClosesTheProbe(t *testing.T) {
 	p.firstFailureAt = time.Now().Add(-61 * time.Second)
 	p.muFail.Unlock()
 
-	p.onFailure(errors.New("lrpDialer: timed out waiting for ready"))
+	p.onFailure(errors.New("relayDialer: timed out waiting for ready"))
 
 	if got := sm.Current(); got != StateClosed {
 		t.Fatalf("state = %s after a minute of failures, want closed (a probe left in %s has no discovery running)", got, got)

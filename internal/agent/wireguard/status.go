@@ -33,7 +33,7 @@ const handshakeActiveThreshold = 3 * time.Minute
 
 // PeerLabel is what the running agent knows about a peer beyond its WireGuard
 // state: the name it is known by and its transport lifecycle state
-// (probing, ice-ready, lrp-ready, failed, closed, none).
+// (probing, ice-ready, relay-ready, failed, closed, none).
 type PeerLabel struct {
 	Name      string
 	Transport string
@@ -125,7 +125,7 @@ func actualPath(endpoint *net.UDPAddr) string {
 	if !ok {
 		return ""
 	}
-	if infra.IsLrpFakeAddr(addr.Unmap()) {
+	if infra.IsRelayFakeAddr(addr.Unmap()) {
 		return pathRelayed
 	}
 	return pathDirect
@@ -135,7 +135,7 @@ func actualPath(endpoint *net.UDPAddr) string {
 // path WireGuard is really using.
 func pathDisagrees(path, transport string) bool {
 	return (transport == "ice-ready" && path == pathRelayed) ||
-		(transport == "lrp-ready" && path == pathDirect)
+		(transport == "relay-ready" && path == pathDirect)
 }
 
 // transportDescription renders a transport state for humans.
@@ -143,8 +143,8 @@ func transportDescription(state string) string {
 	switch state {
 	case "ice-ready":
 		return "ice-ready (direct)"
-	case "lrp-ready":
-		return "lrp-ready (relayed)"
+	case "relay-ready":
+		return "relay-ready (relayed)"
 	default:
 		return state
 	}

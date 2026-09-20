@@ -156,7 +156,7 @@ func (m *SessionManager) Relay(toID uint64, frame []byte) error {
 		_, err := session.write(frame)
 		return err
 	}
-	return errors.New("lrp: relay target not found")
+	return errors.New("relay: relay target not found")
 }
 
 func (m *SessionManager) ConnectedPeers() int {

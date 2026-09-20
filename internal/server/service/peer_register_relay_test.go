@@ -25,17 +25,17 @@ import (
 
 func registerWithRelayConfig(t *testing.T, advertise, authToken string) string {
 	t.Helper()
-	prevAdvertise, prevToken := agentconfig.Conf.RelayAdvertiseURL, agentconfig.Conf.LrpAuthToken
-	agentconfig.Conf.RelayAdvertiseURL, agentconfig.Conf.LrpAuthToken = advertise, authToken
+	prevAdvertise, prevToken := agentconfig.Conf.RelayAdvertiseURL, agentconfig.Conf.RelayAuthToken
+	agentconfig.Conf.RelayAdvertiseURL, agentconfig.Conf.RelayAuthToken = advertise, authToken
 	t.Cleanup(func() {
-		agentconfig.Conf.RelayAdvertiseURL, agentconfig.Conf.LrpAuthToken = prevAdvertise, prevToken
+		agentconfig.Conf.RelayAdvertiseURL, agentconfig.Conf.RelayAuthToken = prevAdvertise, prevToken
 	})
 
 	svc, st := newRegisterService(t, &fakeVerifier{valid: false})
 	seedEnrollmentToken(t, st, nil)
 	node, err := svc.Register(context.Background(), &dto.PeerDto{Name: "api", AppID: "app-1", Token: "enr-test-token"})
 	require.NoError(t, err)
-	return node.LrpUrl
+	return node.RelayURL
 }
 
 // Agents create their relay client only when the registration response carries

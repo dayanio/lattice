@@ -28,7 +28,7 @@ const (
 	StateCreated  PeerState = "created"
 	StateProbing  PeerState = "probing"
 	StateICEReady PeerState = "ice-ready"
-	StateLRPReady PeerState = "lrp-ready"
+	StateRelayReady PeerState = "relay-ready"
 	StateFailed   PeerState = "failed"
 	StateClosed   PeerState = "closed"
 )
@@ -43,8 +43,8 @@ var stateChangeCounter = metrics.NewCounter(`lattice_transport_state_changes_tot
 // allowedTransitions defines the legal state transitions.
 var allowedTransitions = map[PeerState][]PeerState{
 	StateCreated:  {StateProbing},
-	StateProbing:  {StateICEReady, StateLRPReady, StateFailed},
-	StateLRPReady: {StateICEReady, StateFailed, StateClosed},
+	StateProbing:  {StateICEReady, StateRelayReady, StateFailed},
+	StateRelayReady: {StateICEReady, StateFailed, StateClosed},
 	StateICEReady: {StateFailed, StateClosed},
 	StateFailed:   {StateProbing, StateClosed},
 }

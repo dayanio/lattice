@@ -40,7 +40,7 @@ func TestRelayPoisoned(t *testing.T) {
 		"ice-ready pointed at the relay":       {StateICEReady, relayAddr, true},
 		"ice-ready with a real address":        {StateICEReady, directAddr, false},
 		"ice-ready without an endpoint":        {StateICEReady, nil, false},
-		"relayed probe on the relay is normal": {StateLRPReady, relayAddr, false},
+		"relayed probe on the relay is normal": {StateRelayReady, relayAddr, false},
 		"failed probe":                         {StateFailed, relayAddr, false},
 	} {
 		if got := relayPoisoned(tc.state, tc.ep); got != tc.want {
@@ -109,7 +109,7 @@ func TestReassertDirectEndpoint_LeavesAHealthyEndpointAlone(t *testing.T) {
 }
 
 func TestReassertDirectEndpoint_NeverPointsAtANonICETransport(t *testing.T) {
-	p, cfg := newIceReadyProbe(t, &mockTransport{tp: infra.LRP, addr: "fake"}, func() *net.UDPAddr { return relayAddr })
+	p, cfg := newIceReadyProbe(t, &mockTransport{tp: infra.Relay, addr: "fake"}, func() *net.UDPAddr { return relayAddr })
 
 	if p.reassertDirectEndpoint() || cfg.count() != 0 {
 		t.Fatalf("no ICE address to assert, calls=%v", cfg.calls)

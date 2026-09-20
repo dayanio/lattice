@@ -26,7 +26,7 @@ import (
 func TestTransportDescription(t *testing.T) {
 	for state, want := range map[string]string{
 		"ice-ready": "ice-ready (direct)",
-		"lrp-ready": "lrp-ready (relayed)",
+		"relay-ready": "relay-ready (relayed)",
 		"probing":   "probing",
 		"failed":    "failed",
 		"closed":    "closed",
@@ -151,7 +151,7 @@ func TestWritePeerFlagsAProbeThatDisagreesWithTheEndpoint(t *testing.T) {
 	for _, c := range []struct {
 		ep    *net.UDPAddr
 		state string
-	}{{directEndpoint, "ice-ready"}, {relayEndpoint, "lrp-ready"}} {
+	}{{directEndpoint, "ice-ready"}, {relayEndpoint, "relay-ready"}} {
 		buf.Reset()
 		writePeer(&buf, wgtypes.Peer{Endpoint: c.ep}, &PeerLabel{Name: "x", Transport: c.state})
 		if strings.Contains(buf.String(), "differs from the transport state") {

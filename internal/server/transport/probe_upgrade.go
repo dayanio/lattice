@@ -63,7 +63,7 @@ func (p *Probe) armUpgradeLocked(delay time.Duration) {
 }
 
 func (p *Probe) tryUpgrade(epoch uint64) {
-	if p.epoch.Load() != epoch || p.sm.Current() != StateLRPReady {
+	if p.epoch.Load() != epoch || p.sm.Current() != StateRelayReady {
 		return
 	}
 	// The retry is a full restart that has to renegotiate over signaling. With

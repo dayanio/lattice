@@ -27,5 +27,5 @@ type DialerType string
 
 const (
 	ICE_DIALER DialerType = "ICE_DIALER"
-	LRP_DIALER DialerType = "LRP_DIALER"
+	Relay_DIALER DialerType = "Relay_DIALER"
 )

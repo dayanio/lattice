@@ -450,15 +450,15 @@ func TestNetmapBuilder_CurrentPeerCarriesTheRelayURLWithToken(t *testing.T) {
 	msg, err := builder.BuildForAppID(ctx, "a1", "tk1")
 	require.NoError(t, err)
 
-	assert.Equal(t, "relay.example:6266?token=s3cret", msg.Current.LrpUrl,
+	assert.Equal(t, "relay.example:6266?token=s3cret", msg.Current.RelayURL,
 		"the peer's own record must carry the relay address with the auth token")
 	for _, p := range msg.Network.Peers {
-		assert.Equal(t, "relay.example:6266", p.LrpUrl,
+		assert.Equal(t, "relay.example:6266", p.RelayURL,
 			"other peers' entries must not carry the token: %s", p.Name)
-		assert.NotContains(t, p.LrpUrl, "s3cret")
+		assert.NotContains(t, p.RelayURL, "s3cret")
 	}
 	for _, p := range msg.ComputedPeers {
-		assert.NotContains(t, p.LrpUrl, "s3cret", "computed peers must not leak the token: %s", p.Name)
+		assert.NotContains(t, p.RelayURL, "s3cret", "computed peers must not leak the token: %s", p.Name)
 	}
 }
 
@@ -472,5 +472,5 @@ func TestNetmapBuilder_NoRelayConfiguredLeavesCurrentWithoutOne(t *testing.T) {
 	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
 	msg, err := builder.BuildForAppID(ctx, "a1", "tk1")
 	require.NoError(t, err)
-	assert.Empty(t, msg.Current.LrpUrl)
+	assert.Empty(t, msg.Current.RelayURL)
 }

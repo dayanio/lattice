@@ -19,7 +19,7 @@ import (
 	"strings"
 )
 
-// resolveRelayURL picks the relay address for the LRP client. An explicit
+// resolveRelayURL picks the relay address for the Relay client. An explicit
 // override wins: the advertised address may be unreachable from this network
 // (e.g. a container that cannot hairpin to its host's public IP). The
 // override inherits the advertised token when it carries none of its own, so

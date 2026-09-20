@@ -45,7 +45,7 @@ func TestBuildPeerStatuses(t *testing.T) {
 func TestPeerLabels(t *testing.T) {
 	info := &daemon.StatusInfo{Peers: []daemon.PeerStatus{
 		{AppID: "macbook-pro.local", Name: "mac-cloud-node-1", PublicKey: "k1", Transport: "ice-ready"},
-		{AppID: "cloud-node-1", Name: "cloud-node-1", PublicKey: "k2", Transport: "lrp-ready"},
+		{AppID: "cloud-node-1", Name: "cloud-node-1", PublicKey: "k2", Transport: "relay-ready"},
 		{AppID: "iPhone", PublicKey: "k3", Transport: "none"},
 	}}
 
@@ -53,7 +53,7 @@ func TestPeerLabels(t *testing.T) {
 
 	want := map[string]wireguard.PeerLabel{
 		"k1": {Name: "mac-cloud-node-1 (macbook-pro.local)", Transport: "ice-ready"},
-		"k2": {Name: "cloud-node-1", Transport: "lrp-ready"},
+		"k2": {Name: "cloud-node-1", Transport: "relay-ready"},
 		"k3": {Name: "iPhone", Transport: "none"},
 	}
 	if !reflect.DeepEqual(got, want) {

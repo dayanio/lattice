@@ -41,17 +41,17 @@ func main() {
 	peerManager := infra.NewPeerManager()
 
 	// probeFactory is declared first so its Handle method can be passed directly
-	// to NewLrpClient; lrpClient is captured by the GetLrp closure so
+	// to NewRelayClient; relayClient is captured by the GetRelay closure so
 	// probeFactory sees it once assigned — no Configure() on either side.
-	var lrpClient *relay.TCPClient
+	var relayClient *relay.TCPClient
 	probeFactory := transport.NewProbeFactory(&transport.ProbeFactoryConfig{
 		LocalId:     localId,
 		Signal:      nats,
 		PeerManager: peerManager,
-		GetLrp:      func() infra.Lrp { return lrpClient },
+		GetRelay:      func() infra.RelayChannel { return relayClient },
 	})
 
-	lrpClient, err = relay.NewTCPClient(ctx, localId.ID(), "127.0.0.1:6266", key1, probeFactory.Handle)
+	relayClient, err = relay.NewTCPClient(ctx, localId.ID(), "127.0.0.1:6266", key1, probeFactory.Handle)
 	if err != nil {
 		panic(err)
 	}
@@ -62,7 +62,7 @@ func main() {
 			bufs[0] = make([]byte, 1024)
 			sizes := make([]int, 1)
 			endpoints := make([]conn.Endpoint, 1)
-			fn := lrpClient.ReceiveFunc()
+			fn := relayClient.ReceiveFunc()
 			_, err = fn(bufs, sizes, endpoints)
 			if err != nil {
 				panic(err)

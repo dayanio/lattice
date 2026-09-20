@@ -13,15 +13,15 @@ type TransportType int
 
 const (
 	ICE TransportType = iota
-	LRP
+	Relay
 )
 
 func (t TransportType) String() string {
 	switch t {
 	case ICE:
 		return "ICE"
-	case LRP:
-		return "LRP"
+	case Relay:
+		return "Relay"
 	default:
 		return "Unknown"
 	}
@@ -31,7 +31,7 @@ func (t TransportType) String() string {
 const (
 	PriorityDirect uint8 = 100 // e.g. LAN direct connection
 	PriorityICE    uint8 = 80  // P2P NAT traversal (STUN)
-	PriorityRelay  uint8 = 50  // LRP relay (NATS/Server)
+	PriorityRelay  uint8 = 50  // Relay relay (NATS/Server)
 )
 
 // Transport using from read/write data from/to wire

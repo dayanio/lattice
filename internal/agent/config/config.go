@@ -293,17 +293,17 @@ type Config struct {
 	// LATTICE_RELAY_URL.
 	RelayAdvertiseURL string `mapstructure:"relay-advertise-url"`
 	RelayQuicURL      string `mapstructure:"relay-quic-url"` // QUIC relay connection address, empty=disabled
-	// LrpAuthToken is the shared secret LRP relay clients must present in
+	// RelayAuthToken is the shared secret Relay relay clients must present in
 	// their Register frame. Empty disables relay authentication (legacy
 	// open relay). Configure the same value on the relay server side
-	// (lrper / latticed / manager lrper); clients receive it via the
+	// (relayer / latticed / manager relayer); clients receive it via the
 	// "?token=..." query parameter appended to the relay address.
-	LrpAuthToken string `mapstructure:"lrp-auth-token"`
-	// LrpRequirePeerAuth enables the X25519 challenge-response binding a
+	RelayAuthToken string `mapstructure:"relay-auth-token"`
+	// RelayRequirePeerAuth enables the X25519 challenge-response binding a
 	// relay session to the peer's WireGuard private key (ADR-0004). With
 	// it on, legacy clients that cannot prove identity are rejected;
 	// server and agents must both be new enough. Default false.
-	LrpRequirePeerAuth bool   `mapstructure:"lrp-require-peer-auth"`
+	RelayRequirePeerAuth bool   `mapstructure:"relay-require-peer-auth"`
 	StunServerURL      string `mapstructure:"stun-url"` // STUN server address for ICE NAT traversal
 	PublicIP           string `mapstructure:"public-ip"`
 	Port               int    `mapstructure:"port"`          // STUN service port, default 3478
@@ -311,7 +311,7 @@ type Config struct {
 	EnforcerMode       string `mapstructure:"enforcer-mode"` // "auto", "iptables", "ebpf"
 
 	// ── Feature flags ─────────────────────────────────────────────
-	EnableLrp    bool `mapstructure:"enable-lrp"`
+	EnableRelay    bool `mapstructure:"enable-relay"`
 	EnableTLS    bool `mapstructure:"enable-tls"`
 	EnableMetric bool `mapstructure:"enable-metric"`
 	EnableDNS    bool `mapstructure:"enable-dns"`
@@ -646,8 +646,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("relay-url", ":6266")
 	v.SetDefault("relay-advertise-url", "")
 	v.SetDefault("relay-quic-url", "")
-	v.SetDefault("lrp-auth-token", "")
-	v.SetDefault("lrp-require-peer-auth", false)
+	v.SetDefault("relay-auth-token", "")
+	v.SetDefault("relay-require-peer-auth", false)
 	v.SetDefault("port", 3478)
 	v.SetDefault("wg-port", 51820)
 	v.SetDefault("enforcer-mode", "auto")

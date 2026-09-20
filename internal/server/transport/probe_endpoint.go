@@ -43,7 +43,7 @@ func relayPoisoned(state PeerState, endpoint *net.UDPAddr) bool {
 		return false
 	}
 	addr, ok := netip.AddrFromSlice(endpoint.IP)
-	return ok && infra.IsLrpFakeAddr(addr.Unmap())
+	return ok && infra.IsRelayFakeAddr(addr.Unmap())
 }
 
 // reassertDirectEndpoint re-points WireGuard at the ICE address when a

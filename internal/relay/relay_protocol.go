@@ -55,7 +55,7 @@ const KeySize = 32
 // client public key (32 B) || DH result (32 B).
 const AuthResponsePayload = 2 * KeySize
 
-// Header is the 12-byte LRP frame header (little-endian).
+// Header is the 12-byte Relay frame header (little-endian).
 // Offset 0-1:   Seq        — frame sequence number
 // Offset 2-5:   PayloadLen — payload size in bytes
 // Offset 6:     Cmd        — command byte
@@ -90,7 +90,7 @@ func (h *Header) MarshalInto(buf []byte) {
 
 func Unmarshal(data []byte) (*Header, error) {
 	if len(data) < HeaderSize {
-		return nil, errors.New("lrp: header too short")
+		return nil, errors.New("relay: header too short")
 	}
 	h := &Header{}
 	h.Seq = binary.LittleEndian.Uint16(data[0:2])

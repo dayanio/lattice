@@ -38,7 +38,7 @@ type relayedPeer struct {
 	sig    *peerSignaler
 }
 
-// newRelayedPair builds two LRP dialers whose NATS channel silently drops every
+// newRelayedPair builds two Relay dialers whose NATS channel silently drops every
 // packet, so the only way their handshake can complete is through the relay.
 func newRelayedPair(t *testing.T) (a, b *relayedPeer) {
 	t.Helper()
@@ -89,10 +89,10 @@ func newRelayedPair(t *testing.T) (a, b *relayedPeer) {
 			}
 		}()
 		self.client = client
-		d := NewLrpDialer(&LrpDialerConfig{
+		d := NewRelayDialer(&RelayDialerConfig{
 			LocalId:        self.id,
 			RemoteId:       other.id,
-			Lrp:            client,
+			Relay:            client,
 			Sender:         self.sig.Send,
 			GetLocalPeer:   func() *infra.Peer { return &infra.Peer{AppID: self.id.AppID} },
 			OnPeerReceived: func(infra.Peer) {},
@@ -172,7 +172,7 @@ func TestSignaling_SynFitsTheRelayProbeLimit(t *testing.T) {
 		Address: &addr, AllowedIPs: "10.96.0.4/32", Port: 51820, Endpoint: "203.0.113.5:51820",
 		Platform: "darwin", Hostname: "macbook-pro.local", InterfaceName: "utun4", GroupName: "default",
 		Token:  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZ2VudCJ9.signature-signature-signature-signature-signature-signature",
-		LrpUrl: "203.0.113.9:6266?token=Zm9vYmFyYmF6cXV4",
+		RelayURL: "203.0.113.9:6266?token=Zm9vYmFyYmF6cXV4",
 		Labels: map[string]string{"env": "prod", "team": "network", "owner": "someone"},
 	})
 	info, err := json.Marshal(lp)
@@ -180,7 +180,7 @@ func TestSignaling_SynFitsTheRelayProbeLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(&signal.SignalPacket{
-		Type: signal.PacketType_HANDSHAKE_SYN, Dialer: signal.DialerType_LRP, SenderID: 1 << 62,
+		Type: signal.PacketType_HANDSHAKE_SYN, Dialer: signal.DialerType_Relay, SenderID: 1 << 62,
 		Handshake: &signal.Handshake{Timestamp: time.Now().Unix(), PeerInfo: info},
 	})
 	if err != nil {

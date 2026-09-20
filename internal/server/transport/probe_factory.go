@@ -41,7 +41,7 @@ type ProbeFactory struct {
 	signal         infra.SignalService
 	getProvisioner func() provision.Provisioner
 	getOnMessage   func() func(context.Context, *infra.Message) error
-	getLrp         func() infra.Lrp
+	getRelay         func() infra.RelayChannel
 	getStats       func(pubKey string) (PeerStats, error)
 
 	log *log.Logger
@@ -58,7 +58,7 @@ type ProbeFactoryConfig struct {
 	Signal         infra.SignalService
 	GetOnMessage   func() func(context.Context, *infra.Message) error
 	PeerManager    *infra.PeerManager
-	GetLrp         func() infra.Lrp
+	GetRelay         func() infra.RelayChannel
 	FilteringMux   *infra.FilteringUDPMux
 	FilteringMux6  *infra.FilteringUDPMux
 	GetProvisioner func() provision.Provisioner
@@ -76,7 +76,7 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 		signal:         cfg.Signal,
 		probes:         make(map[string]*Probe),
 		peerManager:    cfg.PeerManager,
-		getLrp:         cfg.GetLrp,
+		getRelay:         cfg.GetRelay,
 		showLog:        cfg.ShowLog,
 		FilteringMux:   cfg.FilteringMux,
 		FilteringMux6:  cfg.FilteringMux6,
@@ -341,11 +341,11 @@ func (a *wgConfigAdapter) SetupNAT(iface string) error {
 }
 
 // relayClient returns the relay client, or nil when the node has none.
-func (p *ProbeFactory) relayClient() infra.Lrp {
-	if p.getLrp == nil {
+func (p *ProbeFactory) relayClient() infra.RelayChannel {
+	if p.getRelay == nil {
 		return nil
 	}
-	return p.getLrp()
+	return p.getRelay()
 }
 
 func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
@@ -438,15 +438,15 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 			return !ok || cs.Connected()
 		},
 		func(ctx context.Context, to infra.PeerID, data []byte) error {
-			lrp := p.relayClient()
-			if lrp == nil {
+			rc := p.relayClient()
+			if rc == nil {
 				return errRelayUnready
 			}
-			return lrp.Send(ctx, to.ToUint64(), relay.Probe, data)
+			return rc.Send(ctx, to.ToUint64(), relay.Probe, data)
 		},
 		func() bool {
-			lrp := p.relayClient()
-			return lrp != nil && lrp.Connected()
+			rc := p.relayClient()
+			return rc != nil && rc.Connected()
 		},
 	)
 	sm.OnTransition(signaler.onState)
@@ -459,8 +459,8 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		p.log.Debug("state transition", "remoteId", remoteId.AppID, "from", from, "to", to)
 
 		switch {
-		// First transport ready (ICE or LRP): set endpoint, route, NAT.
-		case from == StateProbing && (to == StateICEReady || to == StateLRPReady):
+		// First transport ready (ICE or Relay): set endpoint, route, NAT.
+		case from == StateProbing && (to == StateICEReady || to == StateRelayReady):
 			rp := getRemotePeer()
 			if rp == nil || rp.Address == nil {
 				p.log.Warn("remote peer info not received, cannot set endpoint")
@@ -477,8 +477,8 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 			}
 
 			var endpoint string
-			if t.Type() == infra.LRP {
-				endpoint = infra.LrpFakeAddrPort(remoteId.ID().ToUint64()).String()
+			if t.Type() == infra.Relay {
+				endpoint = infra.RelayFakeAddrPort(remoteId.ID().ToUint64()).String()
 			} else {
 				endpoint = t.RemoteAddr()
 			}
@@ -499,9 +499,9 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 				p.log.Error("transition: SetupNAT failed", err)
 			}
 
-		// ICE upgrade after LRP: only SetEndpoint — NO duplicate AddPeer,
+		// ICE upgrade after Relay: only SetEndpoint — NO duplicate AddPeer,
 		// NO route/NAT re-application. This is the P1 bug fix.
-		case from == StateLRPReady && to == StateICEReady:
+		case from == StateRelayReady && to == StateICEReady:
 			probe.mu.Lock()
 			t := probe.currentTransport
 			probe.mu.Unlock()
@@ -521,11 +521,11 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		}
 	})
 
-	makeLrpDialer := func() infra.Dialer {
-		return NewLrpDialer(&LrpDialerConfig{
+	makeRelayDialer := func() infra.Dialer {
+		return NewRelayDialer(&RelayDialerConfig{
 			LocalId:        p.localId,
 			RemoteId:       remoteId,
-			Lrp:            p.getLrp(),
+			Relay:            p.getRelay(),
 			Sender:         signaler.Send,
 			GetLocalPeer:   getLocalPeer,
 			OnPeerReceived: onPeerReceived,
@@ -558,8 +558,8 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 	}
 	probe.newIceDialer = makeIceDialer
 	probe.iceDialer = makeIceDialer()
-	probe.newLrpDialer = makeLrpDialer
-	probe.lrpDialer = makeLrpDialer()
+	probe.newRelayDialer = makeRelayDialer
+	probe.relayDialer = makeRelayDialer()
 
 	// onBeforeRestart resets the peerKnown guard for fresh SYN/ACK exchange.
 	probe.onBeforeRestart = func() {
@@ -620,9 +620,9 @@ func (p *ProbeFactory) Allows(remoteId string) bool {
 }
 
 // PeerConnectionStates snapshots each tracked peer's connection lifecycle
-// state (probing / ice-ready / lrp-ready / failed / closed), keyed by remote
+// state (probing / ice-ready / relay-ready / failed / closed), keyed by remote
 // AppID. Embedded-engine clients (Apple Network Extension) surface this as
-// connection quality: ice-ready = direct, lrp-ready = relayed.
+// connection quality: ice-ready = direct, relay-ready = relayed.
 func (p *ProbeFactory) PeerConnectionStates() map[string]string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

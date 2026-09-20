@@ -370,7 +370,7 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
 		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
 			svc.netmapBuilder.SetRelayURL(advertise)
-			svc.relayURL = relayURLWithToken(advertise, agentconfig.Conf.LrpAuthToken)
+			svc.relayURL = relayURLWithToken(advertise, agentconfig.Conf.RelayAuthToken)
 			svc.netmapBuilder.SetSelfRelayURL(svc.relayURL)
 		}
 	}
@@ -577,7 +577,7 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		Hostname:   peer.Hostname,
 		Platform:   peer.Platform,
 		NetworkId:  peer.WorkspaceID,
-		LrpUrl:     p.relayURL,
+		RelayURL:     p.relayURL,
 		// ADR-0003: tells the agent whether the peer is usable yet.
 		ApprovalStatus: peer.ApprovalStatus,
 	}

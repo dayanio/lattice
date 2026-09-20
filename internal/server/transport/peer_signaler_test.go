@@ -222,16 +222,16 @@ func TestSigningPeer_DropsCredentialsAndKeepsTheWireGuardFields(t *testing.T) {
 	addr := "10.96.0.4"
 	orig := &infra.Peer{
 		AppID: "a", Name: "a", PublicKey: "pk", Address: &addr, AllowedIPs: "10.96.0.4/32", Port: 51820,
-		Token: "agent-jwt", LrpUrl: "relay.example:6266?token=secret",
+		Token: "agent-jwt", RelayURL: "relay.example:6266?token=secret",
 	}
 	got := signalingPeer(orig)
-	if got.Token != "" || got.LrpUrl != "" {
-		t.Fatalf("credentials leaked into the signaled peer: token=%q lrp=%q", got.Token, got.LrpUrl)
+	if got.Token != "" || got.RelayURL != "" {
+		t.Fatalf("credentials leaked into the signaled peer: token=%q relay=%q", got.Token, got.RelayURL)
 	}
 	if got.AppID != "a" || got.PublicKey != "pk" || got.AllowedIPs != "10.96.0.4/32" || got.Port != 51820 || got.Address == nil {
 		t.Fatalf("WireGuard fields lost: %+v", got)
 	}
-	if orig.Token != "agent-jwt" || orig.LrpUrl == "" {
+	if orig.Token != "agent-jwt" || orig.RelayURL == "" {
 		t.Fatal("the caller's own record was mutated")
 	}
 	if signalingPeer(nil) != nil {

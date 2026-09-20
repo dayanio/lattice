@@ -29,19 +29,19 @@ import (
 )
 
 var (
-	_ infra.Dialer = (*lrpDialer)(nil)
+	_ infra.Dialer = (*relayDialer)(nil)
 )
 
-// lrpSynGrace is how long after a session forms a SYN is still treated as a
+// relaySynGrace is how long after a session forms a SYN is still treated as a
 // retransmit of the handshake that formed it rather than as a remote restart.
-const lrpSynGrace = 5 * time.Second
+const relaySynGrace = 5 * time.Second
 
-type lrpDialer struct {
+type relayDialer struct {
 	mu             sync.Mutex
 	log            *log.Logger
 	localId        infra.PeerIdentity
 	remoteId       infra.PeerIdentity
-	lrp            infra.Lrp
+	relay            infra.RelayChannel
 	readyChan      chan struct{}
 	readyOnce      sync.Once // guards close(readyChan)
 	active         bool      // true once SYN/ACK exchange completes; guarded by mu
@@ -56,10 +56,10 @@ type lrpDialer struct {
 	stopChan       chan struct{} // closed on Close() to unblock goroutines
 }
 
-type LrpDialerConfig struct {
+type RelayDialerConfig struct {
 	LocalId   infra.PeerIdentity
 	RemoteId  infra.PeerIdentity
-	Lrp       infra.Lrp
+	Relay       infra.RelayChannel
 	SM        *SessionManager
 	SessionId uint64
 	// GetLocalPeer is called at send time so late-arriving ApplyFullConfig
@@ -73,12 +73,12 @@ type LrpDialerConfig struct {
 	OnRestart func()
 }
 
-func NewLrpDialer(cfg *LrpDialerConfig) infra.Dialer {
-	return &lrpDialer{
-		log:            log.GetLogger("lrp-dialer"),
+func NewRelayDialer(cfg *RelayDialerConfig) infra.Dialer {
+	return &relayDialer{
+		log:            log.GetLogger("relay-dialer"),
 		localId:        cfg.LocalId,
 		remoteId:       cfg.RemoteId,
-		lrp:            cfg.Lrp,
+		relay:            cfg.Relay,
 		readyChan:      make(chan struct{}),
 		stopChan:       make(chan struct{}),
 		sm:             cfg.SM,
@@ -92,7 +92,7 @@ func NewLrpDialer(cfg *LrpDialerConfig) infra.Dialer {
 // Prepare sends HANDSHAKE_SYN every 2 s for up to 60 s.
 // Both sides send SYN so that either side can detect a remote restart.
 // The first SYN is sent immediately (no initial 2 s wait), matching iceDialer behaviour.
-func (w *lrpDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) error {
+func (w *relayDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) error {
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
@@ -132,10 +132,10 @@ func (w *lrpDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) er
 	return nil
 }
 
-func (w *lrpDialer) sendPacket(ctx context.Context, remoteId infra.PeerIdentity, packetType signal.PacketType, _ ice.Candidate) error {
+func (w *relayDialer) sendPacket(ctx context.Context, remoteId infra.PeerIdentity, packetType signal.PacketType, _ ice.Candidate) error {
 	p := &signal.SignalPacket{
 		Type:     packetType,
-		Dialer:   signal.DialerType_LRP,
+		Dialer:   signal.DialerType_Relay,
 		SenderID: w.localId.ID().ToUint64(),
 	}
 
@@ -161,14 +161,14 @@ func (w *lrpDialer) sendPacket(ctx context.Context, remoteId infra.PeerIdentity,
 	return w.sender(ctx, remoteId.ID(), data)
 }
 
-func (w *lrpDialer) sendOfferFromLrp(ctx context.Context, offerType signal.PacketType) error {
+func (w *relayDialer) sendOfferFromRelay(ctx context.Context, offerType signal.PacketType) error {
 	data, err := json.Marshal(w.getLocalPeer())
 	if err != nil {
 		return err
 	}
 	p := &signal.SignalPacket{
 		Type:     offerType,
-		Dialer:   signal.DialerType_LRP,
+		Dialer:   signal.DialerType_Relay,
 		SenderID: w.localId.ID().ToUint64(),
 		Offer: &signal.Offer{
 			PublicKey: w.localId.PublicKey.String(),
@@ -180,11 +180,11 @@ func (w *lrpDialer) sendOfferFromLrp(ctx context.Context, offerType signal.Packe
 	if err != nil {
 		return err
 	}
-	return w.lrp.Send(ctx, w.remoteId.ID().ToUint64(), relay.Probe, offerData)
+	return w.relay.Send(ctx, w.remoteId.ID().ToUint64(), relay.Probe, offerData)
 }
 
-func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet *signal.SignalPacket) error {
-	if packet.Dialer != signal.DialerType_LRP {
+func (w *relayDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet *signal.SignalPacket) error {
+	if packet.Dialer != signal.DialerType_Relay {
 		return nil
 	}
 	switch packet.Type {
@@ -203,7 +203,7 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		// iceDialer's "SYN on active agent" handling.
 		w.mu.Lock()
 		isActive := w.active
-		retransmit := isActive && time.Since(w.activeAt) < lrpSynGrace
+		retransmit := isActive && time.Since(w.activeAt) < relaySynGrace
 		if isActive && !retransmit {
 			w.active = false
 		}
@@ -221,7 +221,7 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		}
 
 		if isActive {
-			w.log.Debug("SYN on active LRP session — remote restarted, triggering restart", "remoteId", remoteId)
+			w.log.Debug("SYN on active Relay session — remote restarted, triggering restart", "remoteId", remoteId)
 			if w.onRestart != nil {
 				w.onRestart()
 			}
@@ -247,7 +247,7 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		// Only the initiator (bigger-ID numerically) drives the OFFER/ANSWER exchange.
 		// Use numeric comparison to avoid decimal string ordering bugs.
 		if isInitiator(w.localId, w.remoteId) {
-			return w.sendOfferFromLrp(ctx, signal.PacketType_OFFER)
+			return w.sendOfferFromRelay(ctx, signal.PacketType_OFFER)
 		}
 		return nil
 
@@ -268,7 +268,7 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 			cancel() // stop SYN ticker so we don't trigger spurious onRestart on the remote
 		}
 		w.closeReady()
-		if err := w.sendOfferFromLrp(ctx, signal.PacketType_ANSWER); err != nil {
+		if err := w.sendOfferFromRelay(ctx, signal.PacketType_ANSWER); err != nil {
 			w.log.Error("send ANSWER failed", err)
 		}
 		return nil
@@ -298,26 +298,26 @@ func (w *lrpDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 // Dial blocks until the OFFER/ANSWER exchange completes or the 65 s deadline
 // fires.  The timeout matches iceDialer so discover() sees consistent failure
 // semantics: onFailure → 10 s backoff → probe.restart().
-func (w *lrpDialer) Dial(ctx context.Context) (infra.Transport, error) {
+func (w *relayDialer) Dial(ctx context.Context) (infra.Transport, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, 65*time.Second)
 	defer cancel()
 	select {
 	case <-dialCtx.Done():
-		return nil, fmt.Errorf("lrpDialer: timed out waiting for ready: %w", dialCtx.Err())
+		return nil, fmt.Errorf("relayDialer: timed out waiting for ready: %w", dialCtx.Err())
 	case <-w.readyChan:
 		remoteAddr := ""
-		if ra := w.lrp.RemoteAddr(); ra != nil {
+		if ra := w.relay.RemoteAddr(); ra != nil {
 			remoteAddr = ra.String()
 		}
-		return &LrpTransport{remoteAddr: remoteAddr}, nil
+		return &RelayTransport{remoteAddr: remoteAddr}, nil
 	}
 }
 
-func (w *lrpDialer) Type() infra.DialerType {
-	return infra.LRP_DIALER
+func (w *relayDialer) Type() infra.DialerType {
+	return infra.Relay_DIALER
 }
 
-func (w *lrpDialer) Close() error {
+func (w *relayDialer) Close() error {
 	w.closeOnce.Do(func() {
 		w.mu.Lock()
 		cancel := w.cancel
@@ -330,34 +330,34 @@ func (w *lrpDialer) Close() error {
 	return nil
 }
 
-func (w *lrpDialer) closeReady() {
+func (w *relayDialer) closeReady() {
 	w.readyOnce.Do(func() { close(w.readyChan) })
 }
 
-type LrpTransport struct {
+type RelayTransport struct {
 	remoteAddr string
 }
 
-func (w LrpTransport) Priority() uint8 {
+func (w RelayTransport) Priority() uint8 {
 	return infra.PriorityRelay
 }
 
-func (w LrpTransport) Close() error {
+func (w RelayTransport) Close() error {
 	return nil
 }
 
-func (w LrpTransport) Write(data []byte) error {
+func (w RelayTransport) Write(data []byte) error {
 	return nil
 }
 
-func (w LrpTransport) Read(buff []byte) (int, error) {
+func (w RelayTransport) Read(buff []byte) (int, error) {
 	return 0, nil
 }
 
-func (w LrpTransport) RemoteAddr() string {
+func (w RelayTransport) RemoteAddr() string {
 	return w.remoteAddr
 }
 
-func (w LrpTransport) Type() infra.TransportType {
-	return infra.LRP
+func (w RelayTransport) Type() infra.TransportType {
+	return infra.Relay
 }

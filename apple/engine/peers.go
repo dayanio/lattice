@@ -29,7 +29,7 @@ type peerInfo struct {
 	Name     string `json:"name"`
 	Address  string `json:"address"`
 	Platform string `json:"platform,omitempty"`
-	// State is the connection lifecycle: probing, ice-ready (direct), lrp-ready
+	// State is the connection lifecycle: probing, ice-ready (direct), relay-ready
 	// (relayed), failed, closed, or none (no probe yet).
 	State  string `json:"state"`
 	Online bool   `json:"online"`
@@ -61,7 +61,7 @@ func buildPeerList(peers []*infra.Peer, states map[string]string, selfAppID stri
 			Address:  *p.Address,
 			Platform: p.Platform,
 			State:    state,
-			Online:   state == "ice-ready" || state == "lrp-ready",
+			Online:   state == "ice-ready" || state == "relay-ready",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {

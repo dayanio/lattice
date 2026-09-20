@@ -70,7 +70,7 @@ func TestUpgrade_RelayedInitiatorRetriesDirect(t *testing.T) {
 	var fired atomic.Int32
 	p := newUpgradeProbe(t, true, &fired)
 
-	p.onSuccess(&mockTransport{tp: infra.LRP, addr: "fake"})
+	p.onSuccess(&mockTransport{tp: infra.Relay, addr: "fake"})
 
 	waitUntil(t, time.Second, func() bool { return fired.Load() == 1 }, "a relayed initiator must retry a direct connection")
 }
@@ -80,7 +80,7 @@ func TestUpgrade_ResponderNeverInitiates(t *testing.T) {
 	var fired atomic.Int32
 	p := newUpgradeProbe(t, false, &fired)
 
-	p.onSuccess(&mockTransport{tp: infra.LRP, addr: "fake"})
+	p.onSuccess(&mockTransport{tp: infra.Relay, addr: "fake"})
 
 	time.Sleep(150 * time.Millisecond)
 	if n := fired.Load(); n != 0 {
@@ -108,7 +108,7 @@ func TestUpgrade_LateICEWinCancelsTheRetry(t *testing.T) {
 	var fired atomic.Int32
 	p := newUpgradeProbe(t, true, &fired)
 
-	p.onSuccess(&mockTransport{tp: infra.LRP, addr: "fake"})
+	p.onSuccess(&mockTransport{tp: infra.Relay, addr: "fake"})
 	if err := p.handleUpgradeTransport(&mockTransport{tp: infra.ICE, addr: "1.2.3.4:5"}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestUpgrade_StaleTimerIsIgnoredAfterRestart(t *testing.T) {
 	var fired atomic.Int32
 	p := newUpgradeProbe(t, true, &fired)
 
-	p.onSuccess(&mockTransport{tp: infra.LRP, addr: "fake"})
+	p.onSuccess(&mockTransport{tp: infra.Relay, addr: "fake"})
 	p.epoch.Add(1) // any restart bumps the epoch
 
 	time.Sleep(150 * time.Millisecond)
@@ -138,7 +138,7 @@ func TestUpgrade_AttemptsResetOnceDirect(t *testing.T) {
 	var fired atomic.Int32
 	p := newUpgradeProbe(t, true, &fired)
 
-	p.onSuccess(&mockTransport{tp: infra.LRP, addr: "fake"})
+	p.onSuccess(&mockTransport{tp: infra.Relay, addr: "fake"})
 	waitUntil(t, time.Second, func() bool { return fired.Load() == 1 }, "first retry")
 	p.upgradeMu.Lock()
 	tries := p.upgradeTries
@@ -190,7 +190,7 @@ func TestUpgrade_WaitsForSignaling(t *testing.T) {
 	sig := &gatedSignal{}
 	p.signal = sig
 
-	p.onSuccess(&mockTransport{tp: infra.LRP, addr: "fake"})
+	p.onSuccess(&mockTransport{tp: infra.Relay, addr: "fake"})
 
 	time.Sleep(150 * time.Millisecond)
 	if n := fired.Load(); n != 0 {

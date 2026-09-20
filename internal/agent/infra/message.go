@@ -142,7 +142,7 @@ type Peer struct {
 	Version             uint64            `json:"version"`
 	LastUpdatedAt       string            `json:"lastUpdatedAt"`
 	Token               string            `json:"token,omitempty"`
-	LrpUrl              string            `json:"lrpUrl,omitempty"`
+	RelayURL              string            `json:"lrpUrl,omitempty"` // wire name kept as lrpUrl for old-server compatibility
 	EnforcerMode        string            `json:"enforcerMode,omitempty"`   // user personal setting from registration
 	Tier                string            `json:"tier,omitempty"`           // account tier from registration: community or pro
 	ApprovalStatus      string            `json:"approvalStatus,omitempty"` // pending / approved / revoked (ADR-0003)

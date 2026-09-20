@@ -27,12 +27,12 @@ const (
 	PacketType_RESTART_NOTIFY PacketType = 6
 )
 
-// DialerType distinguishes ICE vs LRP relay dialers.
+// DialerType distinguishes ICE vs Relay relay dialers.
 type DialerType int32
 
 const (
 	DialerType_ICE DialerType = 0
-	DialerType_LRP DialerType = 1
+	DialerType_Relay DialerType = 1
 )
 
 // SignalPacket is the envelope exchanged between peers over NATS and relay.

@@ -75,7 +75,7 @@ type EngineDelegate interface {
 	OnTunnelUp(overlayIP string)
 	// OnPeerStates reports per-peer connection quality as a JSON object
 	// mapping peer name to lifecycle state ("ice-ready" = direct,
-	// "lrp-ready" = relayed, "probing" = still negotiating). Emitted
+	// "relay-ready" = relayed, "probing" = still negotiating). Emitted
 	// whenever the snapshot changes while the tunnel is up.
 	OnPeerStates(statesJSON string)
 	// OnRoutesChanged reports the current set of extra CIDRs (beyond the
@@ -241,12 +241,12 @@ func (e *Engine) run(ctx context.Context) {
 		return
 	}
 	localIP := *peer.Address
-	if peer.LrpUrl != "" {
-		agentconfig.Conf.EnableLrp = true
+	if peer.RelayURL != "" {
+		agentconfig.Conf.EnableRelay = true
 		// Respect an explicit override (env) — the advertised URL may not be
 		// reachable from this network while an operator-provided one is.
 		if agentconfig.Conf.RelayURL == "" {
-			agentconfig.Conf.RelayURL = peer.LrpUrl
+			agentconfig.Conf.RelayURL = peer.RelayURL
 		}
 	}
 
@@ -359,7 +359,7 @@ func (e *Engine) periodicRefresh(ctx context.Context, node *latticeagent.Node) {
 
 // pollPeerStates watches the probe factory's per-peer connection lifecycle
 // and pushes the snapshot to Swift whenever it changes — this is what lets
-// the UI show 直连 (ice-ready) vs 经中继 (lrp-ready) per peer.
+// the UI show 直连 (ice-ready) vs 经中继 (relay-ready) per peer.
 func (e *Engine) pollPeerStates(ctx context.Context, node *latticeagent.Node) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()

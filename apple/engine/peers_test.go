@@ -30,11 +30,11 @@ func TestBuildPeerList_ExcludesSelfAndPeersWithoutAnAddress(t *testing.T) {
 		{AppID: "gone", Name: "gone", Address: addr("10.96.0.9"), Remove: true},
 		nil,
 	}
-	got := buildPeerList(peers, map[string]string{"cloud-node-1": "lrp-ready"}, "MacBook-Pro")
+	got := buildPeerList(peers, map[string]string{"cloud-node-1": "relay-ready"}, "MacBook-Pro")
 	if len(got) != 1 || got[0].AppID != "cloud-node-1" {
 		t.Fatalf("got %+v, want only cloud-node-1", got)
 	}
-	if got[0].Address != "10.96.0.2" || got[0].Platform != "linux" || got[0].State != "lrp-ready" || !got[0].Online {
+	if got[0].Address != "10.96.0.2" || got[0].Platform != "linux" || got[0].State != "relay-ready" || !got[0].Online {
 		t.Fatalf("fields wrong: %+v", got[0])
 	}
 }

@@ -153,6 +153,6 @@ func signalingPeer(lp *infra.Peer) *infra.Peer {
 	}
 	cp := *lp
 	cp.Token = ""
-	cp.LrpUrl = ""
+	cp.RelayURL = ""
 	return &cp
 }

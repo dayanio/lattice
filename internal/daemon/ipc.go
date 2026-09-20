@@ -45,7 +45,7 @@ type PeerStatus struct {
 	Name      string `json:"name,omitempty"`
 	PublicKey string `json:"publicKey"`
 	// Transport is the connection lifecycle state: probing, ice-ready
-	// (direct), lrp-ready (relayed), failed, closed, or none (no probe).
+	// (direct), relay-ready (relayed), failed, closed, or none (no probe).
 	Transport string `json:"transport"`
 }
 

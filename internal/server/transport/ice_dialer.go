@@ -107,7 +107,7 @@ type ICEDialerConfig struct {
 	OnPeerReceived func(peer infra.Peer)
 	ShowLog        bool
 	// OnRestart is called when a SYN arrives on an already-closed dialer,
-	// indicating the remote peer restarted. Mirrors the LRP dialer pattern.
+	// indicating the remote peer restarted. Mirrors the Relay dialer pattern.
 	OnRestart func()
 }
 

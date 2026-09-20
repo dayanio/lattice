@@ -35,7 +35,7 @@ import (
 // startTestRelay runs the relay's TCP upgrade handler on a real socket.
 func startTestRelay(t *testing.T, requirePeerAuth bool) (*Server, *httptest.Server) {
 	t.Helper()
-	s := NewServer(&config.Config{LrpRequirePeerAuth: requirePeerAuth})
+	s := NewServer(&config.Config{RelayRequirePeerAuth: requirePeerAuth})
 	ts := httptest.NewServer(http.HandlerFunc(s.boltUpgradeHandler))
 	t.Cleanup(ts.Close)
 	return s, ts
@@ -49,17 +49,17 @@ func dialUpgrade(t *testing.T, ts *httptest.Server) (net.Conn, *bufio.Reader) {
 	}
 	t.Cleanup(func() { conn.Close() }) //nolint:errcheck
 
-	req, err := http.NewRequest("GET", "/lrp/v1/upgrade", nil)
+	req, err := http.NewRequest("GET", "/relay/v1/upgrade", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Set("Upgrade", "lrp")
+	req.Header.Set("Upgrade", "relay")
 	req.Header.Set("Connection", "Upgrade")
 	if err := req.Write(conn); err != nil {
 		t.Fatal(err)
 	}
 	reader := bufio.NewReader(conn)
-	//nolint:bodyclose // resp.Body wraps the raw conn; the test owns the conn for LRP framing
+	//nolint:bodyclose // resp.Body wraps the raw conn; the test owns the conn for Relay framing
 	resp, err := http.ReadResponse(reader, req)
 	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
 		conn.Close() //nolint:errcheck

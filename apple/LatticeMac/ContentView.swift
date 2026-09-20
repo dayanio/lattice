@@ -449,7 +449,7 @@ struct ContentView: View {
         guard tunnel.status == .connected else { return nil }
         let states = Set(tunnel.peerStates.values)
         if states.contains("ice-ready") { return ("直连", LatticePalette.online) }
-        if states.contains("lrp-ready") { return ("经中继", LatticePalette.relay) }
+        if states.contains("relay-ready") { return ("经中继", LatticePalette.relay) }
         return nil
     }
 
@@ -623,7 +623,7 @@ struct ContentView: View {
 struct PeerRow: View {
     let peer: PeerNode
     /// Connection quality from this machine's tunnel engine
-    /// ("ice-ready" = direct, "lrp-ready" = relayed). Nil when the local
+    /// ("ice-ready" = direct, "relay-ready" = relayed). Nil when the local
     /// tunnel is down or this peer isn't in the engine's netmap.
     var quality: String? = nil
     var onRename: ((String) -> Void)? = nil
@@ -636,7 +636,7 @@ struct PeerRow: View {
     private var qualityLabel: (text: String, color: Color)? {
         switch quality {
         case "ice-ready": return ("直连", .green)
-        case "lrp-ready": return ("经中继", .orange)
+        case "relay-ready": return ("经中继", .orange)
         case "probing", "created": return ("连接中", .secondary)
         case "failed": return ("失败", .red)
         case "closed": return ("不可达", .secondary)

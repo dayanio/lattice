@@ -76,7 +76,7 @@ func TestSplitURLTokenKeepsRawBase64(t *testing.T) {
 }
 
 func TestRegisterCarriesToken(t *testing.T) {
-	c := &lrpClient{authToken: "secret"}
+	c := &relayClient{authToken: "secret"}
 	w := &testWriter{}
 	if err := c.register(w); err != nil {
 		t.Fatalf("register: %v", err)

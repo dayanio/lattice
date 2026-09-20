@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// lrper is the standalone Lattice relay server.
+// relayer is the standalone Lattice relay server.
 // It bridges WireGuard peers that cannot establish a direct ICE path
 // (e.g. symmetric NAT on both sides) by forwarding encrypted datagrams
 // over TCP (HTTP upgrade) and/or QUIC.
@@ -32,9 +32,9 @@ var cfgManager = config.NewConfigManager()
 
 func main() {
 	cmd := &cobra.Command{
-		Use:          "lrper",
-		Short:        "LRP relay server for Lattice",
-		Long:         `Standalone LRP relay server. Bridges WireGuard peers that cannot reach each other directly.`,
+		Use:          "relayer",
+		Short:        "Relay relay server for Lattice",
+		Long:         `Standalone Relay relay server. Bridges WireGuard peers that cannot reach each other directly.`,
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Map renamed server flags to their viper keys before config loading.
@@ -52,7 +52,7 @@ func main() {
 	fs.StringP("addr", "l", ":6266", "TCP relay listen address")
 	fs.BoolP("enable-tls", "", false, "enable TLS on TCP listener")
 	fs.StringP("quic-addr", "", "", "QUIC relay listen address (e.g. :6267); empty disables QUIC")
-	fs.StringP("lrp-auth-token", "", "", "shared secret clients must present to register (empty disables auth)")
+	fs.StringP("relay-auth-token", "", "", "shared secret clients must present to register (empty disables auth)")
 	fs.BoolP("require-peer-auth", "", false, "require X25519 per-peer proof of identity (legacy clients rejected)")
 	fs.StringP("level", "", "info", "log level: debug, info, warn, error, silent")
 
@@ -70,12 +70,12 @@ func run(flags *config.Config) error {
 	if flags.RelayQuicURL != "" {
 		tlsCfg, err := relay.GenerateSelfSignedTLS()
 		if err != nil {
-			log.GetLogger("lrper").Warn("failed to generate TLS cert, QUIC disabled", "err", err)
+			log.GetLogger("relayer").Warn("failed to generate TLS cert, QUIC disabled", "err", err)
 		} else {
-			qs := relay.NewQUICServer(server.Manager(), flags.LrpAuthToken, flags.LrpRequirePeerAuth)
+			qs := relay.NewQUICServer(server.Manager(), flags.RelayAuthToken, flags.RelayRequirePeerAuth)
 			go func() {
 				if startErr := qs.Start(flags.RelayQuicURL, tlsCfg); startErr != nil {
-					log.GetLogger("lrper").Error("QUIC server stopped", startErr)
+					log.GetLogger("relayer").Error("QUIC server stopped", startErr)
 				}
 			}()
 		}

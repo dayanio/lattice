@@ -36,7 +36,7 @@ type relayChallenge struct {
 var (
 	// ErrAuthBadResponse covers every rejected proof: wrong length, wrong
 	// key prefix, forged DH output, or an all-zero (low-order point) result.
-	ErrAuthBadResponse = errors.New("lrp: peer-auth response invalid")
+	ErrAuthBadResponse = errors.New("relay: peer-auth response invalid")
 )
 
 // newChallenge generates a fresh ephemeral X25519 keypair for one
@@ -44,11 +44,11 @@ var (
 func newChallenge() (challengePub [KeySize]byte, ch *relayChallenge, err error) {
 	ch = &relayChallenge{}
 	if _, err = rand.Read(ch.ephemeralSecret[:]); err != nil {
-		return challengePub, nil, fmt.Errorf("lrp: generate auth scalar: %w", err)
+		return challengePub, nil, fmt.Errorf("relay: generate auth scalar: %w", err)
 	}
 	pub, err := curve25519.X25519(ch.ephemeralSecret[:], curve25519.Basepoint)
 	if err != nil {
-		return challengePub, nil, fmt.Errorf("lrp: derive auth public key: %w", err)
+		return challengePub, nil, fmt.Errorf("relay: derive auth public key: %w", err)
 	}
 	copy(challengePub[:], pub)
 	return challengePub, ch, nil
@@ -56,10 +56,10 @@ func newChallenge() (challengePub [KeySize]byte, ch *relayChallenge, err error) 
 
 // verifyResponse validates an AuthResponse payload
 // (clientPublicKey || DH result) against the challenge secret and the
-// claimed peer ID. claimedID is the uint32 carried in the LRP header,
+// claimed peer ID. claimedID is the uint32 carried in the Relay header,
 // which by wire convention equals the low 32 bits of PeerID, i.e. the
 // big-endian value of public key bytes 4..8 (PeerID is the big-endian
-// first 8 bytes of the public key; the LRP header truncates it to its
+// first 8 bytes of the public key; the Relay header truncates it to its
 // low 32 bits).
 func (ch *relayChallenge) verifyResponse(claimedID uint32, payload []byte) error {
 	if len(payload) != AuthResponsePayload {
@@ -100,18 +100,18 @@ func answerChallenge(relayChallengePub [KeySize]byte, clientPrivate [KeySize]byt
 
 	clientPub, err := curve25519.X25519(clientPrivate[:], curve25519.Basepoint)
 	if err != nil {
-		return resp, fmt.Errorf("lrp: derive public key: %w", err)
+		return resp, fmt.Errorf("relay: derive public key: %w", err)
 	}
 	shared, err := curve25519.X25519(clientPrivate[:], relayChallengePub[:])
 	if err != nil {
-		return resp, fmt.Errorf("lrp: ecdh failed: %w", err)
+		return resp, fmt.Errorf("relay: ecdh failed: %w", err)
 	}
 	copy(resp[:KeySize], clientPub)
 	copy(resp[KeySize:], shared)
 	return resp, nil
 }
 
-// peerIDFromPublicKey returns the uint32 the LRP header carries for a peer
+// peerIDFromPublicKey returns the uint32 the Relay header carries for a peer
 // with the given public key: the low 32 bits of PeerID (big-endian first 8
 // bytes of the key), i.e. the big-endian value of key bytes 4..8.
 func peerIDFromPublicKey(pub [KeySize]byte) uint32 {
