@@ -12,6 +12,7 @@
 - **v2（2026-09-18）**: 评审决策反转主次——**自研 LatticeCast 渲染端（Android TV/盒子 APK + 自有协议）提前至 v1 主路径**，DLNA/Chromecast 降级为 v2 兜底。依据：Chromecast 接收端为闭源认证制、AirPlay 接收端闭源且协议逆向合规存疑、DLNA 是唯一开放接收端但厂商实现参差；**自建接收端是唯一"零适配统一一切"的路径**——两端都是自家软件，无需任何厂商认证（Google/Apple 能统一协议正因握着接收端，我们能干是因为两端都是自己的）。发送端结论不变：go-chromecast 等 MIT 库无许可障碍，仍用于 v2 兜底。
 - **v3（2026-09-18）**: 增补定位说明——本特性为设备控制骨架（DeviceAdapter 模式）的**首例**，链路骨架可复用于其他设备品类；v1 咬死投屏一条线，不预抽通用框架。
 - **v4（2026-09-19）**: **渲染端多平台化进 v1**——协议本就是平台无关的 HTTP/JSON + mDNS，渲染端 = "会说协议、自报家门、自己拉流的程序"，任何设备皆可充当。v1 渲染端目标：① Android TV/盒子 APK（Kotlin+ExoPlayer，主路径不变）；② **macOS/Linux 渲染端**（Go+mpv，与 agent 同语言，成本最低，Mac/Mac mini 可同时扮演 cast-agent 宿主+渲染端双角色）；③ **Apple TV 渲染端**（tvOS，SwiftUI+AVPlayer+NetService，用户持有付费开发者账号，个人签名一年有效）。树莓派渲染端与 iOS 目标留 v2（tvOS 代码族顺带覆盖）。
+- **v6（2026-09-20）**: **内置大脑 + 网页聊天**排入 v1.1（与 Reflux source 同批）——cast-agent 自身集成 LLM 工具循环（provider 可插拔：云端 GLM/Claude 默认档、ollama 隐私档，即开放问题 1 的落地）并自带网页聊天入口（浏览器即入口，免装免配 MCP 客户端）。动因：摆脱"必须配置外部 MCP 客户端"的极客门槛，产品化关键一步。入口哲学定稿：**界面跟着人走，大脑可插拔，服务留在家里**；v2 语音界面嵌 reflux App，v3 家里常驻麦克风。
 - **v5（2026-09-19）**: **内容源新增 Reflux**（用户自有的云端影视库服务器：115/GDrive/本地多源 + TMDB 元数据 + Jellyfin 兼容 API，见 `workspc/reflux`）——排 **v1.1**（v1 收口后第一个任务）。MediaResolver 插入 reflux source：search 走其 Jellyfin `/Items` 接口（TMDB 中文元数据直接提升 search_media 体验），play 取其流地址交渲染端拉流；其按需转码同时兜底"渲染端解不动"场景。API 为稳定契约，预估 1~2 天。
 
 ---
@@ -202,6 +203,8 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效，逐
 - **验收**：在外的手机上说一句"把 NAS 里的 xx 投到卧室电视"，电视播出来；追问"播到哪了"能答上进度；多平台抽查——同一句话能投到 Mac（Go 渲染端）与 Apple TV（tvOS 渲染端）。
 
 ### v1.1（v1 验收后紧随）
+- **内置大脑 + 网页聊天**：cast-agent 集成 LLM 工具循环（provider profile：云端默认/ollama 隐私档），自带 `/chat` 网页入口（同 Bearer 鉴权），浏览器即完整入口；MCP 客户端入口保留并行。
+- MediaResolver 新增 reflux source：配置 reflux 地址 + API token；search_media 融合 reflux 库（TMDB 标题/海报字段透出）；cast_play 经 reflux 取流（static 直链优先，转码参数留 v2）；错误路径（reflux 不可达/token 失效）进错误矩阵。
 - MediaResolver 新增 reflux source：配置 reflux 地址 + API token；search_media 融合 reflux 库（TMDB 标题/海报字段透出）；cast_play 经 reflux 取流（static 直链优先，转码参数留 v2）；错误路径（reflux 不可达/token 失效）进错误矩阵。
 
 ### v2（方向性）
@@ -227,7 +230,7 @@ v2 起再啃：B 站等国内平台解析器（每平台一个、易失效，逐
 
 ## 十三、开放问题
 
-1. v1 默认接入哪个云端 LLM（GLM / Claude / 可配置）？建议做成 profile 配置，默认云端、可切 ollama；
+1. ~~v1 默认接入哪个云端 LLM~~ → 已由 v6 落地：T22 内置大脑做成 provider profile 配置（云端默认、可切 ollama）；
 2. yt-dlp 作为外部依赖的分发方式（动态调用系统二进制 vs 静态内嵌），v1 实现时定；
 3. 渲染端首次配对的 Bearer Token 录入体验：手动输入 vs 二维码（TV 显示码/手机扫），v1 实现时定；
 4. **APK 侧载在目标电视/盒子上的实际可行性**——实现的第一件事就验证它；若受阻，提前把 v2 的 DLNA 兜底适配器拉入 v1；

@@ -881,3 +881,34 @@ public final class LatticeCastRenderer {
 - [ ] T21a：包实现 + macOS XCTest 契约测试（swift test）+ 提交 lattice-cast
 - [ ] T21b：reflux 主仓 dev 分支接线（**前置硬检查：工作树干净**；PlayerKit 桥接 + 配对 UI + 双 target 构建门禁）+ 提交推送
 - [ ] T21c（手动·用户）：Xcode 起 RefluxAppleMac → cast-agent 配置加设备 → 说一句话投到 reflux 播放器
+
+---
+
+### Task 22: 内置大脑 + 网页聊天（v1.1，与 T20 同批）【v6 新增】
+
+**Files:**
+- Modify: `internal/cast/config/config.go`（新增可选 `brain:` 段——provider(glm|claude|ollama)/api_key/model/base_url；空段=禁用，MCP-only 向后兼容）
+- Create: `internal/cast/brain/brain.go`（LLM 工具循环：系统提示含设备清单注入；工具=内部直调 mcpserver 同款六工具实现，非 HTTP 自环；多轮会话）
+- Create: `internal/cast/webchat/`（`GET /chat` 单页聊天 UI——原生 JS 无构建工具，SSE 流式；`POST /chat/api/message`；同 Bearer 鉴权，token 由页面一次性录入存 localStorage；同源无 CORS）
+- Modify: `cmd/lattice-cast/main.go`（brain 装配 + /chat 路由挂载）
+- Test: `internal/cast/brain/brain_test.go`（fake LLM 服务器脚本化工具调用：assistant tool_calls → cast_play 经 fake renderer 执行 → final answer；多轮会话；config 校验）
+
+**Interfaces:**
+```go
+package config
+type Brain struct {
+    Provider string `yaml:"provider"` // glm|claude|ollama；空=禁用
+    APIKey   string `yaml:"api_key"`  // provider 非空时必填（ollama 可空）
+    Model    string `yaml:"model"`
+    BaseURL  string `yaml:"base_url"` // ollama 用；云端留空走官方端点
+}
+package brain
+type Brain struct{ /* cfg, toolExec ToolExecutor, hc */ }
+func New(cfg config.Brain, exec ToolExecutor) *Brain
+func (b *Brain) Chat(ctx context.Context, sessionID, userText string) (<-chan ChatEvent, error)
+// ChatEvent: {Type: "delta"|"tool"|"final", Text string} —— SSE 帧直推
+```
+
+**安全**：LLM api_key 只在服务端；聊天页同 Bearer 鉴权；工具执行即审计（与 MCP 同一审计路径）。
+**前置**：无（fake LLM 即可单测）；真机体验需一个真实 API key（用户提供）。
+- Commit: `feat(brain): embedded llm brain with web chat entry`
