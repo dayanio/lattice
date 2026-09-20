@@ -939,3 +939,32 @@ func (b *Brain) Chat(ctx context.Context, sessionID, userText string) (<-chan Ch
 - Commit: `feat(apple): push-to-talk voice entry wired to agent brain`
 
 **顺序**：T24 → T25（语音按钮和事件流展示长在常驻形态的界面上）。完成后 PR 回 dev，真机验收（关窗说话投片全程无键盘 = v2 验收线第 1+2 条）。
+
+---
+
+### Task 26: 意图快通道——本地规则引擎前置（v2.1 首项）
+
+**动因**：实测 LLM 每轮 10~20s × 2~3 轮 = 19~60s；而高频指令语法空间极小。规则命中零 LLM 轮次，响应 ~1s。
+
+**Files（lattice-cast 仓，main 分支）:**
+- Create: `internal/cast/intent/intent.go`（规则引擎：模式匹配 → 意图结构）、`internal/cast/intent/intent_test.go`
+- Modify: `internal/cast/brain/brain.go`（Chat 入口先过 Router；命中→直接执行工具并返回事件；未命中→现有 LLM 循环）、`internal/cast/manager/manager.go`（新增 LastPlayed 断点记忆：设备→最后播放的 url/title/position，pause 时记录）
+
+**规则集（v1 覆盖高频 80%）:**
+1. `把{title}投到{room}` / `播放{title}` → search_media(title)：唯一命中→cast_play；多命中→返回选项反问；零命中→交 LLM（可换词重试）
+2. `暂停/暂停一下`、`继续/接着播`（需 LastPlayed 断点）、`停止/别播了`
+3. `快进到{N}分钟/秒`（中文数字基础支持）、`音量调到{N}/大点声/小点声`
+4. `现在播什么/播到哪了` → cast_status
+- 房间词典来自 config renderers（room → 设备名）；唯一在线设备时可省略房间词
+- 歧义/未命中一律交 LLM（无损降级），不猜
+
+**Interfaces:**
+```go
+package intent
+type Router struct{ /* 房间词典, exec ToolExecutor */ }
+func New(rooms map[string]string /*room→device*/, exec ToolExecutor) *Router
+func (r *Router) TryHandle(ctx context.Context, text string) (handled bool, events []brain.ChatEvent)
+```
+
+**Test:** 每类规则的正/反例；中文数字；多设备歧义反问；未命中降级 LLM 的接线测试；LastPlayed 断点续播。
+- Commit: `feat(intent): local rule engine fast path before llm brain`
