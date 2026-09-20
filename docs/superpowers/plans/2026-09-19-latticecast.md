@@ -912,3 +912,30 @@ func (b *Brain) Chat(ctx context.Context, sessionID, userText string) (<-chan Ch
 **安全**：LLM api_key 只在服务端；聊天页同 Bearer 鉴权；工具执行即审计（与 MCP 同一审计路径）。
 **前置**：无（fake LLM 即可单测）；真机体验需一个真实 API key（用户提供）。
 - Commit: `feat(brain): embedded llm brain with web chat entry`
+
+---
+
+### Task 24: macOS 接收器常驻——菜单栏形态（v2.0 组 B）
+
+**Files（reflux 仓，feat/v2-resident-voice 分支）:**
+- Modify: `apple/RefluxAppleMac/`（App 生命周期：关窗 = 最小化到菜单栏，不退出）、`apple/Shared/LatticeCast/LatticeCastManager.swift`（常驻状态暴露）
+- Create: `apple/Shared/LatticeCast/MenuBarReceiver.swift`（MenuBarExtra/NSStatusItem：图标状态——停用/待命/播放中+房间+标题；菜单：启用开关、打开主窗口、退出常驻）
+- Create: 登录自启（SMAppService.register，macOS 13+；设置项"开机自动接收"）
+- Test: 菜单状态机单测（状态源 = LatticeCastManager.currentStatus + enabled 开关）+ 手动验收清单（关窗→投片→自动弹窗）
+
+**Interfaces:** LatticeCastManager 增加 `residentMode` 状态与 `MenuBarReceiver` 的绑定；投片到达的呈现路径复用 1d573248（MacPlayerWindowController.open + NSApp.activate）。
+- 验收：关闭主窗口后 cast_play 仍可达且自动弹窗播放；菜单栏图标状态随播放实时变化；登录自启勾选后重启 macOS 自动进入接收态。
+- Commit: `feat(apple): menu bar resident receiver with login autostart`
+
+### Task 25: 语音入口——App 内按住说话（v2.0 组 A）
+
+**Files（reflux 仓，同分支）:**
+- Modify: 配对页（新增 **agent 地址**字段，存 UserDefaults）
+- Create: `apple/Shared/LatticeCast/VoiceEntry.swift`（SFSpeechRecognizer zh-CN 端上优先；按住录音松手识别；失败降级键盘）
+- Create: `apple/Shared/LatticeCast/CastChatClient.swift`（POST {agent}/chat/api/message，Bearer=配对 token，SSE 解析 delta/tool/final/error 四类事件）
+- UI: 主界面按住说话按钮 + 事件流展示（工具行灰字、最终回复正文）；macOS 快捷键长按
+- 权限: NSMicrophoneUsageDescription + NSSpeechRecognitionUsageDescription
+- Test: SSE 解析单测（四类事件）；ASR mock 注入文本的端到端；agent 不可达的降级路径
+- Commit: `feat(apple): push-to-talk voice entry wired to agent brain`
+
+**顺序**：T24 → T25（语音按钮和事件流展示长在常驻形态的界面上）。完成后 PR 回 dev，真机验收（关窗说话投片全程无键盘 = v2 验收线第 1+2 条）。
