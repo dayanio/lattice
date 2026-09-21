@@ -33,8 +33,18 @@ struct NetworkSettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            if showingPicker {
+                exitNodePicker
+            } else {
+                settingsList
+            }
+        }
+        .task { await load() }
+    }
+
+    private var settingsList: some View {
+        VStack(spacing: 0) {
+            PageHeader(title: PanelPage.networkSettings.title, onBack: onBack)
 
             settingsRow(
                 title: "使用退出节点",
@@ -72,16 +82,18 @@ struct NetworkSettingsView: View {
             Divider()
             footerBar
         }
-        .task { await load() }
-        .sheet(isPresented: $showingPicker) {
-            exitNodePicker
-        }
+    }
+
+    private var exitCandidates: [PeerNode] {
+        candidates.filter { $0.advertisedRoutes.contains("0.0.0.0/0") }
+    }
+
+    private var currentExitName: String? {
+        selectedProviders.first { provider in exitCandidates.contains { $0.name == provider } }
     }
 
     private var exitNodeDesc: String {
-        if let picked = selectedProviders.first(where: { provider in candidates.first(where: { c in c.name == provider })?.advertisedRoutes.contains("0.0.0.0/0") == true }) {
-            return "当前：\(picked)"
-        }
+        if let picked = currentExitName { return "当前：\(picked)" }
         return "全部流量经由所选节点转发 · 当前：无"
     }
 
@@ -123,16 +135,44 @@ struct NetworkSettingsView: View {
     }
 
     private var exitNodePicker: some View {
-        NavigationStack {
-            List {
-                Button("无（关闭）") { Task { await selectExitNode(nil) } }
-                ForEach(candidates.filter { $0.advertisedRoutes.contains("0.0.0.0/0") }) { peer in
-                    Button(peer.name) { Task { await selectExitNode(peer.name) } }
+        VStack(spacing: 0) {
+            PageHeader(title: "选择退出节点", onBack: { showingPicker = false })
+            ScrollView {
+                VStack(spacing: 0) {
+                    pickerRow(title: "无（关闭）", selected: currentExitName == nil) {
+                        Task { await selectExitNode(nil) }
+                    }
+                    ForEach(exitCandidates) { peer in
+                        Divider().padding(.leading, 15)
+                        pickerRow(title: peer.name, selected: currentExitName == peer.name) {
+                            Task { await selectExitNode(peer.name) }
+                        }
+                    }
                 }
             }
-            .navigationTitle("选择退出节点")
+            if !errorText.isEmpty {
+                Text(errorText).font(.caption2).foregroundColor(.red)
+                    .padding(.horizontal, 15).padding(.vertical, 6)
+            }
         }
-        .frame(width: 280, height: 320)
+    }
+
+    private func pickerRow(title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(title).font(.system(size: 13))
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.accentColor)
+                }
+            }
+            .padding(.horizontal, 15)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func selectExitNode(_ name: String?) async {
@@ -165,26 +205,6 @@ struct NetworkSettingsView: View {
                 .offset(x: -5)
                 .shadow(radius: 1, y: 0.5)
         }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Button {
-                onBack()
-            } label: {
-                Text("‹ 返回主面板")
-                    .font(.caption)
-                    .foregroundColor(.accentColor)
-            }
-            .buttonStyle(.plain)
-            HStack(spacing: 6) {
-                Text("网络设置")
-                    .font(.system(.headline, design: .rounded))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     private func settingsRow(
@@ -239,25 +259,7 @@ struct ShareView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 3) {
-                Button {
-                    onBack()
-                } label: {
-                    Text("‹ 返回主面板")
-                        .font(.caption)
-                        .foregroundColor(.accentColor)
-                }
-                .buttonStyle(.plain)
-                HStack(spacing: 6) {
-                    Text("共享本地服务")
-                        .font(.system(.headline, design: .rounded))
-                    SoonBadge()
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            Divider()
+            PageHeader(title: PanelPage.share.title, onBack: onBack) { SoonBadge() }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("本地端口")

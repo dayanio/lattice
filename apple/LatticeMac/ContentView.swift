@@ -41,8 +41,9 @@ struct ContentView: View {
     @State private var deleteTarget: PeerNode?
     @State private var opError = ""
     @State private var detailPeer: PeerNode?
-    @State private var showingNetworkSettings = false
-    @State private var showingShare = false
+    /// The secondary page shown in place of the first screen; nil = first screen.
+    @State private var subPage: PanelPage?
+    @ObservedObject private var castReceiver = CastReceiverManager.shared
     /// The management API is unavailable (not logged in, or the login expired);
     /// the device list still shows what the tunnel knows.
     @State private var needsLogin = false
@@ -75,17 +76,62 @@ struct ContentView: View {
                     },
                     onDelete: { deleteTarget = detail }
                 )
-            } else if showingNetworkSettings {
-                NetworkSettingsView {
-                    showingNetworkSettings = false
-                }
-            } else if showingShare {
-                ShareView {
-                    showingShare = false
-                }
+            } else if let page = subPage {
+                subPageView(page)
             } else {
                 mainPanel
             }
+        }
+        .background(
+            WindowHiddenObserver {
+                // Only the menu-bar panel resets; the main window can be occluded
+                // by other windows without losing its place.
+                guard inPanel else { return }
+                subPage = nil
+                detailPeer = nil
+            }
+        )
+        .onAppear { syncUIStateRequests() }
+        // onChange fires after the update — safe to mutate state here
+        // (onReceive could land mid-update and crash SwiftUI).
+        .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
+        .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
+        .onChange(of: ui.page) { _ in syncUIStateRequests() }
+        // A management action (rename, delete, ...) that needs a login asks for
+        // one here and carries on once it succeeds. Only the main window presents
+        // it; the menu-bar panel cannot host a sheet.
+        .sheet(isPresented: Binding(
+            get: { loginCoordinator.isPresenting && !inPanel },
+            set: { if !$0 { loginCoordinator.finish(success: false) } }
+        )) {
+            ManageLoginView { loginCoordinator.finish(success: $0) }
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(
+                onDone: {
+                    showingSettings = false
+                    Task { await loadPeers() }
+                },
+                onJoin: {
+                    showingSettings = false
+                    showingJoin = true
+                },
+                onClose: { showingSettings = false }
+            )
+        }
+        .sheet(isPresented: $showingJoin) {
+            JoinView(
+                onDone: {
+                    showingJoin = false
+                    joined = true
+                    UserDefaults.standard.set(true, forKey: "lattice.joined")
+                    tunnel.load {
+                        tunnel.connect()
+                    }
+                },
+                onClose: { showingJoin = false }
+            )
         }
         .alert("重命名节点", isPresented: Binding(
             get: { renameTarget != nil },
@@ -152,10 +198,7 @@ struct ContentView: View {
         }
         if let page = ui.page {
             ui.page = nil
-            switch page {
-            case .networkSettings: showingNetworkSettings = true
-            case .share: showingShare = true
-            }
+            subPage = page
         }
     }
 
@@ -163,54 +206,11 @@ struct ContentView: View {
         VStack(spacing: 0) {
             header
             Divider()
-
-            if !joined {
-                Spacer()
-                VStack(spacing: 10) {
-                    Image(systemName: "personalhotspot")
-                        .font(.system(size: 32))
-                        .foregroundColor(.secondary)
-                    Text("尚未加入 Lattice 网络")
-                        .foregroundColor(.secondary)
-                    Button("加入网络") { showingJoin = true }
-                        .buttonStyle(.borderedProminent)
-                }
-                Spacer()
-            } else if isLoading && displayPeers.isEmpty {
-                Spacer()
-                ProgressView("加载中…")
-                Spacer()
-            } else if !errorMsg.isEmpty && displayPeers.isEmpty {
-                Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.title2).foregroundColor(.orange)
-                    Text(errorMsg).font(.caption).foregroundColor(.secondary)
-                    Button("重试") { Task { await loadPeers() } }
-                        .buttonStyle(.bordered)
-                }
-                Spacer()
-            } else if displayPeers.isEmpty {
-                Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "personalhotspot")
-                        .font(.system(size: 32))
-                        .foregroundColor(.secondary)
-                    Text("没有已连接的节点").foregroundColor(.secondary)
-                    if needsLogin {
-                        Button("登录以查看和管理设备") { requestManageLogin() }
-                            .buttonStyle(.bordered)
-                    }
-                }
-                Spacer()
-            } else {
-                deviceList
+            content
+            if !opError.isEmpty {
+                opErrorBanner
             }
-
-            CastSectionView()
-                .padding(.bottom, 4)
-
-            bottomNav
+            PanelNavBar(items: navItems)
         }
         .task {
             tunnel.load()
@@ -220,40 +220,116 @@ struct ContentView: View {
         .onChange(of: auth.isLoggedIn) { _ in
             Task { await loadPeers() }
         }
-        // A management action (rename, delete, ...) that needs a login asks for
-        // one here and carries on once it succeeds. Only the main window presents
-        // it; the menu-bar panel cannot host a sheet.
-        .sheet(isPresented: Binding(
-            get: { loginCoordinator.isPresenting && !inPanel },
-            set: { if !$0 { loginCoordinator.finish(success: false) } }
-        )) {
-            ManageLoginView { loginCoordinator.finish(success: $0) }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if !joined {
+            StateView(
+                icon: "personalhotspot",
+                title: "尚未加入 Lattice 网络",
+                actionTitle: "加入网络",
+                prominent: true
+            ) { presentJoin() }
+        } else if isLoading && displayPeers.isEmpty {
+            StateView(title: "加载中…", isLoading: true)
+        } else if !errorMsg.isEmpty && displayPeers.isEmpty {
+            StateView(
+                icon: "exclamationmark.triangle",
+                iconColor: .orange,
+                title: "加载失败",
+                message: errorMsg,
+                actionTitle: "重试"
+            ) { Task { await loadPeers() } }
+        } else if displayPeers.isEmpty {
+            StateView(
+                icon: "personalhotspot",
+                title: "没有已连接的节点",
+                actionTitle: needsLogin ? "登录以查看和管理设备" : nil
+            ) { requestManageLogin() }
+        } else {
+            deviceList
         }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView {
-                showingSettings = false
-                Task { await loadPeers() }
-            } onJoin: {
-                showingSettings = false
-                showingJoin = true
+    }
+
+    private var navItems: [PanelNavItem] {
+        [
+            PanelNavItem(id: "network", icon: "network", title: "网络") { open(.networkSettings) },
+            PanelNavItem(id: "share", icon: "arrow.up.forward.app", title: "共享") { open(.share) },
+            PanelNavItem(id: "cast", icon: "tv", title: "投屏", showsDot: castReceiver.isRunning) { open(.cast) },
+            PanelNavItem(id: "ai", icon: "sparkles", title: "AI") {
+                openAIWindow(id: "ai")
+                NSApp.activate(ignoringOtherApps: true)
+            },
+        ]
+    }
+
+    /// A management action failed (rename, delete, ...): a dismissible strip
+    /// above the nav bar. Replaces the old footer's inline error text.
+    private var opErrorBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.circle.fill").foregroundColor(.red)
+            Text(opError)
+                .font(.caption2)
+                .foregroundColor(.red)
+                .lineLimit(2)
+            Spacer()
+            Button { opError = "" } label: {
+                Image(systemName: "xmark").font(.caption2)
             }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
         }
-        .onAppear { syncUIStateRequests() }
-        // onChange fires after the update — safe to mutate state here
-        // (onReceive could land mid-update and crash SwiftUI).
-        .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
-        .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
-        .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
-        .onChange(of: ui.page) { _ in syncUIStateRequests() }
-        .sheet(isPresented: $showingJoin) {
-            JoinView {
-                showingJoin = false
-                joined = true
-                UserDefaults.standard.set(true, forKey: "lattice.joined")
-                tunnel.load {
-                    tunnel.connect()
-                }
-            }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.red.opacity(0.08))
+        .help(opError)
+    }
+
+    @ViewBuilder
+    private func subPageView(_ page: PanelPage) -> some View {
+        switch page {
+        case .networkSettings:
+            NetworkSettingsView { subPage = page.parent }
+        case .share:
+            ShareView { subPage = page.parent }
+        case .cast:
+            CastPage(
+                onBack: { subPage = page.parent },
+                onEditPairing: { open(.castPairing) }
+            )
+        case .castPairing:
+            CastPairingView { subPage = page.parent }
+        }
+    }
+
+    /// Opens a secondary page: in place, or — for pages with text fields
+    /// opened from the panel — in the main window.
+    private func open(_ page: PanelPage) {
+        switch page.destination(inPanel: inPanel) {
+        case .inPlace:
+            subPage = page
+        case .mainWindow:
+            UIState.shared.page = page
+            openMain?()
+        }
+    }
+
+    private func presentJoin() {
+        if inPanel {
+            UIState.shared.showJoin = true
+            openMain?()
+        } else {
+            showingJoin = true
+        }
+    }
+
+    private func presentSettings() {
+        if inPanel {
+            UIState.shared.showSettings = true
+            openMain?()
+        } else {
+            showingSettings = true
         }
     }
 
@@ -279,6 +355,8 @@ struct ContentView: View {
     }
 
     private func requestManageLogin() {
+        // The login sheet is presented by the main window only.
+        if inPanel { openMain?() }
         Task { _ = await LoginCoordinator.shared.requestLogin() }
     }
 
@@ -292,21 +370,6 @@ struct ContentView: View {
                 if !inPanel, displayPeers.count >= 4 {
                     PanelSearchField(text: $searchQuery)
                 }
-                NavRow(
-                    icon: "arrow.left.arrow.right",
-                    iconColor: .gray,
-                    title: "退出节点",
-                    value: "无",
-                    showsChevron: true
-                ) {
-                    if inPanel {
-                        UIState.shared.page = .networkSettings
-                        openMain?()
-                    } else {
-                        showingNetworkSettings = true
-                    }
-                }
-                Divider()
                 ForEach(filteredPeers) { peer in
                     peerRow(peer)
                     Divider().padding(.leading, 44)
@@ -348,52 +411,6 @@ struct ContentView: View {
         )
     }
 
-    /// Bottom quick-nav stack: AI assistant, sharing, network settings, footer.
-    private var bottomNav: some View {
-        VStack(spacing: 0) {
-            Divider()
-            NavRow(
-                icon: "sparkles",
-                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
-                title: "AI 助手",
-                showsChevron: true
-            ) {
-                openAIWindow(id: "ai")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            Divider()
-            NavRow(
-                icon: "arrow.up.forward",
-                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
-                title: "共享本地服务",
-                showsChevron: true
-            ) {
-                if inPanel {
-                    UIState.shared.page = .share
-                    openMain?()
-                } else {
-                    showingShare = true
-                }
-            }
-            Divider()
-            NavRow(
-                icon: "gearshape",
-                iconColor: .accentColor,
-                title: "网络设置",
-                showsChevron: true
-            ) {
-                if inPanel {
-                    UIState.shared.page = .networkSettings
-                    openMain?()
-                } else {
-                    showingNetworkSettings = true
-                }
-            }
-            Divider()
-            footer
-        }
-    }
-
     private var connected: Binding<Bool> {
         Binding(
             get: { tunnel.status == .connected },
@@ -402,7 +419,7 @@ struct ContentView: View {
                     if tunnel.isConfigured {
                         tunnel.connect()
                     } else {
-                        showingJoin = true
+                        presentJoin()
                     }
                 } else {
                     tunnel.disconnect()
@@ -443,9 +460,28 @@ struct ContentView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
+            moreMenu
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 12)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("加入网络 / 重新入网…") { presentJoin() }
+            Button("连接设置…") { presentSettings() }
+            Button("刷新设备列表") { Task { await loadPeers() } }
+            Divider()
+            Button("退出 Lattice") { NSApp.terminate(nil) }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("更多")
     }
 
     /// Aggregate quality for the header pill: direct wins over relay.
@@ -488,57 +524,6 @@ struct ContentView: View {
         case .disconnecting: return "断开中…"
         default: return "未连接"
         }
-    }
-
-    private var footer: some View {
-        HStack {
-            if !opError.isEmpty {
-                Text(opError)
-                    .font(.caption2)
-                    .foregroundColor(.red)
-                    .lineLimit(1)
-                    .help(opError)
-                    .onTapGesture { opError = "" }
-            } else {
-                Text("Lattice standalone").font(.caption2).foregroundColor(.secondary)
-            }
-            Spacer()
-            Button {
-                if inPanel {
-                    UIState.shared.showJoin = true
-                    openMain?()
-                } else {
-                    showingJoin = true
-                }
-            } label: {
-                Image(systemName: "plus.circle")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("加入网络 / 重新入网")
-
-            Button {
-                if inPanel {
-                    UIState.shared.showSettings = true
-                    openMain?()
-                } else {
-                    showingSettings = true
-                }
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("登录管理面板")
-
-            Button("刷新") { Task { await loadPeers() } }
-                .font(.caption)
-                .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     private func loadPeers() async {
@@ -753,6 +738,7 @@ struct PeerRow: View {
 /// connects the tunnel.
 struct JoinView: View {
     var onDone: () -> Void
+    var onClose: () -> Void
 
     @State private var input = ""
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
@@ -783,10 +769,7 @@ struct JoinView: View {
     private var needsServer: Bool { payload != nil && payload?.serverURL == nil && serverURL.isEmpty }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("加入 Lattice 网络")
-                .font(.system(.headline, design: .rounded))
-
+        SheetScaffold(title: "加入 Lattice 网络", onClose: onClose) {
             Picker("", selection: $accountMode) {
                 Text("邀请链接 / 令牌").tag(false)
                 Text("账号登录").tag(true)
@@ -908,8 +891,6 @@ struct JoinView: View {
                 }
             }
         }
-        .padding(20)
-        .frame(width: 340)
         .onAppear { detectClipboardInvite() }
         .onChange(of: needsServer) { needed in
             if needed { showAdvanced = true }
@@ -1027,9 +1008,7 @@ struct ManageLoginView: View {
     private var serverURL: String { UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("登录以管理设备")
-                .font(.system(.headline, design: .rounded))
+        SheetScaffold(title: "登录以管理设备", onClose: { onFinished(false) }) {
             Text("改名、下线、删除等管理操作需要账号；设备列表和连接不受影响。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -1074,8 +1053,6 @@ struct ManageLoginView: View {
                 }
             }
         }
-        .padding(20)
-        .frame(width: 300)
     }
 
     private func login() async {
@@ -1096,6 +1073,7 @@ struct ManageLoginView: View {
 struct SettingsView: View {
     var onDone: () -> Void
     var onJoin: (() -> Void)? = nil
+    var onClose: () -> Void
 
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
     @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
@@ -1104,10 +1082,7 @@ struct SettingsView: View {
     @State private var loginError = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("连接到 Lattice")
-                .font(.system(.headline, design: .rounded))
-
+        SheetScaffold(title: "连接到 Lattice", onClose: onClose) {
             LabeledField(label: "服务器地址") {
                 TextField("http://127.0.0.1:8080", text: $serverURL)
                     .textFieldStyle(.plain)
@@ -1165,8 +1140,6 @@ struct SettingsView: View {
                     .strokeBorder(Color.secondary.opacity(0.3))
             )
         }
-        .padding(20)
-        .frame(width: 300)
     }
 
     private func login() async {
@@ -1197,11 +1170,7 @@ struct JoinScannerView: View {
     @State private var errorText = ""
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text("扫描入网二维码")
-                .font(.system(.headline, design: .rounded))
-                .padding(.top, 14)
-
+        SheetScaffold(title: "扫描入网二维码", onClose: onCancel) {
             CameraScannerView(
                 onCode: { code in
                     if let payload = JoinPayload(code) {
@@ -1215,6 +1184,7 @@ struct JoinScannerView: View {
             .frame(width: 280, height: 280)
             .cornerRadius(12)
             .clipped()
+            .frame(maxWidth: .infinity)
 
             Text("二维码内容格式：lattice://join?server=…&token=…")
                 .font(.caption2)
@@ -1224,13 +1194,7 @@ struct JoinScannerView: View {
                 Text(errorText)
                     .font(.caption)
                     .foregroundColor(.red)
-                    .padding(.horizontal, 14)
             }
-
-            Button("取消") { onCancel() }
-                .buttonStyle(.bordered)
-                .padding(.bottom, 14)
         }
-        .frame(width: 320)
     }
 }

@@ -94,58 +94,87 @@ final class CastReceiverManager: ObservableObject {
     }
 }
 
-// MARK: - Panel section (投屏接收)
+// MARK: - Cast page (二级页)
 
-struct CastSectionView: View {
+/// 投屏接收二级页：开关、状态、配对信息只读摘要（令牌不显示）。
+struct CastPage: View {
+    var onBack: () -> Void
+    var onEditPairing: () -> Void
+
     @ObservedObject private var receiver = CastReceiverManager.shared
-    @State private var showingPairing = false
 
     var body: some View {
-        SectionHead(title: "投屏接收")
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("接收投屏").font(.system(size: 13)).foregroundColor(.primary)
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { receiver.isEnabled },
-                    set: { receiver.setEnabled($0) }
-                ))
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .labelsHidden()
+        VStack(spacing: 0) {
+            PageHeader(title: PanelPage.cast.title, onBack: onBack)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("接收投屏").font(.system(size: 13))
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { receiver.isEnabled },
+                            set: { receiver.setEnabled($0) }
+                        ))
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                    }
+                    statusLine
+
+                    if let config = receiver.config {
+                        VStack(alignment: .leading, spacing: 6) {
+                            summaryRow("接收端名称", config.name)
+                            summaryRow("房间", config.room)
+                            summaryRow("端口", String(config.port))
+                        }
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.primary.opacity(0.04))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(Color.primary.opacity(0.08))
+                        )
+                    }
+
+                    Button(receiver.config == nil ? "配对…" : "编辑配对信息…") { onEditPairing() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                .padding(16)
             }
-            if receiver.isRunning, let config = receiver.config {
-                Text("接收中 · \(config.name) · 房间 \(config.room)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            } else if let err = receiver.startError {
-                Text(err).font(.caption).foregroundColor(.red)
-            } else {
-                Text("未配对 — 保存配对后即可接收").font(.caption).foregroundColor(.secondary)
-            }
-            Button("配对信息…") { showingPairing = true }
-                .font(.caption)
-                .buttonStyle(.plain)
-                .foregroundColor(.accentColor)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.primary.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.primary.opacity(0.08))
-        )
-        .padding(.horizontal, 10)
-        .sheet(isPresented: $showingPairing) {
-            CastPairingSheet { showingPairing = false }
+    }
+
+    @ViewBuilder
+    private var statusLine: some View {
+        if receiver.isRunning, let config = receiver.config {
+            Text("接收中 · \(config.name) · 房间 \(config.room)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        } else if let err = receiver.startError {
+            Text(err).font(.caption).foregroundColor(.red)
+        } else {
+            Text("未配对 — 保存配对后即可接收").font(.caption).foregroundColor(.secondary)
+        }
+    }
+
+    private func summaryRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).font(.caption).foregroundColor(.secondary)
+            Spacer()
+            Text(value).font(.system(.caption, design: .monospaced))
         }
     }
 }
 
-/// 配对信息编辑（渲染端身份：name/room/token/port）。
-struct CastPairingSheet: View {
+// MARK: - Pairing form (页内表单，仅主窗口)
+
+/// 配对信息编辑（渲染端身份：name/room/token/port）。在主窗口里作为
+/// 投屏页下的页内表单出现；面板里编辑配对会转到主窗口（需要文字输入）。
+struct CastPairingView: View {
     var onDone: () -> Void
 
     @State private var name = Host.current().localizedName ?? "lattice-mac"
@@ -154,34 +183,36 @@ struct CastPairingSheet: View {
     @State private var port = "7822"
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("投屏接收配对")
-                .font(.system(.headline, design: .rounded))
-            LabeledField(label: "接收端名称") {
-                TextField("lattice-mac", text: $name).textFieldStyle(.plain)
-            }
-            LabeledField(label: "房间") {
-                TextField("lattice", text: $room).textFieldStyle(.plain)
-            }
-            LabeledField(label: "配对令牌") {
-                SecureField("cast-agent 签发", text: $token).textFieldStyle(.plain)
-                    .font(.system(.caption, design: .monospaced))
-            }
-            LabeledField(label: "端口") {
-                TextField("7822", text: $port).textFieldStyle(.plain)
-                    .font(.system(.caption, design: .monospaced))
-            }
-            Text("在 cast-agent 侧登记此名称与令牌后，即可向本机发起投屏。")
-                .font(.caption2).foregroundColor(.secondary)
-            HStack {
-                Spacer()
-                Button("保存") { save() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(name.isEmpty || room.isEmpty || token.isEmpty)
+        VStack(spacing: 0) {
+            PageHeader(title: PanelPage.castPairing.title, onBack: onDone)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    LabeledField(label: "接收端名称") {
+                        TextField("lattice-mac", text: $name).textFieldStyle(.plain)
+                    }
+                    LabeledField(label: "房间") {
+                        TextField("lattice", text: $room).textFieldStyle(.plain)
+                    }
+                    LabeledField(label: "配对令牌") {
+                        SecureField("cast-agent 签发", text: $token).textFieldStyle(.plain)
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                    LabeledField(label: "端口") {
+                        TextField("7822", text: $port).textFieldStyle(.plain)
+                            .font(.system(.caption, design: .monospaced))
+                    }
+                    Text("在 cast-agent 侧登记此名称与令牌后，即可向本机发起投屏。")
+                        .font(.caption2).foregroundColor(.secondary)
+                    HStack {
+                        Spacer()
+                        Button("保存") { save() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(name.isEmpty || room.isEmpty || token.isEmpty)
+                    }
+                }
+                .padding(16)
             }
         }
-        .padding(20)
-        .frame(width: 320)
         .onAppear {
             if let existing = CastReceiverManager.shared.config {
                 name = existing.name
