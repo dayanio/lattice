@@ -49,7 +49,7 @@ func dialUpgrade(t *testing.T, ts *httptest.Server) (net.Conn, *bufio.Reader) {
 	}
 	t.Cleanup(func() { conn.Close() }) //nolint:errcheck
 
-	req, err := http.NewRequest("GET", "/relay/v1/upgrade", nil)
+	req, err := http.NewRequest("GET", "/ferry/v1/upgrade", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

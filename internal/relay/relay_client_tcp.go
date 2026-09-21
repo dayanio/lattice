@@ -160,7 +160,7 @@ func (c *TCPClient) Connect() error {
 		return err
 	}
 
-	req, err := http.NewRequest("GET", "/relay/v1/upgrade", nil)
+	req, err := http.NewRequest("GET", "/ferry/v1/upgrade", nil)
 	if err != nil {
 		conn.Close() //nolint:errcheck
 		return err

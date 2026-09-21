@@ -40,14 +40,14 @@ type Server struct {
 
 func NewServer(flags *config.Config) *Server {
 	s := &Server{
-		log:             internallog.GetLogger("bolt"),
+		log:             internallog.GetLogger("ferry"),
 		sessionMgr:      NewSessionManager(),
 		authToken:       flags.RelayAuthToken,
 		requirePeerAuth: flags.RelayRequirePeerAuth,
 	}
 	s.sessionMgr.SetRequirePeerAuth(flags.RelayRequirePeerAuth)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/relay/v1/upgrade", s.boltUpgradeHandler)
+	mux.HandleFunc("/ferry/v1/upgrade", s.ferryUpgradeHandler)
 
 	httpServer := &http.Server{
 		Addr:         flags.Listen,
@@ -75,7 +75,7 @@ func (s *Server) Manager() *SessionManager {
 // UpgradeHandler is the HTTP handler that upgrades a connection to an Relay
 // session, for embedding the relay in another server or in tests.
 func (s *Server) UpgradeHandler() http.Handler {
-	return http.HandlerFunc(s.boltUpgradeHandler)
+	return http.HandlerFunc(s.ferryUpgradeHandler)
 }
 
 func (s *Server) Start() error {
@@ -83,7 +83,7 @@ func (s *Server) Start() error {
 	return s.server.ListenAndServe()
 }
 
-func (s *Server) boltUpgradeHandler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) ferryUpgradeHandler(w http.ResponseWriter, r *http.Request) {
 	// Accept both protocol spellings: legacy "bolt" and the current "relay".
 	upgrade := r.Header.Get("Upgrade")
 	if upgrade != "bolt" && upgrade != "relay" {

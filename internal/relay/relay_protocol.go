@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// The Ferry (摆渡) relay protocol — Lattice's designated relay for
+// encrypted WireGuard packets, the counterpart of Tailscale's DERP.
+
 package relay
 
 import (

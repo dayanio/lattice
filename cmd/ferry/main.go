@@ -34,7 +34,7 @@ func main() {
 	cmd := &cobra.Command{
 		Use:          "relayer",
 		Short:        "Relay relay server for Lattice",
-		Long:         `Standalone Relay relay server. Bridges WireGuard peers that cannot reach each other directly.`,
+		Long:         `Standalone Ferry relay server — Lattice 中继（摆渡）. Bridges WireGuard peers that cannot reach each other directly.`,
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// Map renamed server flags to their viper keys before config loading.
