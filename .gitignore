@@ -38,3 +38,10 @@ apple/Frameworks/iOS/LatticeCore.xcframework/
 bin/
 lattice.db*
 apple/build/
+
+# Xcode per-user UI state (changes on every open/close)
+xcuserdata/
+
+# Local tooling / scratch
+.zcodeignore
+tmp-syntool/
