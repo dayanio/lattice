@@ -20,6 +20,10 @@ settings:
     # deleted after the session — the extension then crashes at launch.
     ENABLE_DEBUG_DYLIB: NO
 
+packages:
+  LatticeCastKit:
+    path: ../../lattice-cast/swift/LatticeCastKit
+
 targets:
   Lattice:
     type: application
@@ -54,6 +58,8 @@ targets:
       - path: Shared
     dependencies:
       - target: LatticeTunnelMac
+      - package: LatticeCastKit
+        product: LatticeCastKit
       - framework: Frameworks/MacOS/LatticeCore.xcframework
         embed: true
     info:

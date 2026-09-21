@@ -207,10 +207,14 @@ struct ContentView: View {
                 deviceList
             }
 
+            CastSectionView()
+                .padding(.bottom, 4)
+
             bottomNav
         }
         .task {
             tunnel.load()
+            CastReceiverManager.shared.startIfNeeded()
             await loadPeers()
         }
         .onChange(of: auth.isLoggedIn) { _ in
