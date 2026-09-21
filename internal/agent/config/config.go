@@ -304,14 +304,14 @@ type Config struct {
 	// it on, legacy clients that cannot prove identity are rejected;
 	// server and agents must both be new enough. Default false.
 	RelayRequirePeerAuth bool   `mapstructure:"relay-require-peer-auth"`
-	StunServerURL      string `mapstructure:"stun-url"` // STUN server address for ICE NAT traversal
-	PublicIP           string `mapstructure:"public-ip"`
-	Port               int    `mapstructure:"port"`          // STUN service port, default 3478
-	WgPort             int    `mapstructure:"wg-port"`       // WireGuard/ICE UDP listen port, default 51820
-	EnforcerMode       string `mapstructure:"enforcer-mode"` // "auto", "iptables", "ebpf"
+	StunServerURL        string `mapstructure:"stun-url"` // STUN server address for ICE NAT traversal
+	PublicIP             string `mapstructure:"public-ip"`
+	Port                 int    `mapstructure:"port"`          // STUN service port, default 3478
+	WgPort               int    `mapstructure:"wg-port"`       // WireGuard/ICE UDP listen port, default 51820
+	EnforcerMode         string `mapstructure:"enforcer-mode"` // "auto", "iptables", "ebpf"
 
 	// ── Feature flags ─────────────────────────────────────────────
-	EnableRelay    bool `mapstructure:"enable-relay"`
+	EnableRelay  bool `mapstructure:"enable-relay"`
 	EnableTLS    bool `mapstructure:"enable-tls"`
 	EnableMetric bool `mapstructure:"enable-metric"`
 	EnableDNS    bool `mapstructure:"enable-dns"`

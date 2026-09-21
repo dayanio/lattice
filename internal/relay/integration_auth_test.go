@@ -36,7 +36,7 @@ import (
 func startTestRelay(t *testing.T, requirePeerAuth bool) (*Server, *httptest.Server) {
 	t.Helper()
 	s := NewServer(&config.Config{RelayRequirePeerAuth: requirePeerAuth})
-	ts := httptest.NewServer(http.HandlerFunc(s.boltUpgradeHandler))
+	ts := httptest.NewServer(http.HandlerFunc(s.ferryUpgradeHandler))
 	t.Cleanup(ts.Close)
 	return s, ts
 }

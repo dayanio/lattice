@@ -42,7 +42,7 @@ func TestReconcileActionFor(t *testing.T) {
 		"probing within its window":        {StateProbing, fresh, reconcileNone},
 		"probing without a start stamp":    {StateProbing, 0, reconcileNone},
 		"ice-ready is healthy":             {StateICEReady, 0, reconcileNone},
-		"relay-ready is healthy":             {StateRelayReady, 0, reconcileNone},
+		"relay-ready is healthy":           {StateRelayReady, 0, reconcileNone},
 		"failed already has a retry timer": {StateFailed, 0, reconcileNone},
 	} {
 		if got := reconcileActionFor(tc.state, tc.started, now); got != tc.want {

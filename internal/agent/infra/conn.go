@@ -45,9 +45,9 @@ var (
 // methods for sending and receiving multiple datagrams per-syscall. See the
 // proposal in https://github.com/golang/go/issues/45886#issuecomment-1218301564.
 type DefaultBind struct {
-	logger      *log.Logger
-	PublicKey   wgtypes.Key
-	keyManager  KeyManager
+	logger        *log.Logger
+	PublicKey     wgtypes.Key
+	keyManager    KeyManager
 	relayerClient RelayChannel
 
 	// passThroughCh receives non-STUN packets forwarded by FilteringUDPMux (v4).
@@ -80,7 +80,7 @@ type BindConfig struct {
 	V6Conn       *net.UDPConn
 	PassThrough  <-chan PassThroughPacket // non-STUN v4 packets from FilteringUDPMux
 	PassThrough6 <-chan PassThroughPacket // non-STUN v6 packets from FilteringUDPMux (v6)
-	RelayClient    RelayChannel
+	RelayClient  RelayChannel
 	KeyManager   KeyManager
 }
 
@@ -92,7 +92,7 @@ func NewBind(cfg *BindConfig) *DefaultBind {
 		passThroughCh:  cfg.PassThrough,
 		passThrough6Ch: cfg.PassThrough6,
 		keyManager:     cfg.KeyManager,
-		relayerClient:    cfg.RelayClient,
+		relayerClient:  cfg.RelayClient,
 		udpAddrPool: sync.Pool{
 			New: func() any {
 				return &net.UDPAddr{

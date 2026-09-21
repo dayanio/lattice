@@ -48,7 +48,7 @@ func main() {
 		LocalId:     localId,
 		Signal:      nats,
 		PeerManager: peerManager,
-		GetRelay:      func() infra.RelayChannel { return relayClient },
+		GetRelay:    func() infra.RelayChannel { return relayClient },
 	})
 
 	relayClient, err = relay.NewTCPClient(ctx, localId.ID(), "127.0.0.1:6266", key1, probeFactory.Handle)

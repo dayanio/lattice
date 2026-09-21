@@ -41,7 +41,7 @@ type relayDialer struct {
 	log            *log.Logger
 	localId        infra.PeerIdentity
 	remoteId       infra.PeerIdentity
-	relay            infra.RelayChannel
+	relay          infra.RelayChannel
 	readyChan      chan struct{}
 	readyOnce      sync.Once // guards close(readyChan)
 	active         bool      // true once SYN/ACK exchange completes; guarded by mu
@@ -59,7 +59,7 @@ type relayDialer struct {
 type RelayDialerConfig struct {
 	LocalId   infra.PeerIdentity
 	RemoteId  infra.PeerIdentity
-	Relay       infra.RelayChannel
+	Relay     infra.RelayChannel
 	SM        *SessionManager
 	SessionId uint64
 	// GetLocalPeer is called at send time so late-arriving ApplyFullConfig
@@ -78,7 +78,7 @@ func NewRelayDialer(cfg *RelayDialerConfig) infra.Dialer {
 		log:            log.GetLogger("relay-dialer"),
 		localId:        cfg.LocalId,
 		remoteId:       cfg.RemoteId,
-		relay:            cfg.Relay,
+		relay:          cfg.Relay,
 		readyChan:      make(chan struct{}),
 		stopChan:       make(chan struct{}),
 		sm:             cfg.SM,

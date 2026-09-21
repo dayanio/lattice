@@ -25,12 +25,12 @@ import (
 
 func TestTransportDescription(t *testing.T) {
 	for state, want := range map[string]string{
-		"ice-ready": "ice-ready (direct)",
+		"ice-ready":   "ice-ready (direct)",
 		"relay-ready": "relay-ready (relayed)",
-		"probing":   "probing",
-		"failed":    "failed",
-		"closed":    "closed",
-		"none":      "none",
+		"probing":     "probing",
+		"failed":      "failed",
+		"closed":      "closed",
+		"none":        "none",
 	} {
 		if got := transportDescription(state); got != want {
 			t.Errorf("transportDescription(%q) = %q, want %q", state, got, want)

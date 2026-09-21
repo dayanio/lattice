@@ -31,7 +31,7 @@ const (
 type DialerType int32
 
 const (
-	DialerType_ICE DialerType = 0
+	DialerType_ICE   DialerType = 0
 	DialerType_Relay DialerType = 1
 )
 

@@ -92,7 +92,7 @@ func newRelayedPair(t *testing.T) (a, b *relayedPeer) {
 		d := NewRelayDialer(&RelayDialerConfig{
 			LocalId:        self.id,
 			RemoteId:       other.id,
-			Relay:            client,
+			Relay:          client,
 			Sender:         self.sig.Send,
 			GetLocalPeer:   func() *infra.Peer { return &infra.Peer{AppID: self.id.AppID} },
 			OnPeerReceived: func(infra.Peer) {},
@@ -171,9 +171,9 @@ func TestSignaling_SynFitsTheRelayProbeLimit(t *testing.T) {
 		Name: "MacBook-Pro", AppID: "MacBook-Pro", PublicKey: "4iy9kiYvpncdXoYYJoAvZ4YFybb4/gQmZxUNaU2680Y=",
 		Address: &addr, AllowedIPs: "10.96.0.4/32", Port: 51820, Endpoint: "203.0.113.5:51820",
 		Platform: "darwin", Hostname: "macbook-pro.local", InterfaceName: "utun4", GroupName: "default",
-		Token:  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZ2VudCJ9.signature-signature-signature-signature-signature-signature",
+		Token:    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZ2VudCJ9.signature-signature-signature-signature-signature-signature",
 		RelayURL: "203.0.113.9:6266?token=Zm9vYmFyYmF6cXV4",
-		Labels: map[string]string{"env": "prod", "team": "network", "owner": "someone"},
+		Labels:   map[string]string{"env": "prod", "team": "network", "owner": "someone"},
 	})
 	info, err := json.Marshal(lp)
 	if err != nil {

@@ -29,6 +29,6 @@ const (
 	StunServerDomain      = "stun.alattice.io"
 	DefaultManagementPort = 6060
 	DefaultSignalingPort  = 4222
-	DEFAULT_Relay_PORT      = 6266
+	DEFAULT_Relay_PORT    = 6266
 	DefaultStunServerPort = 3478
 )

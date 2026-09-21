@@ -41,7 +41,7 @@ type ProbeFactory struct {
 	signal         infra.SignalService
 	getProvisioner func() provision.Provisioner
 	getOnMessage   func() func(context.Context, *infra.Message) error
-	getRelay         func() infra.RelayChannel
+	getRelay       func() infra.RelayChannel
 	getStats       func(pubKey string) (PeerStats, error)
 
 	log *log.Logger
@@ -58,7 +58,7 @@ type ProbeFactoryConfig struct {
 	Signal         infra.SignalService
 	GetOnMessage   func() func(context.Context, *infra.Message) error
 	PeerManager    *infra.PeerManager
-	GetRelay         func() infra.RelayChannel
+	GetRelay       func() infra.RelayChannel
 	FilteringMux   *infra.FilteringUDPMux
 	FilteringMux6  *infra.FilteringUDPMux
 	GetProvisioner func() provision.Provisioner
@@ -76,7 +76,7 @@ func NewProbeFactory(cfg *ProbeFactoryConfig) *ProbeFactory {
 		signal:         cfg.Signal,
 		probes:         make(map[string]*Probe),
 		peerManager:    cfg.PeerManager,
-		getRelay:         cfg.GetRelay,
+		getRelay:       cfg.GetRelay,
 		showLog:        cfg.ShowLog,
 		FilteringMux:   cfg.FilteringMux,
 		FilteringMux6:  cfg.FilteringMux6,
@@ -525,7 +525,7 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		return NewRelayDialer(&RelayDialerConfig{
 			LocalId:        p.localId,
 			RemoteId:       remoteId,
-			Relay:            p.getRelay(),
+			Relay:          p.getRelay(),
 			Sender:         signaler.Send,
 			GetLocalPeer:   getLocalPeer,
 			OnPeerReceived: onPeerReceived,

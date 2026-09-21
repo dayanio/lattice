@@ -577,7 +577,7 @@ func (p *peerService) registerStandalone(ctx context.Context, dto *dto.PeerDto) 
 		Hostname:   peer.Hostname,
 		Platform:   peer.Platform,
 		NetworkId:  peer.WorkspaceID,
-		RelayURL:     p.relayURL,
+		RelayURL:   p.relayURL,
 		// ADR-0003: tells the agent whether the peer is usable yet.
 		ApprovalStatus: peer.ApprovalStatus,
 	}

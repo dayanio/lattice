@@ -144,7 +144,7 @@ type Node struct {
 		peerManager *infra.PeerManager
 	}
 
-	current   *infra.Peer
+	current     *infra.Peer
 	relayClient infra.RelayChannel
 
 	// devicePrivateKey is the resolved WireGuard private key for this node,
@@ -227,7 +227,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		node       *Node
 		v4conn     *net.UDPConn
 		v6conn     *net.UDPConn
-		relayChan    infra.RelayChannel
+		relayChan  infra.RelayChannel
 		privateKey wgtypes.Key
 	)
 
@@ -492,7 +492,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		PassThrough6: passThroughCh6,
 		V4Conn:       v4conn,
 		V6Conn:       v6conn,
-		RelayClient:    relayChan,
+		RelayClient:  relayChan,
 		KeyManager:   node.manager.keyManager,
 	})
 
