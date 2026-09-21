@@ -44,8 +44,8 @@ type writer interface {
 	Write(p []byte) (int, error)
 }
 
-// lrpClient holds logic shared between TCP and QUIC clients.
-type lrpClient struct {
+// relayClient holds logic shared between TCP and QUIC clients.
+type relayClient struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	log        *log.Logger
@@ -69,10 +69,19 @@ func splitURLToken(addr string) (cleanAddr, token string) {
 		return addr, ""
 	}
 	cleanAddr = addr[:i]
-	if q, err := url.ParseQuery(addr[i+1:]); err == nil {
-		token = q.Get("token")
+	for _, kv := range strings.Split(addr[i+1:], "&") {
+		v, ok := strings.CutPrefix(kv, "token=")
+		if !ok {
+			continue
+		}
+		// PathUnescape, not QueryUnescape: tokens are base64 and a raw '+'
+		// must not turn into a space. %XX escapes are still decoded.
+		if dec, err := url.PathUnescape(v); err == nil {
+			v = dec
+		}
+		return cleanAddr, v
 	}
-	return cleanAddr, token
+	return cleanAddr, ""
 }
 
 // authChallengeWait bounds how long a client waits for the relay's auth
@@ -82,15 +91,15 @@ const authChallengeWait = 3 * time.Second
 
 // computeAuthResponse builds the AuthResponse payload for the relay's
 // challenge: clientPublicKey || DH(clientPrivate, challenge).
-func (c *lrpClient) computeAuthResponse(challenge [KeySize]byte) ([AuthResponsePayload]byte, error) {
+func (c *relayClient) computeAuthResponse(challenge [KeySize]byte) ([AuthResponsePayload]byte, error) {
 	return answerChallenge(challenge, c.privateKey)
 }
 
-func (c *lrpClient) nextSeq() uint16 {
+func (c *relayClient) nextSeq() uint16 {
 	return uint16(c.seq.Add(1) & 0xFFFF)
 }
 
-func (c *lrpClient) probeWorker() {
+func (c *relayClient) probeWorker() {
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -112,7 +121,7 @@ func (c *lrpClient) probeWorker() {
 // was configured (via the relay URL's "?token=..." query parameter) it is
 // carried as the frame payload; the server validates it before accepting
 // the session.
-func (c *lrpClient) register(w writer) error {
+func (c *relayClient) register(w writer) error {
 	h := &Header{
 		Seq:        c.nextSeq(),
 		PayloadLen: uint32(len(c.authToken)),
@@ -130,8 +139,8 @@ func (c *lrpClient) register(w writer) error {
 	return nil
 }
 
-// makeFrame builds a complete LRP frame (header + payload).
-func (c *lrpClient) makeFrame(toID uint64, cmd uint8, data []byte) []byte {
+// makeFrame builds a complete Relay frame (header + payload).
+func (c *relayClient) makeFrame(toID uint64, cmd uint8, data []byte) []byte {
 	h := Header{
 		Seq:        c.nextSeq(),
 		PayloadLen: uint32(len(data)),

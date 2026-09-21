@@ -50,7 +50,7 @@ func TestSend6AfterSend4PoolPoison(t *testing.T) {
 	ua.IP = ua.IP[:4]
 	b.udpAddrPool.Put(ua)
 
-	ep := &LRPEndpoint{
+	ep := &RelayEndpoint{
 		Addr:          receiver.LocalAddr().(*net.UDPAddr).AddrPort(),
 		TransportType: ICE,
 	}
@@ -98,12 +98,12 @@ func TestSend4ThenSend6(t *testing.T) {
 	b := NewBind(&BindConfig{})
 
 	// v4 first (leaves the pooled addr with a 4-byte IP + the v4 port)...
-	ep4 := &LRPEndpoint{Addr: rx4.LocalAddr().(*net.UDPAddr).AddrPort(), TransportType: ICE}
+	ep4 := &RelayEndpoint{Addr: rx4.LocalAddr().(*net.UDPAddr).AddrPort(), TransportType: ICE}
 	if err := b.send4(tx4, ipv4.NewPacketConn(tx4), ep4, [][]byte{[]byte("v4")}); err != nil {
 		t.Fatalf("send4: %v", err)
 	}
 	// ...then v6 must still land on the right address/port.
-	ep6 := &LRPEndpoint{Addr: rx6.LocalAddr().(*net.UDPAddr).AddrPort(), TransportType: ICE}
+	ep6 := &RelayEndpoint{Addr: rx6.LocalAddr().(*net.UDPAddr).AddrPort(), TransportType: ICE}
 	if err := b.send6(tx6, ipv6.NewPacketConn(tx6), ep6, [][]byte{[]byte("v6")}); err != nil {
 		t.Fatalf("send6: %v", err)
 	}

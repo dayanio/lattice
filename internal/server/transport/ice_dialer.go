@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -108,7 +107,7 @@ type ICEDialerConfig struct {
 	OnPeerReceived func(peer infra.Peer)
 	ShowLog        bool
 	// OnRestart is called when a SYN arrives on an already-closed dialer,
-	// indicating the remote peer restarted. Mirrors the LRP dialer pattern.
+	// indicating the remote peer restarted. Mirrors the Relay dialer pattern.
 	OnRestart func()
 }
 
@@ -365,6 +364,16 @@ func NewIceDialer(cfg *ICEDialerConfig) infra.Dialer {
 	}
 }
 
+// restartNotifyInterval / restartNotifyAttempts bound how long a responder
+// keeps telling the initiator it started fresh (see Prepare).
+var restartNotifyInterval = 5 * time.Second
+
+const restartNotifyAttempts = 12
+
+// iceConnectTimeout bounds connectivity checks once remote candidates are in.
+// pion gives up on its own (Failed) after 25 s, so this is only a backstop.
+const iceConnectTimeout = 30 * time.Second
+
 // Prepare sends handshake SYN when local is the initiator (localId > remoteId numerically).
 func (i *iceDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) error {
 	i.log.Debug("prepare ice", "localId", i.localId, "remoteId", remoteId, "isInitiator", isInitiator(i.localId, remoteId))
@@ -377,9 +386,28 @@ func (i *iceDialer) Prepare(ctx context.Context, remoteId infra.PeerIdentity) er
 		// triggers probe.restart() on the remote so it re-initiates the ICE
 		// handshake. If the remote is still probing (normal startup), the
 		// notification is ignored.
+		//
+		// The notice is repeated until the initiator's SYN/OFFER arrives, the
+		// dialer closes or the attempts run out: a single send at startup is
+		// easily lost (NATS still connecting, initiator mid-restart), which
+		// left initiators believing a dead session was alive until the 3-min
+		// WireGuard liveness check fired.
 		go func() {
-			if err := i.sendPacket(ctx, remoteId, signal.PacketType_RESTART_NOTIFY, nil); err != nil {
-				i.log.Debug("restart notify send failed", "remoteId", remoteId, "err", err)
+			ticker := time.NewTicker(restartNotifyInterval)
+			defer ticker.Stop()
+			for attempt := 0; attempt < restartNotifyAttempts; attempt++ {
+				if err := i.sendPacket(ctx, remoteId, signal.PacketType_RESTART_NOTIFY, nil); err != nil {
+					i.log.Debug("restart notify send failed", "remoteId", remoteId, "err", err)
+				}
+				select {
+				case <-ticker.C:
+				case <-i.offerReady:
+					return
+				case <-i.closeChan:
+					return
+				case <-ctx.Done():
+					return
+				}
 			}
 		}()
 		return nil
@@ -499,7 +527,15 @@ func (i *iceDialer) Dial(ctx context.Context) (infra.Transport, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err = agent.AwaitConnect(dialCtx); err != nil {
+		// The connect phase gets its own budget. dialCtx started ticking while
+		// we waited for the initiator's SYN, so a SYN landing near the end of
+		// that window (the responder waits up to 65 s) left ICE a fraction of a
+		// second: it connected 0.4 s after the deadline, the dial was declared
+		// failed, and the probe never left Probing even though the tunnel came
+		// up through WireGuard roaming.
+		connectCtx, cancelConnect := context.WithTimeout(ctx, iceConnectTimeout)
+		defer cancelConnect()
+		if err = agent.AwaitConnect(connectCtx); err != nil {
 			return nil, err
 		}
 		remoteAddr := iceConn.RemoteAddr().String()
@@ -559,19 +595,7 @@ func (i *iceDialer) getAgent(remoteId infra.PeerIdentity) (*ice.Agent, error) {
 	disconnectedTimeout := 10 * time.Second
 	failedTimeout := 15 * time.Second
 	iceAgent, err := ice.NewAgentWithOptions(
-		ice.WithInterfaceFilter(func(name string) bool {
-			name = strings.ToLower(name)
-			// Filter out all virtual network interfaces and WireGuard TUN interfaces (wf0).
-			// wf0 cannot be used as an ICE candidate: if selected, WireGuard would configure
-			// the peer endpoint to the wf0 address, causing encrypted packets to pass through wf0 again, forming a routing loop.
-			if strings.Contains(name, "docker") ||
-				strings.Contains(name, "veth") ||
-				strings.Contains(name, "br-") ||
-				strings.HasPrefix(name, "wf") {
-				return false
-			}
-			return true
-		}),
+		ice.WithInterfaceFilter(infra.ICEInterfaceAllowed),
 		ice.WithUDPMux(i.udpMux()),
 		ice.WithUDPMuxSrflx(i.filteringMux.UDPMuxSrflx()),
 		ice.WithNetworkTypes(i.networkTypes()),

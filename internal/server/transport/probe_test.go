@@ -66,19 +66,19 @@ func TestProbe_onSuccess_ICE(t *testing.T) {
 	}
 }
 
-func TestProbe_onSuccess_LRP(t *testing.T) {
+func TestProbe_onSuccess_Relay(t *testing.T) {
 	sm := NewStateMachine(StateProbing)
 	p := &Probe{sm: sm}
-	transport := &mockTransport{tp: infra.LRP, addr: "fake"}
+	transport := &mockTransport{tp: infra.Relay, addr: "fake"}
 	p.onSuccess(transport)
 
-	if got := sm.Current(); got != StateLRPReady {
-		t.Errorf("expected StateLRPReady, got %s", got)
+	if got := sm.Current(); got != StateRelayReady {
+		t.Errorf("expected StateRelayReady, got %s", got)
 	}
 }
 
 func TestProbe_handleUpgradeTransport(t *testing.T) {
-	sm := NewStateMachine(StateLRPReady)
+	sm := NewStateMachine(StateRelayReady)
 	p := &Probe{
 		sm:  sm,
 		log: log.GetLogger("test-probe"),

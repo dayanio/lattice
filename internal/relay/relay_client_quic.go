@@ -33,16 +33,16 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-var _ infra.Lrp = (*QUICClient)(nil)
+var _ infra.RelayChannel = (*QUICClient)(nil)
 
-// QUICClient implements infra.Lrp using QUIC datagrams for Forward/Probe
+// QUICClient implements infra.Relay using QUIC datagrams for Forward/Probe
 // and a QUIC control stream for registration. App-level keepalive is not
 // needed because quic.Config.KeepAlivePeriod handles connection liveness.
 //
 // Like the TCP client, the connection is supervised: the run loop redials
 // with capped exponential backoff after any disconnect and re-registers.
 type QUICClient struct {
-	*lrpClient
+	*relayClient
 
 	mu        sync.Mutex
 	conn      *quic.Conn
@@ -52,7 +52,7 @@ type QUICClient struct {
 	closed atomic.Bool
 }
 
-// NewQUICClient creates a new QUIC LRP client and starts its connect
+// NewQUICClient creates a new QUIC Relay client and starts its connect
 // supervisor. The first dial happens in the background: construction does
 // not fail when the relay is unreachable. The URL may carry a
 // "?token=secret" query parameter; it is stripped before dialing and
@@ -62,10 +62,10 @@ func NewQUICClient(ctx context.Context, localID infra.PeerID, url string, privat
 	serverURL, authToken := splitURLToken(url)
 	ctx, cancel := context.WithCancel(ctx)
 	c := &QUICClient{
-		lrpClient: &lrpClient{
+		relayClient: &relayClient{
 			ctx:        ctx,
 			cancel:     cancel,
-			log:        log.GetLogger("lrp-quic"),
+			log:        log.GetLogger("relay-quic"),
 			localId:    localID,
 			serverURL:  serverURL,
 			authToken:  authToken,
@@ -121,7 +121,7 @@ func (c *QUICClient) run() {
 func (c *QUICClient) Connect() error {
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: true, //nolint:gosec
-		NextProtos:         []string{"lrp"},
+		NextProtos:         []string{"relay"},
 	}
 	quicCfg := &quic.Config{
 		EnableDatagrams: true,
@@ -246,16 +246,23 @@ func (c *QUICClient) RemoteAddr() net.Addr {
 	return nil
 }
 
-// Send transmits a LRP frame (header + data) as a QUIC datagram. While
+// Send transmits a Relay frame (header + data) as a QUIC datagram. While
 // disconnected, sends fail fast: WireGuard retransmits at its own layer.
-func (c *QUICClient) Send(ctx context.Context, targetId uint64, lrpType uint8, data []byte) error {
+// Connected reports whether the relay QUIC connection is currently up.
+func (c *QUICClient) Connected() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn != nil
+}
+
+func (c *QUICClient) Send(ctx context.Context, targetId uint64, relayType uint8, data []byte) error {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
 	if conn == nil {
-		return errors.New("lrp: disconnected")
+		return errors.New("relay: disconnected")
 	}
-	frame := c.makeFrame(targetId, lrpType, data)
+	frame := c.makeFrame(targetId, relayType, data)
 	return conn.SendDatagram(frame)
 }
 
@@ -267,7 +274,7 @@ func (c *QUICClient) ReceiveFunc() wgconn.ReceiveFunc {
 	return func(packets [][]byte, sizes []int, eps []wgconn.Endpoint) (n int, err error) {
 		for {
 			if c.closed.Load() {
-				return 0, errors.New("lrp: closed")
+				return 0, errors.New("relay: closed")
 			}
 
 			c.mu.Lock()
@@ -303,7 +310,7 @@ func (c *QUICClient) ReceiveFunc() wgconn.ReceiveFunc {
 
 			header, parseErr := Unmarshal(data[:HeaderSize])
 			if parseErr != nil {
-				c.log.Error("failed to parse LRP header", parseErr)
+				c.log.Error("failed to parse Relay header", parseErr)
 				continue
 			}
 
@@ -316,10 +323,10 @@ func (c *QUICClient) ReceiveFunc() wgconn.ReceiveFunc {
 				}
 				copy(packets[0], payload)
 				sizes[0] = len(payload)
-				eps[0] = &infra.LRPEndpoint{
-					Addr:          infra.LrpFakeAddrPort(uint64(header.ToID)),
+				eps[0] = &infra.RelayEndpoint{
+					Addr:          infra.RelayFakeAddrPort(uint64(header.ToID)),
 					RemoteId:      uint64(header.ToID),
-					TransportType: infra.LRP,
+					TransportType: infra.Relay,
 				}
 				return 1, nil
 
@@ -335,7 +342,7 @@ func (c *QUICClient) ReceiveFunc() wgconn.ReceiveFunc {
 				continue
 
 			default:
-				c.log.Debug("unknown LRP command, ignoring", "cmd", header.Cmd)
+				c.log.Debug("unknown Relay command, ignoring", "cmd", header.Cmd)
 				continue
 			}
 		}

@@ -17,7 +17,7 @@ package tunnel
 // used for cli flags
 var ServerUrl string
 var SignalUrl string
-var LrpUrl string
+var RelayURL string
 var ShowNetLog bool
 
 const (
@@ -29,6 +29,6 @@ const (
 	StunServerDomain      = "stun.alattice.io"
 	DefaultManagementPort = 6060
 	DefaultSignalingPort  = 4222
-	DEFAULT_LRP_PORT      = 6266
+	DEFAULT_Relay_PORT    = 6266
 	DefaultStunServerPort = 3478
 )

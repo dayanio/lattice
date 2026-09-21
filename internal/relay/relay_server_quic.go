@@ -56,12 +56,13 @@ func (s *quicControlStream) RemoteAddr() net.Addr {
 	return s.conn.RemoteAddr()
 }
 
-// QUICServer accepts QUIC connections and multiplexes LRP sessions.
+// QUICServer accepts QUIC connections and multiplexes Relay sessions.
 type QUICServer struct {
 	log             *internallog.Logger
 	sessionMgr      *SessionManager
 	authToken       string
 	requirePeerAuth bool
+	failLog         relayFailLimiter
 }
 
 // NewQUICServer creates a new QUICServer backed by the given SessionManager.
@@ -69,7 +70,7 @@ type QUICServer struct {
 // requirePeerAuth enables the X25519 challenge-response (ADR-0004).
 func NewQUICServer(manager *SessionManager, authToken string, requirePeerAuth bool) *QUICServer {
 	return &QUICServer{
-		log:             internallog.GetLogger("lrp-quic"),
+		log:             internallog.GetLogger("relay-quic"),
 		sessionMgr:      manager,
 		authToken:       authToken,
 		requirePeerAuth: requirePeerAuth,
@@ -88,7 +89,7 @@ func (s *QUICServer) Start(addr string, tlsCfg *tls.Config) error {
 	if err != nil {
 		return err
 	}
-	s.log.Info("QUIC LRP relay server listening", "addr", addr)
+	s.log.Info("QUIC Relay relay server listening", "addr", addr)
 
 	for {
 		conn, err := ln.Accept(context.Background())
@@ -246,8 +247,13 @@ func (s *QUICServer) relayDatagrams(conn *quic.Conn, fromId uint64) {
 			continue
 		}
 
+		if h.Cmd == Forward {
+			stampSender(data, fromId)
+		}
 		if relayErr := s.sessionMgr.Relay(uint64(h.ToID), data); relayErr != nil {
-			s.log.Warn("datagram relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
+			if s.failLog.allow(h.ToID, time.Now()) {
+				s.log.Warn("datagram relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
+			}
 		} else {
 			s.log.Debug("datagram relayed", "from", fromId, "to", h.ToID)
 		}
@@ -335,6 +341,6 @@ func GenerateSelfSignedTLS() (*tls.Config, error) {
 
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"lrp"},
+		NextProtos:   []string{"relay"},
 	}, nil
 }

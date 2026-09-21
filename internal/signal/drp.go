@@ -31,7 +31,7 @@ const (
 	MessageType_MessageRegisterType          MessageType = 10
 )
 
-// DrpMessage is the envelope used by the LRP relay protocol.
+// DrpMessage is the envelope used by the Relay relay protocol.
 type DrpMessage struct {
 	From      string      `json:"from,omitempty"`
 	To        string      `json:"to,omitempty"`

@@ -72,9 +72,10 @@ struct MenuBarGlyph: View {
     @StateObject private var tunnel = TunnelManager.shared
 
     var body: some View {
-        Image(systemName: "personalhotspot")
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(color)
+        // 晶格六边形：Lattice 品牌隐喻，与 Reflux 接收端的天线图标区分
+        Image(systemName: "circle.hexagongrid.fill")
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(iconStyle)
             .onAppear {
                 // Deferred: mutating the window scene during view update
                 // trips "Modifying state during view update".
@@ -86,11 +87,15 @@ struct MenuBarGlyph: View {
             }
     }
 
-    private var color: Color {
+    private var iconStyle: AnyShapeStyle {
         switch tunnel.status {
-        case .connected: return .green
-        case .connecting, .reasserting, .disconnecting: return .orange
-        default: return .primary
+        case .connected:
+            return AnyShapeStyle(LinearGradient(colors: [.green, .teal],
+                           startPoint: .topLeading, endPoint: .bottomTrailing))
+        case .connecting, .reasserting, .disconnecting:
+            return AnyShapeStyle(Color.orange)
+        default:
+            return AnyShapeStyle(Color.primary)
         }
     }
 }

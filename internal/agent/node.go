@@ -20,6 +20,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -64,12 +65,15 @@ func discoverNATSURLOnly(ctx context.Context, serverURL string) (string, error) 
 	if override := config.Conf.SignalingURL; override != "" {
 		return override, nil
 	}
-	d, err := discover(ctx, serverURL)
+	d, err := discoverWithRetry(ctx, serverURL)
 	if err != nil {
 		return "", err
 	}
 	return d.NatsURL, nil
 }
+
+// errDiscoveryEmpty means the server answered but advertised no NATS URL.
+var errDiscoveryEmpty = errors.New("discovery endpoint returned empty nats_url")
 
 // discoveryResult holds the URLs returned by the server's /api/v1/discovery endpoint.
 type discoveryResult struct {
@@ -102,7 +106,7 @@ func discover(ctx context.Context, serverURL string) (discoveryResult, error) {
 		return discoveryResult{}, fmt.Errorf("decoding discovery response: %w", err)
 	}
 	if envelope.Data.NatsURL == "" {
-		return discoveryResult{}, fmt.Errorf("discovery endpoint returned empty nats_url")
+		return discoveryResult{}, errDiscoveryEmpty
 	}
 	return discoveryResult{
 		NatsURL:      envelope.Data.NatsURL,
@@ -112,7 +116,7 @@ func discover(ctx context.Context, serverURL string) (discoveryResult, error) {
 }
 
 // Node is the Lattice data-plane node. It owns the WireGuard device and
-// coordinates peer discovery, ICE/LRP hole-punching, and OS network
+// coordinates peer discovery, ICE/Relay hole-punching, and OS network
 // provisioning (routes, iptables rules, WireGuard peer config).
 type Node struct {
 	logger      *log.Logger
@@ -140,8 +144,8 @@ type Node struct {
 		peerManager *infra.PeerManager
 	}
 
-	current   *infra.Peer
-	lrpClient infra.Lrp
+	current     *infra.Peer
+	relayClient infra.RelayChannel
 
 	// devicePrivateKey is the resolved WireGuard private key for this node,
 	// captured on every resolution path in NewNode (sandbox parse, local
@@ -205,7 +209,7 @@ type NodeConfig struct {
 //
 //	Register with control plane → derive PrivateKey → build KeyManager/PeerIdentity
 //	→ create ProbeFactory (Provisioner is nil at this point, wired in phase 3)
-//	→ subscribe NATS topic → wire ControlClient → optional LRP relay client
+//	→ subscribe NATS topic → wire ControlClient → optional Relay relay client
 //
 // Phase 3 — WireGuard data plane (depends on phase 2)
 //
@@ -223,7 +227,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		node       *Node
 		v4conn     *net.UDPConn
 		v6conn     *net.UDPConn
-		lrp        infra.Lrp
+		relayChan  infra.RelayChannel
 		privateKey wgtypes.Key
 	)
 
@@ -285,7 +289,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// a later engine (re)start within the same process.
 	if config.Conf.SignalingURL == "" {
 		var d discoveryResult
-		d, err = discover(ctx, config.Conf.ServerUrl)
+		d, err = discoverWithRetry(ctx, config.Conf.ServerUrl)
 		if err != nil {
 			return nil, fmt.Errorf("NATS discovery failed: %w", err)
 		}
@@ -332,7 +336,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	}
 
 	// Register announces this node to the control plane and receives back the
-	// allocated IP and LRP relay URL. Since ADR-0003 the WireGuard keypair is
+	// allocated IP and Relay relay URL. Since ADR-0003 the WireGuard keypair is
 	// generated locally (ensureDeviceKey) and only its public key is sent;
 	// any private key the server still returns is ignored.
 	// The sandbox skips this call: it pre-registers via HTTP and passes
@@ -400,7 +404,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	node.manager.peerManager.AddPeer(node.current.AppID, node.current)
 
 	// ProbeFactory manages the lifecycle of per-peer connection probes (ICE
-	// hole-punching, LRP relay fallback). GetProvisioner and GetOnMessage are
+	// hole-punching, Relay relay fallback). GetProvisioner and GetOnMessage are
 	// closures that capture the node pointer: they resolve lazily at call time
 	// so they always see the values assigned in phase 3, without any two-phase
 	// Configure() call.
@@ -420,39 +424,54 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 			}
 			return node.messageHandler.HandleEvent
 		},
-		GetLrp: func() infra.Lrp {
-			return lrp
+		GetRelay: func() infra.RelayChannel {
+			return relayChan
 		},
-		GetHandshake: func(pubKey string) (time.Time, error) {
-			return wireguard.PeerHandshake(node.Name, pubKey)
+		GetPeerStats: func(pubKey string) (transport.PeerStats, error) {
+			// In-process IpcGet, not wgctrl: the engine embedded in the iOS
+			// network extension is built with NewNode and never opens the UAPI
+			// socket file wgctrl needs, so every liveness signal would fail there.
+			if node.iface == nil {
+				return transport.PeerStats{}, errors.New("wireguard device not ready")
+			}
+			conf, ipcErr := node.iface.IpcGet()
+			if ipcErr != nil {
+				return transport.PeerStats{}, ipcErr
+			}
+			hs, rx, ep, statsErr := wireguard.PeerStatsFromIpc(conf, pubKey)
+			return transport.PeerStats{LastHandshake: hs, RxBytes: rx, Endpoint: ep}, statsErr
 		},
 	})
 
-	// LRP is an optional relay channel used as a fallback when ICE traversal
+	// Relay is an optional relay channel used as a fallback when ICE traversal
 	// fails (e.g. symmetric NAT on both sides).
-	// LRP is initialized before DefaultBind so node.bind receives a valid LrpClient.
-	// LRP engages when flagged or when the netmap carries a relay URL —
+	// Relay is initialized before DefaultBind so node.bind receives a valid RelayClient.
+	// Relay engages when flagged or when the netmap carries a relay URL —
 	// standalone stamps one into every peer so NATed topologies (containers)
 	// can fall back to the relay without operator flags.
-	if cfg.Flags.EnableLrp || node.current.LrpUrl != "" {
+	if cfg.Flags.EnableRelay || node.current.RelayURL != "" {
 		if cfg.Flags.RelayQuicURL != "" {
-			lrp, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, privateKey, node.probeFactory.Handle)
+			relayChan, err = relay.NewQUICClient(ctx, localIdentity.ID(), cfg.Flags.RelayQuicURL, privateKey, node.probeFactory.Handle)
 		} else {
-			lrpUrl := cfg.Flags.RelayURL
-			if lrpUrl == "" {
-				lrpUrl = node.current.LrpUrl
-			}
+			relayURL := resolveRelayURL(cfg.Flags.RelayURL, node.current.RelayURL)
 
-			if lrpUrl != "" {
+			if relayURL != "" {
 				// probeFactory.Handle is passed directly: probeFactory already exists
 				// at this point so no closure is needed on this side of the circular dep.
-				lrp, err = relay.NewTCPClient(ctx, localIdentity.ID(), lrpUrl, privateKey, node.probeFactory.Handle)
+				relayChan, err = relay.NewTCPClient(ctx, localIdentity.ID(), relayURL, privateKey, node.probeFactory.Handle)
 			}
 		}
 		if err != nil {
 			return nil, err
 		}
-		node.lrpClient = lrp
+		node.relayClient = relayChan
+		if relayChan != nil {
+			// The ICE/Relay race and the bind's relay receive path are gated on
+			// this flag; a relay client that exists but is never raced or
+			// read leaves NATed peers with no fallback (same as the Apple
+			// engine, which sets it whenever the server advertises a relay).
+			config.Conf.EnableRelay = true
+		}
 	}
 
 	// ── Phase 3: WireGuard data plane ────────────────────────────────────────
@@ -460,11 +479,11 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	// This ensures node.messageHandler is non-nil before any NATS push can arrive,
 	// eliminating the nil-window race where a config push arriving between Subscribe
 	// and messageHandler assignment would be silently dropped.
-	// Dependency order: ProbeFactory → LRP → DefaultBind → WGDevice → Provisioner
+	// Dependency order: ProbeFactory → Relay → DefaultBind → WGDevice → Provisioner
 	//                   → MessageHandler → Subscribe
 
 	// DefaultBind is WireGuard's UDP binding layer. It routes outbound encrypted
-	// packets to the correct transport channel (ICE direct path or LRP relay)
+	// packets to the correct transport channel (ICE direct path or Relay relay)
 	// and uses KeyManager to match inbound packets to the right WireGuard peer
 	// during the handshake.
 	node.bind = infra.NewBind(&infra.BindConfig{
@@ -473,7 +492,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		PassThrough6: passThroughCh6,
 		V4Conn:       v4conn,
 		V6Conn:       v6conn,
-		LrpClient:    lrp,
+		RelayClient:  relayChan,
 		KeyManager:   node.manager.keyManager,
 	})
 
@@ -520,7 +539,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	node.DeviceManager = wireguard.NewDeviceManager(log.GetLogger("device-manager"), node.iface, make(chan struct{}))
 
 	// Subscribe to this node's NATS signaling subject. All incoming ICE and
-	// LRP signal packets are routed to probeFactory.Handle for dispatch.
+	// Relay signal packets are routed to probeFactory.Handle for dispatch.
 	// Subscribe happens after messageHandler is set (phase 3 above).
 	if err = natsSignalService.Subscribe(fmt.Sprintf("%s.%s", "lattice.signals.peers", localIdentity), node.probeFactory.Handle); err != nil {
 		return nil, err
@@ -639,6 +658,12 @@ func (c *Node) Start(ctx context.Context) error {
 			return nil
 		})
 	}
+
+	// Probe lifecycle watchdog: probes that permanently closed (60 s of
+	// failed discovery) must be revived on a cadence of their own — the
+	// netmap apply path is version-guarded and cannot be relied on to
+	// recreate them once the incident that closed them is over.
+	c.probeFactory.StartReconciler(ctx, 30*time.Second)
 	return nil
 }
 
@@ -677,9 +702,9 @@ func (c *Node) RefreshConfig(ctx context.Context) error {
 // "no responders" errors on peer reconnect attempts. Then it closes the
 // WireGuard device, releasing the TUN interface and UDP sockets.
 func (c *Node) Stop() error {
-	if c.lrpClient != nil {
-		if err := c.lrpClient.Close(); err != nil {
-			c.logger.Warn("lrp client close failed", "err", err)
+	if c.relayClient != nil {
+		if err := c.relayClient.Close(); err != nil {
+			c.logger.Warn("relay client close failed", "err", err)
 		}
 	}
 	if c.natsService != nil {
@@ -726,11 +751,11 @@ func (c *Node) close() {
 
 // AddPeer registers a remote peer with the local node. It first updates the
 // in-memory PeerManager (used by hole-punching probes to look up peer info),
-// then starts an ICE/LRP probe via ControlClient. If the peer is this node
+// then starts an ICE/Relay probe via ControlClient. If the peer is this node
 // itself (matching public key), the write is skipped.
 //
 // Sandbox peers (agent.lattice.io/managed=true) participate in the same
-// ICE/LRP signaling as regular peers. The companion is the ICE initiator
+// ICE/Relay signaling as regular peers. The companion is the ICE initiator
 // (higher peerID) and sends the ICE OFFER; the sandbox responds with ANSWER.
 // WireGuard endpoint is configured by the probe factory when ICE connects.
 // setAppliedVersion records the ConfigVersion of the last netmap this node
@@ -750,6 +775,7 @@ func (c *Node) StatusSnapshot(pid int) daemon.StatusInfo {
 		AppID:          c.Name,
 		AppliedVersion: c.AppliedVersion(),
 		UptimeSeconds:  int64(time.Since(c.startedAt).Seconds()),
+		Peers:          buildPeerStatuses(c.manager.peerManager.GetAll(), c.ConnectionStates()),
 	}
 	if c.current != nil && c.current.Address != nil {
 		snapshot.Address = *c.current.Address
@@ -810,7 +836,7 @@ func (c *Node) GetPeerManager() *infra.PeerManager {
 
 // ConnectionStates snapshots per-peer connection lifecycle state from the
 // probe factory, keyed by remote AppID. "ice-ready" means a direct P2P
-// path, "lrp-ready" means traffic is being relayed. Used by embedded
+// path, "relay-ready" means traffic is being relayed. Used by embedded
 // engine clients (Apple Network Extension) to show connection quality.
 func (c *Node) ConnectionStates() map[string]string {
 	if c.probeFactory == nil {

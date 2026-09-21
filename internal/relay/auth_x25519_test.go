@@ -153,7 +153,7 @@ func TestAuthChallengesAreUnique(t *testing.T) {
 
 func TestPeerIDFromPublicKeyRoundTrip(t *testing.T) {
 	pub := testKey(t)
-	// PeerID = BigEndian first 8 bytes; LRP header carries the low 32 bits.
+	// PeerID = BigEndian first 8 bytes; Relay header carries the low 32 bits.
 	peerID := binary.BigEndian.Uint64(pub[:8])
 	if got := peerIDFromPublicKey(pub); got != uint32(peerID) {
 		t.Fatalf("peerID mismatch: got %d want %d", got, uint32(peerID))

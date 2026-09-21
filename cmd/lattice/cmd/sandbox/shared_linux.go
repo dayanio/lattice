@@ -224,14 +224,14 @@ func runSandbox(
 	cmdArgs []string,
 	enableMCPProxy bool,
 ) error {
-	agentconfig.Conf.AppId = agentName
+	agentconfig.Conf.AppId = infra.NormalizeAppID(agentName)
 
 	localIP := overlayAddr(currentPeer)
 	fmt.Printf("[sandbox-run] %q registered, overlay IP=%s\n", agentName, localIP)
 
-	if currentPeer.LrpUrl != "" {
-		agentconfig.Conf.EnableLrp = true
-		agentconfig.Conf.RelayURL = currentPeer.LrpUrl
+	if currentPeer.RelayURL != "" {
+		agentconfig.Conf.EnableRelay = true
+		agentconfig.Conf.RelayURL = currentPeer.RelayURL
 	}
 
 	agentJWT := currentPeer.Token

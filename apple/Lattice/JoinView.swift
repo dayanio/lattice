@@ -40,12 +40,30 @@ struct JoinView: View {
     var initialResetIdentity: Bool = false
 
     @State private var useScanner: Bool
+    @State private var joinInput = ""
+    /// "Log in and join": an account issues this device's token, instead of an
+    /// invite link or token being pasted.
+    @State private var accountMode = false
+    @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
+    @State private var password = ""
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
-    @State private var joinToken = ""
     @State private var deviceName = UIDevice.current.name
     @State private var isSavingNetwork = false
-    @State private var networkError = ""
+    @State private var failure: JoinFailure?
     @State private var scannerError = ""
+
+    private var payload: JoinPayload? { JoinPayload(joinInput) }
+    private var effectiveToken: String { payload?.token ?? "" }
+    private var effectiveServer: String {
+        (payload?.serverURL ?? serverURL).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    private var effectiveName: String { payload?.name ?? deviceName }
+    private var canJoin: Bool {
+        if accountMode {
+            return !serverURL.trimmingCharacters(in: .whitespaces).isEmpty && !username.isEmpty && !password.isEmpty && !isSavingNetwork
+        }
+        return !effectiveToken.isEmpty && !effectiveServer.isEmpty && !isSavingNetwork
+    }
 
     init(onFinished: @escaping () -> Void, mode: JoinMode = .manual, initialResetIdentity: Bool = false) {
         self.onFinished = onFinished
@@ -118,44 +136,147 @@ struct JoinView: View {
         }
     }
 
-    /// 表单形态：手动输入为主，保留切换到扫码的入口。
+    /// 表单形态：一个输入框接受邀请链接或令牌；服务器地址和设备名折叠在“高级”里，
+    /// 只有输入里没有服务器地址时才需要填。
     private var networkStep: some View {
         Form {
             Section {
-                Button {
-                    useScanner = true
-                } label: {
-                    Label("扫描二维码", systemImage: "qrcode.viewfinder")
+                Picker("加入方式", selection: $accountMode) {
+                    Text("邀请链接 / 令牌").tag(false)
+                    Text("账号登录").tag(true)
+                }
+                .pickerStyle(.segmented)
+            }
+
+            if accountMode {
+                Section {
+                    TextField("服务器 URL (http://…)", text: $serverURL)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    TextField("用户名", text: $username)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    SecureField("密码", text: $password)
+                } header: {
+                    Text("账号")
+                } footer: {
+                    Text("用账号为这台设备签发入网令牌，登录状态会保留，之后的管理操作不必再登录。")
+                }
+            } else {
+                Section {
+                    TextField("粘贴邀请链接或入网令牌", text: $joinInput)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    Button {
+                        pasteFromClipboard()
+                    } label: {
+                        Label("从剪贴板粘贴", systemImage: "doc.on.clipboard")
+                    }
+                    Button {
+                        useScanner = true
+                    } label: {
+                        Label("扫描二维码", systemImage: "qrcode.viewfinder")
+                    }
+                } header: {
+                    Text("邀请链接或令牌")
+                } footer: {
+                    if let payload, payload.token != nil, payload.serverURL == nil, serverURL.isEmpty {
+                        Text("这个令牌不含服务器地址，请在下面的“高级”里填写。")
+                    } else if let server = payload?.serverURL {
+                        Text("服务器：\(server)")
+                    }
                 }
             }
 
-            Section("或手动输入") {
-                TextField("服务器 URL (http://…)", text: $serverURL)
-                    .keyboardType(.URL)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                SecureField("入网令牌", text: $joinToken)
-                TextField("节点名称", text: $deviceName)
+            Section {
+                DisclosureGroup(accountMode ? "高级（设备名）" : "高级（服务器地址、设备名）") {
+                    if !accountMode {
+                        TextField("服务器 URL (http://…)", text: $serverURL)
+                            .keyboardType(.URL)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                    }
+                    TextField("设备名", text: $deviceName)
+                    if let stored = DeviceName.preview(effectiveName) {
+                        Text("将保存为 \(stored)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
 
-            if !networkError.isEmpty {
-                Text(networkError).font(.caption).foregroundColor(.red)
+            if let failure {
+                Section {
+                    Text(failure.title).font(.subheadline.weight(.semibold)).foregroundColor(.red)
+                    if !failure.advice.isEmpty {
+                        Text(failure.advice).font(.caption).foregroundColor(.secondary)
+                    }
+                }
             }
 
             Section {
                 Button {
-                    saveAndConnect()
+                    join()
                 } label: {
                     if isSavingNetwork {
-                        ProgressView()
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text(accountMode ? "正在登录…" : "正在保存配置…")
+                        }
                     } else {
-                        Text("加入网络")
+                        Text(accountMode ? "登录并加入" : "加入网络")
                     }
                 }
-                .disabled(serverURL.isEmpty || joinToken.isEmpty || isSavingNetwork)
+                .disabled(!canJoin)
+            } footer: {
+                Text("加入后系统会请求授权创建 VPN 配置，请在弹窗里点“允许”。")
             }
         }
         .navigationTitle("加入网络")
+    }
+
+    private func join() {
+        if accountMode {
+            joinWithAccount()
+        } else {
+            saveAndConnect(server: effectiveServer, token: effectiveToken, name: effectiveName)
+        }
+    }
+
+    /// Logs in, has the account issue this device's token, then joins with it.
+    private func joinWithAccount() {
+        isSavingNetwork = true
+        failure = nil
+        let server = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = server.hasSuffix("/") ? String(server.dropLast()) : server
+        Task {
+            do {
+                let issued = try await LatticeAPI.shared.loginAndCreateDeviceToken(server: trimmed, user: username, pass: password)
+                password = ""
+                saveAndConnect(server: trimmed, token: issued, name: deviceName)
+            } catch let error as AccountJoinError {
+                isSavingNetwork = false
+                failure = error.failure
+            } catch {
+                isSavingNetwork = false
+                failure = .tokenNotIssued(error.localizedDescription)
+            }
+        }
+    }
+
+    private func pasteFromClipboard() {
+        guard let raw = UIPasteboard.general.string else {
+            failure = JoinFailure(title: "剪贴板是空的", advice: "先复制邀请链接或入网令牌。")
+            return
+        }
+        guard JoinPayload(raw) != nil else {
+            failure = JoinFailure(title: "剪贴板里不是有效的入网信息", advice: "需要 lattice://join?… 链接，或不含空格的入网令牌。")
+            return
+        }
+        joinInput = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        failure = nil
     }
 
     private func handleScanned(_ code: String) {
@@ -163,32 +284,34 @@ struct JoinView: View {
             scannerError = "二维码格式不正确"
             return
         }
-        if let server = payload.serverURL { serverURL = server }
-        if let token = payload.token { joinToken = token }
         // 完整入网码（服务端地址 + 令牌都在）→ 直接继续，省去手输与再次点击；
         // 停留在扫码页展示加入进度/报错，不要在异步结果出来前就跳走。
-        guard payload.serverURL != nil, payload.token != nil else {
-            useScanner = false
+        if let server = payload.serverURL, let token = payload.token {
+            saveAndConnect(server: server, token: token, name: payload.name ?? deviceName)
             return
         }
-        saveAndConnect()
+        joinInput = code
+        useScanner = false
     }
 
-    private func saveAndConnect() {
+    private func saveAndConnect(server: String, token: String, name: String) {
         isSavingNetwork = true
-        networkError = ""
+        failure = nil
         scannerError = ""
-        let trimmed = serverURL.hasSuffix("/") ? String(serverURL.dropLast()) : serverURL
+        let trimmed = server.hasSuffix("/") ? String(server.dropLast()) : server
         UserDefaults.standard.set(trimmed, forKey: "lattice.serverURL")
-        UserDefaults.standard.set(deviceName, forKey: "lattice.nodeName")
-        TunnelManager.shared.saveJoin(serverURL: trimmed, token: joinToken, name: deviceName, resetIdentity: initialResetIdentity) { err in
+        // Peers appear under the server's normalized name; keep the same form so
+        // "this device" is recognised in the list.
+        UserDefaults.standard.set(DeviceName.normalized(name), forKey: "lattice.nodeName")
+        TunnelManager.shared.saveJoin(serverURL: trimmed, token: token, name: name, resetIdentity: initialResetIdentity) { err in
             isSavingNetwork = false
             if let err {
-                networkError = err
-                scannerError = err
+                let f = JoinFailure(title: "保存 VPN 配置失败", advice: "\(err)。请在系统弹窗里点“允许”后重试。")
+                failure = f
+                scannerError = f.title
                 return
             }
-            joinToken = ""
+            joinInput = ""
             TunnelManager.shared.connect()
             onFinished()
         }

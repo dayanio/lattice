@@ -1323,9 +1323,9 @@ spec:
                   LrpQuicUrl is the QUIC address of the LRP relay server.
                   When set, nodes prefer QUIC over TCP for relay traffic.
                 type: string
-              lrpUrl:
+              relayUrl:
                 description: |-
-                  LrpUrl is the TCP address of the LRP relay server assigned to this peer.
+                  RelayUrl is the TCP address of the relay server assigned to this peer.
                   Populated by the relay settings controller when a relay is bound to the peer's workspace.
                 type: string
               mtu:

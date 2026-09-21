@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import Combine
 import Foundation
 
 enum TunnelError: Error {
@@ -23,7 +24,9 @@ enum TunnelError: Error {
 // MARK: - Shared Models
 
 struct PeerNode: Identifiable {
-    let id = UUID()
+    /// Stable across refreshes (the list is rebuilt every few seconds); a fresh
+    /// UUID per build made SwiftUI treat every row as new.
+    var id: String { appID.isEmpty ? name : appID }
     let name: String
     let address: String
     let online: Bool
@@ -43,4 +46,109 @@ struct PeerNode: Identifiable {
     var sandbox: String? = nil
 
     var shownName: String { displayName.isEmpty ? name : displayName }
+}
+
+/// One remote node as the tunnel itself reports it (Engine.Peers()), so the
+/// device list works without a management login.
+struct TunnelPeer: Codable, Equatable {
+    let appId: String
+    let name: String
+    let address: String
+    let platform: String?
+    /// probing, ice-ready (direct), lrp-ready (relayed), failed, closed, none.
+    let state: String
+    let online: Bool
+
+    var node: PeerNode {
+        PeerNode(name: name.isEmpty ? appId : name, address: address, online: online,
+                 os: platform ?? "", appID: appId)
+    }
+}
+
+enum PeerListMerge {
+    /// The management API knows things the tunnel does not (display names,
+    /// labels, routes, disabled state), so its entries win. Nodes only the
+    /// tunnel knows about are appended, and the tunnel's list stands alone when
+    /// the API has nothing (not logged in).
+    static func merged(api: [PeerNode], tunnel: [PeerNode]) -> [PeerNode] {
+        guard !api.isEmpty else { return tunnel }
+        let known = Set(api.flatMap { [$0.appID, $0.name] }.filter { !$0.isEmpty })
+        return api + tunnel.filter { !known.contains($0.appID) && !known.contains($0.name) }
+    }
+}
+
+
+// MARK: - Management login
+
+/// Secrets live in the Keychain; the plain store is where older builds kept the
+/// management token.
+protocol SecretStoring {
+    func secret(_ key: String) -> String?
+    func setSecret(_ value: String, forKey key: String)
+    func deleteSecret(_ key: String)
+}
+
+protocol PlainStoring {
+    func string(forKey key: String) -> String?
+    func removeObject(forKey key: String)
+}
+
+extension UserDefaults: PlainStoring {}
+
+/// The management-API token. Older builds kept it in UserDefaults in plain text;
+/// the first read moves it into the secret store.
+struct AuthTokenStore {
+    static let key = "lattice.authToken"
+
+    let secrets: SecretStoring
+    let legacy: PlainStoring
+
+    func read() -> String {
+        if let token = secrets.secret(Self.key), !token.isEmpty {
+            legacy.removeObject(forKey: Self.key)
+            return token
+        }
+        guard let old = legacy.string(forKey: Self.key), !old.isEmpty else { return "" }
+        secrets.setSecret(old, forKey: Self.key)
+        // Drop the plain copy only once the secret store really holds it.
+        if secrets.secret(Self.key) == old {
+            legacy.removeObject(forKey: Self.key)
+        }
+        return old
+    }
+
+    func write(_ token: String) {
+        secrets.setSecret(token, forKey: Self.key)
+        legacy.removeObject(forKey: Self.key)
+    }
+
+    func clear() {
+        secrets.deleteSecret(Self.key)
+        legacy.removeObject(forKey: Self.key)
+    }
+}
+
+/// Coordinates "log in when a management action needs it". An action that finds
+/// no login awaits `requestLogin()`; the UI presents the login sheet while
+/// `isPresenting` is true and reports the outcome through `finish`. Every
+/// action waiting at that moment resumes with the same result, so the action
+/// the user asked for carries on after a successful login.
+@MainActor
+final class LoginCoordinator: ObservableObject {
+    static let shared = LoginCoordinator()
+
+    @Published private(set) var isPresenting = false
+    private var waiters: [CheckedContinuation<Bool, Never>] = []
+
+    func requestLogin() async -> Bool {
+        isPresenting = true
+        return await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func finish(success: Bool) {
+        isPresenting = false
+        let pending = waiters
+        waiters = []
+        for waiter in pending { waiter.resume(returning: success) }
+    }
 }

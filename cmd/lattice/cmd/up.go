@@ -48,8 +48,8 @@ First time? Run "lattice init" to set up your config interactively.`,
   # save flags to config file for future runs
   lattice up --token <token> --server-url <server-url> --save
 
-  # enable the LRP relay for restrictive NAT environments
-  lattice up --token <token> --server-url <server-url> --enable-lrp --relay-url <relay-url>`,
+  # enable the Relay relay for restrictive NAT environments
+  lattice up --token <token> --server-url <server-url> --enable-relay --relay-url <relay-url>`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			detach, _ := cmd.Flags().GetBool("daemon")
 			if detach {
@@ -109,6 +109,13 @@ First time? Run "lattice init" to set up your config interactively.`,
 			if mode, _ := cmd.Flags().GetString("enforcer-mode"); mode != "" {
 				config.Conf.EnforcerMode = mode
 			}
+			// ADR-0003: the enrollment token must reach the register
+			// request. --token is also persisted to the config dir so
+			// re-runs (lattice up without flags) keep the same identity.
+			if tk, _ := cmd.Flags().GetString("token"); tk != "" {
+				config.Conf.Token = tk
+				config.GetManager().Viper().Set("token", tk)
+			}
 
 			return agent.Start(ctx, config.Conf)
 		},
@@ -117,9 +124,9 @@ First time? Run "lattice init" to set up your config interactively.`,
 	fs := cmd.Flags()
 	fs.StringP("token", "", "", "enrollment token to authenticate and join a workspace")
 	fs.StringP("level", "", "", "log level: debug, info, warn, error")
-	fs.StringP("relay-url", "", "", "TCP relay server URL (required when --enable-lrp)")
+	fs.StringP("relay-url", "", "", "TCP relay server URL (required when --enable-relay)")
 	fs.StringP("relay-quic-url", "", "", "QUIC relay server address (e.g. server:6267)")
-	fs.BoolP("enable-lrp", "", false, "use LRP relay for NAT traversal")
+	fs.BoolP("enable-relay", "", false, "use Relay relay for NAT traversal")
 	fs.StringP("vm-endpoint", "", "", "use to push tele")
 	fs.BoolP("enable-metric", "", false, "expose Prometheus metrics endpoint")
 	fs.BoolP("enable-sys-log", "", false, "enable verbose WireGuard and ICE debug logging")

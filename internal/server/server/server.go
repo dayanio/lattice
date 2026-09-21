@@ -137,16 +137,23 @@ func NewServer(ctx context.Context, serverConfig *ServerConfig) (*Server, error)
 	// Skipped in non-K8s environments (local dev, CI); does not affect HTTP Server startup.
 	var mgr manager.Manager
 	var client *resource.Client
-	k8sMgr, err := resource.NewManager()
-	if err != nil {
-		logger.Warn("K8s manager init failed, running without controller-runtime", "err", err)
-	} else {
-		mgr = k8sMgr
-		k8sClient, cerr := resource.NewClient(signal, mgr)
-		if cerr != nil {
-			logger.Warn("K8s client init failed, running without K8s CRD support", "err", cerr)
+	// Standalone mode (--standalone) must not construct the K8s client even
+	// when a kubeconfig exists on the host: a non-nil client routes peer
+	// registration and netmap fetches onto the LatticeEnrollmentToken CRD
+	// path, which a standalone deployment cannot serve — every join fails
+	// "token not exists" (observed on the cloud test host, 2026-09-18).
+	if !cfg.Standalone {
+		k8sMgr, err := resource.NewManager()
+		if err != nil {
+			logger.Warn("K8s manager init failed, running without controller-runtime", "err", err)
 		} else {
-			client = k8sClient
+			mgr = k8sMgr
+			k8sClient, cerr := resource.NewClient(signal, mgr)
+			if cerr != nil {
+				logger.Warn("K8s client init failed, running without K8s CRD support", "err", cerr)
+			} else {
+				client = k8sClient
+			}
 		}
 	}
 

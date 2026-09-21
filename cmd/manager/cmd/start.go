@@ -13,7 +13,7 @@ func newStartCommand() *cobra.Command {
 	}
 
 	cmd.AddCommand(newControllerCmd())
-	cmd.AddCommand(newLrpCmd())
+	cmd.AddCommand(newRelayCmd())
 	cmd.AddCommand(newManagementCmd())
 
 	return cmd

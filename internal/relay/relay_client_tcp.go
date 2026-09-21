@@ -34,7 +34,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-var _ infra.Lrp = (*TCPClient)(nil)
+var _ infra.RelayChannel = (*TCPClient)(nil)
 
 const (
 	// initialReconnectBackoff / maxReconnectBackoff bound the relay client's
@@ -46,7 +46,7 @@ const (
 	maxReconnectBackoff     = 30 * time.Second
 )
 
-// TCPClient implements infra.Lrp using a persistent TCP connection with
+// TCPClient implements infra.Relay using a persistent TCP connection with
 // HTTP upgrade handshake, buffered writer, and keepalive loop.
 //
 // The connection is supervised: a background loop redials with capped
@@ -55,13 +55,18 @@ const (
 // (they are stale encrypted datagrams; WireGuard retransmits at its own
 // layer).
 type TCPClient struct {
-	*lrpClient
+	*relayClient
 	mu     sync.Mutex
 	conn   net.Conn
 	reader *bufio.Reader
 	writer *bufio.Writer
 
 	sendCh chan []byte
+
+	// writeMu serialises writes to the buffered writer. writerLoop and the
+	// per-peer auth exchange (run from the ReceiveFunc goroutine right after a
+	// connect) both write to it; without this their frames could interleave.
+	writeMu sync.Mutex
 
 	// connected is a fresh channel per connection lifetime: non-nil while
 	// a connection is up, closed and nil'ed when it drops. Snapshotted by
@@ -77,7 +82,7 @@ type TCPClient struct {
 	closed atomic.Bool
 }
 
-// NewTCPClient creates a new TCP LRP client and starts its connect
+// NewTCPClient creates a new TCP Relay client and starts its connect
 // supervisor. The first dial happens in the background: construction does
 // not fail when the relay is unreachable (the agent starts degraded and
 // the supervisor retries with backoff). The URL may carry a
@@ -88,10 +93,10 @@ func NewTCPClient(ctx context.Context, localID infra.PeerID, url string, private
 	serverURL, authToken := splitURLToken(url)
 	ctx, cancel := context.WithCancel(ctx)
 	c := &TCPClient{
-		lrpClient: &lrpClient{
+		relayClient: &relayClient{
 			ctx:        ctx,
 			cancel:     cancel,
-			log:        log.GetLogger("lrp-tcp"),
+			log:        log.GetLogger("relay-tcp"),
 			localId:    localID,
 			serverURL:  serverURL,
 			authToken:  authToken,
@@ -147,7 +152,7 @@ func (c *TCPClient) run() {
 }
 
 // Connect establishes the TCP connection, performs the HTTP Upgrade
-// handshake, and sends the LRP Register frame. One attempt; the run loop
+// handshake, and sends the Relay Register frame. One attempt; the run loop
 // owns reconnection.
 func (c *TCPClient) Connect() error {
 	conn, err := net.Dial("tcp", c.serverURL)
@@ -155,12 +160,12 @@ func (c *TCPClient) Connect() error {
 		return err
 	}
 
-	req, err := http.NewRequest("GET", "/lrp/v1/upgrade", nil)
+	req, err := http.NewRequest("GET", "/ferry/v1/upgrade", nil)
 	if err != nil {
 		conn.Close() //nolint:errcheck
 		return err
 	}
-	req.Header.Set("Upgrade", "lrp")
+	req.Header.Set("Upgrade", "relay")
 	req.Header.Set("Connection", "Upgrade")
 
 	if err = req.Write(conn); err != nil {
@@ -250,20 +255,25 @@ func (c *TCPClient) RemoteAddr() net.Addr {
 	return nil
 }
 
-// Send enqueues a pre-marshaled LRP frame for the writer goroutine. While
+// Send enqueues a pre-marshaled Relay frame for the writer goroutine. While
 // disconnected, frames are dropped: they are stale encrypted datagrams and
 // WireGuard retransmits them itself.
-func (c *TCPClient) Send(ctx context.Context, targetId uint64, lrpType uint8, data []byte) error {
+// Connected reports whether the relay TCP connection is currently up.
+func (c *TCPClient) Connected() bool {
+	return c.connectedCh() != nil
+}
+
+func (c *TCPClient) Send(ctx context.Context, targetId uint64, relayType uint8, data []byte) error {
 	if c.connectedCh() == nil {
-		return errors.New("lrp: disconnected")
+		return errors.New("relay: disconnected")
 	}
-	frame := c.makeFrame(targetId, lrpType, data)
+	frame := c.makeFrame(targetId, relayType, data)
 	select {
 	case c.sendCh <- frame:
 		return nil
 	default:
 		c.log.Warn("send channel full, dropping frame", "dst", targetId)
-		return fmt.Errorf("lrp: send channel full")
+		return fmt.Errorf("relay: send channel full")
 	}
 }
 
@@ -299,17 +309,23 @@ func (c *TCPClient) writeFrames(frames [][]byte) bool {
 	if conn == nil || w == nil {
 		return false
 	}
-	for _, f := range frames {
-		if _, err := w.Write(f); err != nil {
-			c.disconnectIfCurrent(conn)
-			return false
-		}
-	}
-	if err := w.Flush(); err != nil {
+	if !c.flushFrames(w, frames) {
 		c.disconnectIfCurrent(conn)
 		return false
 	}
 	return true
+}
+
+// flushFrames appends the frames to w and flushes, under writeMu.
+func (c *TCPClient) flushFrames(w *bufio.Writer, frames [][]byte) bool {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	for _, f := range frames {
+		if _, err := w.Write(f); err != nil {
+			return false
+		}
+	}
+	return w.Flush() == nil
 }
 
 func (c *TCPClient) dropPending() {
@@ -406,20 +422,14 @@ func (c *TCPClient) writeFramesTo(conn net.Conn, frames [][]byte) bool {
 	if cur != conn || w == nil {
 		return false
 	}
-	for _, f := range frames {
-		if _, err := w.Write(f); err != nil {
-			c.disconnectIfCurrent(conn)
-			return false
-		}
-	}
-	if err := w.Flush(); err != nil {
+	if !c.flushFrames(w, frames) {
 		c.disconnectIfCurrent(conn)
 		return false
 	}
 	return true
 }
 
-// ReceiveFunc returns a WireGuard ReceiveFunc that reads incoming LRP
+// ReceiveFunc returns a WireGuard ReceiveFunc that reads incoming Relay
 // frames. It survives reconnects: on a connection error it waits for the
 // supervisor to re-establish the connection instead of returning an error
 // (an error would permanently tear down WireGuard's receive routine). A
@@ -474,14 +484,19 @@ func (c *TCPClient) ReceiveFunc() wgconn.ReceiveFunc {
 			header, parseErr := Unmarshal(headBuf)
 			PutHeaderBuffer(headBufp)
 			if parseErr != nil {
-				c.log.Error("failed to parse LRP header", parseErr)
+				c.log.Error("failed to parse Relay header", parseErr)
 				return 0, nil
 			}
 
 			switch header.Cmd {
 			case Probe:
 				if header.PayloadLen > MaxProbePayload {
-					c.log.Warn("probe payload too large", "bytes", header.PayloadLen)
+					// The payload is still on the stream: leaving it unread makes
+					// the next header parse start in the middle of it.
+					c.log.Warn("probe payload too large, discarded", "bytes", header.PayloadLen)
+					if _, err = io.CopyN(io.Discard, reader, int64(header.PayloadLen)); err != nil {
+						c.disconnectIfCurrent(conn)
+					}
 					return 0, nil
 				}
 				buf := make([]byte, header.PayloadLen)
@@ -498,7 +513,10 @@ func (c *TCPClient) ReceiveFunc() wgconn.ReceiveFunc {
 
 			case Forward:
 				if int(header.PayloadLen) > len(packets[0]) {
-					c.log.Warn("forward payload exceeds buffer", "need", header.PayloadLen, "have", len(packets[0]))
+					c.log.Warn("forward payload exceeds buffer, discarded", "need", header.PayloadLen, "have", len(packets[0]))
+					if _, err = io.CopyN(io.Discard, reader, int64(header.PayloadLen)); err != nil {
+						c.disconnectIfCurrent(conn)
+					}
 					return 0, nil
 				}
 				if _, err = io.ReadFull(reader, packets[0][:header.PayloadLen]); err != nil {
@@ -506,10 +524,10 @@ func (c *TCPClient) ReceiveFunc() wgconn.ReceiveFunc {
 					continue
 				}
 				sizes[0] = int(header.PayloadLen)
-				eps[0] = &infra.LRPEndpoint{
-					Addr:          infra.LrpFakeAddrPort(uint64(header.ToID)),
+				eps[0] = &infra.RelayEndpoint{
+					Addr:          infra.RelayFakeAddrPort(uint64(header.ToID)),
 					RemoteId:      uint64(header.ToID),
-					TransportType: infra.LRP,
+					TransportType: infra.Relay,
 				}
 				return 1, nil
 
@@ -517,7 +535,7 @@ func (c *TCPClient) ReceiveFunc() wgconn.ReceiveFunc {
 				if header.PayloadLen > 0 {
 					_, _ = io.CopyN(io.Discard, reader, int64(header.PayloadLen))
 				}
-				c.log.Warn("unknown LRP command discarded", "cmd", header.Cmd)
+				c.log.Warn("unknown Relay command discarded", "cmd", header.Cmd)
 				return 0, nil
 			}
 		}
@@ -529,7 +547,7 @@ func (c *TCPClient) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.conn == nil {
-		return 0, errors.New("lrp: not connected")
+		return 0, errors.New("relay: not connected")
 	}
 	return c.conn.Write(p)
 }

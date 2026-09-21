@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// The Ferry (摆渡) relay protocol — Lattice's designated relay for
+// encrypted WireGuard packets, the counterpart of Tailscale's DERP.
+
 package relay
 
 import (
@@ -55,7 +58,7 @@ const KeySize = 32
 // client public key (32 B) || DH result (32 B).
 const AuthResponsePayload = 2 * KeySize
 
-// Header is the 12-byte LRP frame header (little-endian).
+// Header is the 12-byte Relay frame header (little-endian).
 // Offset 0-1:   Seq        — frame sequence number
 // Offset 2-5:   PayloadLen — payload size in bytes
 // Offset 6:     Cmd        — command byte
@@ -90,7 +93,7 @@ func (h *Header) MarshalInto(buf []byte) {
 
 func Unmarshal(data []byte) (*Header, error) {
 	if len(data) < HeaderSize {
-		return nil, errors.New("lrp: header too short")
+		return nil, errors.New("relay: header too short")
 	}
 	h := &Header{}
 	h.Seq = binary.LittleEndian.Uint16(data[0:2])
@@ -99,4 +102,13 @@ func Unmarshal(data []byte) (*Header, error) {
 	h.ToID = binary.LittleEndian.Uint32(data[7:11])
 	h.Reserved = data[11]
 	return h, nil
+}
+
+// stampSender rewrites the ToID field of a frame about to be relayed to the
+// SENDER's ID. Clients register with ToID = their own ID and address frames
+// with ToID = the target; a relayed Forward frame carries nothing else, so the
+// receiver (and WireGuard's roaming endpoint) identifies the peer from this
+// field. Without the rewrite it holds the receiver's own ID.
+func stampSender(frame []byte, fromID uint64) {
+	binary.LittleEndian.PutUint32(frame[7:11], uint32(fromID))
 }

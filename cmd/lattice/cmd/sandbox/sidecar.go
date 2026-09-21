@@ -101,7 +101,7 @@ func runSidecar(_ *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	agentconfig.Conf.AppId = agentName
+	agentconfig.Conf.AppId = infra.NormalizeAppID(agentName)
 	agentconfig.Conf.ServerUrl = sidecarServerURL
 	agentconfig.Conf.WgPort = 0 // random port; no kernel wg0
 
@@ -138,9 +138,9 @@ func runSidecar(_ *cobra.Command, args []string) error {
 	localIP := overlayAddr(currentPeer)
 	fmt.Printf("[agent-sidecar] %q registered, overlay IP=%s\n", agentName, localIP)
 
-	if currentPeer.LrpUrl != "" {
-		agentconfig.Conf.EnableLrp = true
-		agentconfig.Conf.RelayURL = currentPeer.LrpUrl
+	if currentPeer.RelayURL != "" {
+		agentconfig.Conf.EnableRelay = true
+		agentconfig.Conf.RelayURL = currentPeer.RelayURL
 	}
 
 	sb, err := gvisor.New(gvisor.Config{

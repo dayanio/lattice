@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import Combine
 import Foundation
 
 final class LatticeAPI {
@@ -21,9 +22,9 @@ final class LatticeAPI {
         UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
     }
 
-    private var token: String {
-        UserDefaults.standard.string(forKey: "lattice.authToken") ?? ""
-    }
+    private let tokenStore = AuthTokenStore.standard
+
+    private var token: String { tokenStore.read() }
 
     func listPeers() async throws -> [PeerNode] {
         try await resolveWorkspaceIfNeeded()
@@ -156,6 +157,7 @@ final class LatticeAPI {
         history: [ChatAPIMessage],
         onEvent: @escaping (ChatEvent) -> Void
     ) async throws {
+        guard await ensureLoggedIn() else { throw LatticeAPIError.server("已取消登录") }
         guard let url = URL(string: baseURL + "/api/v1/ai/chat") else { throw URLError(.badURL) }
         var req = URLRequest(url: url, timeoutInterval: 180)
         req.httpMethod = "POST"
@@ -214,11 +216,64 @@ final class LatticeAPI {
         let (data, _) = try await URLSession.shared.data(for: req)
         let decoded = try JSONDecoder().decode(LoginResponse.self, from: data)
         guard let t = decoded.data?.token, !t.isEmpty else { throw LatticeAPIError.server(decoded.msg ?? "登录失败") }
-        UserDefaults.standard.set(t, forKey: "lattice.authToken")
+        tokenStore.write(t)
         UserDefaults.standard.set(user, forKey: "lattice.adminUser")
         KeychainStore.set(pass, forKey: "lattice.password")
         UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
+        await MainActor.run { AuthSession.shared.refresh() }
         try await resolveWorkspaceIfNeeded()
+    }
+
+    /// Issues an enrollment token for this device. Single use (one new device),
+    /// but long-lived: the device presents the token every time it registers
+    /// again, and the server rejects an expired token even for a device that is
+    /// already enrolled.
+    func createDeviceToken() async throws -> String {
+        try await resolveWorkspaceIfNeeded()
+        let data = try await request(method: "POST", path: "/api/v1/token/generate",
+                                     body: ["expiry": "8760h", "limit": 1])
+        struct Reply: Decodable {
+            struct Body: Decodable { let token: String? }
+            let data: Body?
+        }
+        guard let token = try? JSONDecoder().decode(Reply.self, from: data).data?.token, !token.isEmpty else {
+            throw LatticeAPIError.server("服务器没有返回入网令牌")
+        }
+        return token
+    }
+
+    /// "Log in and join": logs in against `server`, then issues an enrollment
+    /// token for this device. The login stays, so later management actions
+    /// need no second login. Failures say which step failed.
+    func loginAndCreateDeviceToken(server: String, user: String, pass: String) async throws -> String {
+        UserDefaults.standard.set(server, forKey: "lattice.serverURL")
+        do {
+            try await login(user: user, pass: pass)
+        } catch {
+            throw AccountJoinError.login(error.localizedDescription)
+        }
+        do {
+            return try await createDeviceToken()
+        } catch {
+            throw AccountJoinError.token(error.localizedDescription)
+        }
+    }
+
+    /// Ends the management session: the token, the saved password and the cached
+    /// workspace. Joining the network and the VPN profile are untouched.
+    func logout() {
+        tokenStore.clear()
+        UserDefaults.standard.removeObject(forKey: "lattice.adminUser")
+        UserDefaults.standard.removeObject(forKey: "lattice.workspaceId")
+        KeychainStore.delete("lattice.password")
+        Task { @MainActor in AuthSession.shared.refresh() }
+    }
+
+    /// Asks the user to log in (the UI presents the sheet) and reports whether
+    /// they did. Used by actions the user started, never by background loads.
+    private func ensureLoggedIn() async -> Bool {
+        if isLoggedIn { return true }
+        return await LoginCoordinator.shared.requestLogin()
     }
 
     var isLoggedIn: Bool {
@@ -243,6 +298,12 @@ final class LatticeAPI {
 
     @discardableResult
     private func request(method: String, path: String, body: [String: Any]? = nil, allowRelogin: Bool = true) async throws -> Data {
+        // Writes are actions the user asked for: without a login, ask for one and
+        // carry on. Reads stay quiet (the device list works without a login).
+        let userAction = method != "GET"
+        if userAction, !(await ensureLoggedIn()) {
+            throw LatticeAPIError.server("已取消登录")
+        }
         guard let url = URL(string: baseURL + path) else { throw URLError(.badURL) }
         var req = URLRequest(url: url, timeoutInterval: 10)
         req.httpMethod = method
@@ -262,8 +323,15 @@ final class LatticeAPI {
         }
         // Management tokens expire (7d TTL); silently re-login once from the
         // Keychain-stored credentials and retry instead of failing the call.
-        if http.statusCode == 401, allowRelogin, await relogin() {
-            return try await request(method: method, path: path, body: body, allowRelogin: false)
+        if http.statusCode == 401, allowRelogin {
+            if await relogin() {
+                return try await request(method: method, path: path, body: body, allowRelogin: false)
+            }
+            // The saved credentials no longer work: for an action the user
+            // started, ask again instead of failing.
+            if userAction, await LoginCoordinator.shared.requestLogin() {
+                return try await request(method: method, path: path, body: body, allowRelogin: false)
+            }
         }
         guard http.statusCode == 200 else {
             throw LatticeAPIError.server(Self.serverMessage(from: data, fallback: "HTTP \(http.statusCode)"))
@@ -496,4 +564,36 @@ struct AgentIdentityVO: Codable {
     let name: String?
     let peerRef: String?
     let sandbox: String?
+}
+
+
+/// Whether a management login exists, observable by the views. The token itself
+/// lives in the Keychain (AuthTokenStore), where SwiftUI cannot watch it.
+@MainActor
+final class AuthSession: ObservableObject {
+    static let shared = AuthSession()
+
+    @Published private(set) var isLoggedIn: Bool
+
+    private init() {
+        isLoggedIn = !AuthTokenStore.standard.read().isEmpty
+    }
+
+    func refresh() {
+        isLoggedIn = !AuthTokenStore.standard.read().isEmpty
+    }
+}
+
+
+/// Which step of "log in and join" failed.
+enum AccountJoinError: Error {
+    case login(String)
+    case token(String)
+
+    var failure: JoinFailure {
+        switch self {
+        case .login(let message): return .loginFailed(message)
+        case .token(let message): return .tokenNotIssued(message)
+        }
+    }
 }

@@ -35,18 +35,19 @@ type Server struct {
 	sessionMgr      *SessionManager
 	authToken       string
 	requirePeerAuth bool
+	failLog         relayFailLimiter
 }
 
 func NewServer(flags *config.Config) *Server {
 	s := &Server{
-		log:             internallog.GetLogger("bolt"),
+		log:             internallog.GetLogger("ferry"),
 		sessionMgr:      NewSessionManager(),
-		authToken:       flags.LrpAuthToken,
-		requirePeerAuth: flags.LrpRequirePeerAuth,
+		authToken:       flags.RelayAuthToken,
+		requirePeerAuth: flags.RelayRequirePeerAuth,
 	}
-	s.sessionMgr.SetRequirePeerAuth(flags.LrpRequirePeerAuth)
+	s.sessionMgr.SetRequirePeerAuth(flags.RelayRequirePeerAuth)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/lrp/v1/upgrade", s.boltUpgradeHandler)
+	mux.HandleFunc("/ferry/v1/upgrade", s.ferryUpgradeHandler)
 
 	httpServer := &http.Server{
 		Addr:         flags.Listen,
@@ -71,16 +72,22 @@ func (s *Server) Manager() *SessionManager {
 	return s.sessionMgr
 }
 
+// UpgradeHandler is the HTTP handler that upgrades a connection to an Relay
+// session, for embedding the relay in another server or in tests.
+func (s *Server) UpgradeHandler() http.Handler {
+	return http.HandlerFunc(s.ferryUpgradeHandler)
+}
+
 func (s *Server) Start() error {
-	s.log.Info("LRP relay server listening", "addr", s.server.Addr)
+	s.log.Info("Relay relay server listening", "addr", s.server.Addr)
 	return s.server.ListenAndServe()
 }
 
-func (s *Server) boltUpgradeHandler(w http.ResponseWriter, r *http.Request) {
-	// Accept both protocol spellings: legacy "bolt" and the current "lrp".
+func (s *Server) ferryUpgradeHandler(w http.ResponseWriter, r *http.Request) {
+	// Accept both protocol spellings: legacy "bolt" and the current "relay".
 	upgrade := r.Header.Get("Upgrade")
-	if upgrade != "bolt" && upgrade != "lrp" {
-		http.Error(w, "Expected LRP Upgrade", http.StatusBadRequest)
+	if upgrade != "bolt" && upgrade != "relay" {
+		http.Error(w, "Expected Relay Upgrade", http.StatusBadRequest)
 		return
 	}
 
@@ -222,7 +229,7 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 		if err != nil {
 			// The stream is an opaque frame sequence — once a header is
 			// corrupt there is no way to resync, so close the session.
-			s.log.Error("invalid lrp header, closing session", err, "from", fromId)
+			s.log.Error("invalid relay header, closing session", err, "from", fromId)
 			break
 		}
 
@@ -284,7 +291,10 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 				}
 			}
 
-			if relayErr := s.sessionMgr.Relay(uint64(h.ToID), frame); relayErr != nil {
+			if h.Cmd == Forward {
+				stampSender(frame, fromId)
+			}
+			if relayErr := s.sessionMgr.Relay(uint64(h.ToID), frame); relayErr != nil && s.failLog.allow(h.ToID, time.Now()) {
 				s.log.Warn("relay failed", "from", fromId, "to", h.ToID, "err", relayErr)
 			}
 		}

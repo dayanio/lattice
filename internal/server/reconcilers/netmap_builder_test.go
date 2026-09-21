@@ -428,3 +428,49 @@ func TestNetmapBuilder_ExcludesUnapprovedPeers(t *testing.T) {
 	}
 	assert.Equal(t, "db", msg.ComputedPeers[0].Name)
 }
+
+// Sandbox-style clients (the iOS engine, container sandboxes) take their own
+// record from the netmap's Current peer, not from the registration response,
+// and enable the relay only when that record carries a relay URL. Without it a
+// phone never created a relay client and could not fall back when ICE failed.
+func TestNetmapBuilder_CurrentPeerCarriesTheRelayURLWithToken(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "api", AppID: "a1", Token: "tk1", Address: "10.96.0.2", PublicKey: "k1",
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "db", AppID: "a2", Token: "tk2", Address: "10.96.0.3", PublicKey: "k2",
+	}))
+
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	builder.SetRelayURL("relay.example:6266")
+	builder.SetSelfRelayURL("relay.example:6266?token=s3cret")
+
+	msg, err := builder.BuildForAppID(ctx, "a1", "tk1")
+	require.NoError(t, err)
+
+	assert.Equal(t, "relay.example:6266?token=s3cret", msg.Current.RelayURL,
+		"the peer's own record must carry the relay address with the auth token")
+	for _, p := range msg.Network.Peers {
+		assert.Equal(t, "relay.example:6266", p.RelayURL,
+			"other peers' entries must not carry the token: %s", p.Name)
+		assert.NotContains(t, p.RelayURL, "s3cret")
+	}
+	for _, p := range msg.ComputedPeers {
+		assert.NotContains(t, p.RelayURL, "s3cret", "computed peers must not leak the token: %s", p.Name)
+	}
+}
+
+func TestNetmapBuilder_NoRelayConfiguredLeavesCurrentWithoutOne(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		WorkspaceID: "ws1", Name: "api", AppID: "a1", Token: "tk1", Address: "10.96.0.2", PublicKey: "k1",
+	}))
+
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	msg, err := builder.BuildForAppID(ctx, "a1", "tk1")
+	require.NoError(t, err)
+	assert.Empty(t, msg.Current.RelayURL)
+}
