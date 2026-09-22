@@ -106,6 +106,12 @@ struct ContentView: View {
         .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
         .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
         .onChange(of: ui.showCastPairing) { _ in syncUIStateRequests() }
+        // Silent refresh while the UI is up: approval states and presence
+        // arrive on this cadence; there is no management-plane push.
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            guard !isLoading else { return }
+            Task { await loadPeers() }
+        }
         // A management action (rename, delete, ...) that needs a login asks for
         // one here and carries on once it succeeds. Only the main window presents
         // it; the menu-bar panel cannot host a sheet.
@@ -268,7 +274,7 @@ struct ContentView: View {
 
     private var navItems: [PanelNavItem] {
         [
-            PanelNavItem(id: "devices", icon: "personalhotspot", title: "设备", isActive: subPage == nil) {
+            PanelNavItem(id: "devices", icon: "personalhotspot", title: "设备", showsDot: hasPendingApprovals, isActive: subPage == nil) {
                 subPage = nil
                 detailPeer = nil
             },
@@ -382,6 +388,37 @@ struct ContentView: View {
         Task { _ = await LoginCoordinator.shared.requestLogin() }
     }
 
+    /// Approves or rejects a pending enrollment; the list refreshes so the
+    /// device moves between sections (and the agent connects on approval).
+    private func setApproval(_ peer: PeerNode, approved: Bool) async {
+        do {
+            try await LatticeAPI.shared.setPeerApproval(peer.name, approved: approved)
+            await loadPeers()
+        } catch {
+            opError = (approved ? "批准失败: " : "拒绝失败: ") + error.localizedDescription
+        }
+    }
+
+    private func pendingRow(_ peer: PeerNode) -> some View {
+        HStack(spacing: 10) {
+            HaloDot(color: .orange, size: 9)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(peer.shownName).font(.system(size: 13))
+                Text("等待管理员批准").font(.caption2).foregroundColor(.orange)
+            }
+            Spacer()
+            Button("批准") { Task { await setApproval(peer, approved: true) } }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            Button("拒绝") { Task { await setApproval(peer, approved: false) } }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+    }
+
     private var deviceList: some View {
         ScrollView {
             VStack(spacing: 0) {
@@ -407,7 +444,7 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                         .help("刷新设备列表")
                     }
-                    Text("\(filteredPeers.count) 台在线")
+                    Text("\(connectedPeers.count) 台在线")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                         .padding(.leading, 6)
@@ -418,7 +455,14 @@ struct ContentView: View {
                 if !inPanel, displayPeers.count >= 4 {
                     PanelSearchField(text: $searchQuery)
                 }
-                ForEach(filteredPeers) { peer in
+                if !pendingPeers.isEmpty {
+                    SectionHead(title: "待审批 \(pendingPeers.count) 台")
+                    ForEach(pendingPeers) { peer in
+                        pendingRow(peer)
+                        Divider().padding(.leading, 44)
+                    }
+                }
+                ForEach(connectedPeers) { peer in
                     peerRow(peer)
                     Divider().padding(.leading, 44)
                 }
@@ -555,6 +599,21 @@ struct ContentView: View {
                 || $0.name.localizedCaseInsensitiveContains(q)
                 || $0.address.contains(q)
         }
+    }
+
+    /// Devices waiting for an administrator's approval (ADR-0003), shown as
+    /// their own section above the connected list. Only the management API
+    /// knows about approval, so this is empty without a login.
+    private var pendingPeers: [PeerNode] {
+        displayPeers.filter { $0.approvalStatus == "pending" }
+    }
+
+    private var connectedPeers: [PeerNode] {
+        filteredPeers.filter { $0.approvalStatus != "pending" }
+    }
+
+    private var hasPendingApprovals: Bool {
+        LatticeAPI.shared.isLoggedIn && !pendingPeers.isEmpty
     }
 
     private var statusColor: Color {

@@ -55,7 +55,8 @@ final class LatticeAPI {
                 appID: p.appId ?? "",
                 labels: p.labels,
                 advertisedRoutes: p.advertisedRoutes ?? [],
-                lastSeen: p.lastSeen ?? ""
+                lastSeen: p.lastSeen ?? "",
+                approvalStatus: p.approvalStatus
             )
         }
     }
@@ -82,6 +83,14 @@ final class LatticeAPI {
 
     func deletePeer(_ name: String) async throws {
         try await request(method: "DELETE", path: "/api/v1/peers/\(encodePath(name))")
+    }
+
+    /// Approves ("approved") or rejects ("revoked") a pending enrollment
+    /// (ADR-0003). Requires a workspace-admin login.
+    func setPeerApproval(_ name: String, approved: Bool) async throws {
+        try await request(method: "PUT",
+                          path: "/api/v1/peers/\(encodePath(name))/approval",
+                          body: ["status": approved ? "approved" : "revoked"])
     }
 
     /// Declares (or clears, if `routes` is empty) the CIDRs `name` offers to
@@ -382,6 +391,7 @@ struct PeerListResponse: Codable {
         let disabled: Bool?
         let labels: [String: String]?
         let advertisedRoutes: [String]?
+        let approvalStatus: String?
     }
 }
 

@@ -44,6 +44,10 @@ struct PeerNode: Identifiable {
     var isAgent: Bool = false
     /// gVisor sandbox state from the AgentIdentity ("none" | "gvisor" | ...).
     var sandbox: String? = nil
+    /// Enrollment approval state from the management API (ADR-0003):
+    /// "approved" | "pending" | "revoked". nil for tunnel-only peers —
+    /// the tunnel's netmap has no notion of approval.
+    var approvalStatus: String? = nil
 
     var shownName: String { displayName.isEmpty ? name : displayName }
 }

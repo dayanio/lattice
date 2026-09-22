@@ -47,4 +47,9 @@ type PeerVo struct {
 
 	// Disabled indicates the node has been administratively disabled by a workspace manager.
 	Disabled bool `json:"disabled,omitempty"`
+
+	// ApprovalStatus is the enrollment approval state (standalone mode only,
+	// ADR-0003): "approved", "pending" (awaiting an administrator) or
+	// "revoked". Empty in K8s mode, which has no approval workflow yet.
+	ApprovalStatus string `json:"approvalStatus,omitempty"`
 }
