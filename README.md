@@ -123,24 +123,25 @@ Lattice consists of four planes:
 
 ### Deploy Control Plane
 
-The Lattice control plane runs inside Kubernetes. Choose one of the following:
-
-**Docker** (bundles k3s — no existing cluster needed):
+The all-in-one control plane is a single binary — no Kubernetes required:
 
 ```bash
-docker run -d \
-  --name lattice-k3s \
-  --privileged \
-  -p 8080:8080 \
-  ghcr.io/alatticeio/lattice-k3s:latest
+# build (or grab a release package, see Installation)
+make build SERVICE=latticed
+
+./bin/latticed --standalone --config-dir .lattice-demo
 ```
 
-Once the container is running (~30 seconds), the control plane is ready. Visit `http://localhost:8080`.
+- Dashboard / API: `http://localhost:8080` — sign in with `admin / 123456`, change it immediately
+- Embedded NATS signaling on `:4222` and LRP relay on `:6266`
 
-**Existing Kubernetes cluster:**
+> Devices other than the host itself need reachable addresses advertised: set `LATTICE_SIGNALING_URL=nats://<host-ip>:4222` and `LATTICE_RELAY_ADVERTISE_URL=<host-ip>:6266`. See the [All-in-One guide](https://alattice.io/docs/deploy/all-in-one).
+
+**Kubernetes** (optional):
 
 ```bash
-kubectl apply -k https://github.com/alatticeio/lattice/config/lattice/overlays/all-in-one
+kubectl apply -k https://github.com/dayanio/lattice/config/lattice/overlays/all-in-one
+# or Helm: helm install lattice oci://ghcr.io/alatticeio/charts/lattice
 ```
 
 ---
@@ -150,10 +151,16 @@ kubectl apply -k https://github.com/alatticeio/lattice/config/lattice/overlays/a
 Install the `lattice` CLI on every device you want to connect to the mesh:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alatticeio/lattice/master/docs/public/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/winstonfly/lattice/master/docs/public/install.sh | bash
 ```
 
-Supports Linux (amd64 / arm64) and macOS (amd64 / Apple Silicon). For Homebrew, APT, YUM, and other methods, see the [Installation Guide](https://alattice.io/docs/guide/installation).
+```bash
+# or via Homebrew (macOS / Linux)
+brew tap dayanio/tap
+brew install lattice
+```
+
+Supports Linux (amd64 / arm64) and macOS (amd64 / Apple Silicon). More methods in the [Installation Guide](https://alattice.io/docs/guide/installation).
 
 ---
 
@@ -197,8 +204,10 @@ lattice policy allow-all -n <namespace>
 
 ```bash
 lattice status     # Show local WireGuard status and peer list
-ping 10.100.0.2    # Ping a peer to confirm the tunnel is up
+ping 10.96.0.2     # Ping a peer to confirm the tunnel is up
 ```
+
+> You can also enroll phones and Macs by scanning the **join QR code** on the dashboard token page (`lattice://join?server=...&token=...`), or build the Apple clients from `apple/` — see the [end-to-end deployment guide](https://alattice.io/docs/deploy/end-to-end).
 
 ---
 
@@ -278,7 +287,7 @@ Then ask Claude in natural language: "List all peers", "Create a policy allowing
 ## Development
 
 ```bash
-git clone https://github.com/alatticeio/lattice.git
+git clone https://github.com/dayanio/lattice.git
 cd lattice
 make build-all     # Build all binaries
 make test          # Run unit tests
