@@ -23,6 +23,8 @@ settings:
 packages:
   LatticeCastKit:
     path: ../../lattice-cast/swift/LatticeCastKit
+  EmbeddedKit:
+    path: EmbeddedKit
 
 targets:
   Lattice:
@@ -60,6 +62,8 @@ targets:
       - target: LatticeTunnelMac
       - package: LatticeCastKit
         product: LatticeCastKit
+      - package: EmbeddedKit
+        product: EmbeddedKit
       - framework: Frameworks/MacOS/LatticeCore.xcframework
         embed: true
     info:

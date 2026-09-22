@@ -35,6 +35,15 @@ public final class EmbeddedEngine {
         return addr.isEmpty ? nil : addr
     }
 
+    /// The base64 WireGuard private key this engine registers with. When the
+    /// config did not carry one it is generated at start and available after
+    /// that — persist it and pass it back via the config's `privateKey` on
+    /// later runs (same device name + different key is rejected server-side).
+    public var privateKey: String? {
+        let key = inner.privateKey()
+        return key.isEmpty ? nil : key
+    }
+
     /// Dials a remote overlay address.
     public func dial(network: String, addr: String) throws -> EmbeddedConnection {
         guard let conn = try? inner.dialConn(network, addr: addr) else {

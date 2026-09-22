@@ -23,6 +23,7 @@ enum PanelPage: String, CaseIterable, Equatable {
     case share
     case cast
     case ai
+    case embeddedEngine
     case account
 
     var title: String {
@@ -31,6 +32,7 @@ enum PanelPage: String, CaseIterable, Equatable {
         case .share: return "共享本地服务"
         case .cast: return "投屏接收"
         case .ai: return "AI 助手"
+        case .embeddedEngine: return "嵌入式引擎"
         case .account: return "账号与网络"
         }
     }

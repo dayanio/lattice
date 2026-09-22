@@ -498,6 +498,10 @@ struct ContentView: View {
                     subPage = .ai
                 }
             },
+            PanelNavItem(id: "embedded", icon: "cpu", title: "引擎", isActive: subPage == .embeddedEngine) {
+                detailPeer = nil
+                subPage = .embeddedEngine
+            },
         ]
     }
 
@@ -537,6 +541,8 @@ struct ContentView: View {
             )
         case .ai:
             AIChatPane()
+        case .embeddedEngine:
+            EmbeddedEnginePage(onBack: { subPage = nil })
         case .account:
             AccountNetworkPage(onBack: { subPage = nil })
         }
