@@ -387,7 +387,33 @@ struct ContentView: View {
                 if needsLogin {
                     loginHint
                 }
-                SectionHead(title: "设备", trailing: "\(filteredPeers.count) 台在线")
+                HStack {
+                    Text("设备")
+                        .font(.caption2.weight(.bold))
+                        .textCase(.uppercase)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if isLoading {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Button {
+                            Task { await loadPeers() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("刷新设备列表")
+                    }
+                    Text("\(filteredPeers.count) 台在线")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 6)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
                 if !inPanel, displayPeers.count >= 4 {
                     PanelSearchField(text: $searchQuery)
                 }

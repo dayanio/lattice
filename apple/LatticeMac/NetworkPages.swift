@@ -16,9 +16,9 @@ import SwiftUI
 
 // MARK: - Network settings page (mockup §02)
 
-/// Exit Node / subnet routes / MagicDNS live here per the mockup. Exit Node
+/// Exit Node / subnet routes / LatticeDNS live here per the mockup. Exit Node
 /// selection is backed by real API calls; subnet-route advertising is a no-op
-/// toggle (CIDR entry UI deferred — see design doc §6.2); MagicDNS stays
+/// toggle (CIDR entry UI deferred — see design doc §6.2); LatticeDNS stays
 /// disabled until its backend ships.
 struct NetworkSettingsView: View {
     var onBack: () -> Void
@@ -67,7 +67,7 @@ struct NetworkSettingsView: View {
             Divider().padding(.leading, 15)
 
             settingsRow(
-                title: "MagicDNS",
+                title: "LatticeDNS",
                 desc: "用节点名代替 overlay IP 互相访问",
                 monoValue: "节点名.mac-demo.lattice.internal",
                 trailing: { disabledToggle }
@@ -250,9 +250,9 @@ struct NetworkSettingsView: View {
     }
 }
 
-// MARK: - Share page (Funnel / Serve, mockup §02 right)
+// MARK: - Share page (对外发布 / 内部共享, mockup §02 right)
 
-/// Local-service sharing page shape. Funnel/Serve is a roadmap item: the
+/// Local-service sharing page shape. 对外发布/内部共享 is a roadmap item: the
 /// form renders disabled with an explicit 即将推出 marker, no fake links.
 struct ShareView: View {
     var onBack: () -> Void
@@ -279,9 +279,9 @@ struct ShareView: View {
             .padding(.top, 10)
 
             HStack(spacing: 3) {
-                Text("仅 workspace 内（Serve）")
+                Text("仅 workspace 内（内部共享）")
                     .lineLimit(1)
-                Text("公开访问（Funnel）")
+                Text("公开访问（对外发布）")
                     .lineLimit(1)
                     .fontWeight(.semibold)
                     .padding(.vertical, 5)
@@ -306,7 +306,7 @@ struct ShareView: View {
             Spacer(minLength: 0)
             Divider()
             HStack {
-                Text("Funnel")
+                Text("对外发布")
                 Spacer()
                 Text("停止共享").foregroundColor(.secondary)
             }
