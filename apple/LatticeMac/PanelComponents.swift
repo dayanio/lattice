@@ -136,6 +136,7 @@ struct PanelNavItem: Identifiable {
     let icon: String
     let title: String
     var showsDot = false
+    var isActive = false
     let action: () -> Void
 }
 
@@ -174,7 +175,7 @@ private struct PanelNavButton: View {
                     }
                 Text(item.title).font(.system(size: 10.5))
             }
-            .foregroundColor(Color.primary.opacity(0.8))
+            .foregroundColor(item.isActive ? Color.accentColor : Color.primary.opacity(0.8))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 7)
             .contentShape(Rectangle())

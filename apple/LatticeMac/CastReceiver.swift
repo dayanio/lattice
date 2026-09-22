@@ -170,12 +170,13 @@ struct CastPage: View {
     }
 }
 
-// MARK: - Pairing form (页内表单，仅主窗口)
+// MARK: - Pairing form (sheet, main window only)
 
-/// 配对信息编辑（渲染端身份：name/room/token/port）。在主窗口里作为
-/// 投屏页下的页内表单出现；面板里编辑配对会转到主窗口（需要文字输入）。
+/// 配对信息编辑（渲染端身份：name/room/token/port）。以紧凑弹窗出现在主窗口；
+/// 面板里编辑配对会转到主窗口（面板不是 key window，无法输入文字）。
 struct CastPairingView: View {
     var onDone: () -> Void
+    var onClose: () -> Void
 
     @State private var name = Host.current().localizedName ?? "lattice-mac"
     @State private var room = "lattice"
@@ -183,34 +184,29 @@ struct CastPairingView: View {
     @State private var port = "7822"
 
     var body: some View {
-        VStack(spacing: 0) {
-            PageHeader(title: PanelPage.castPairing.title, onBack: onDone)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    LabeledField(label: "接收端名称") {
-                        TextField("lattice-mac", text: $name).textFieldStyle(.plain)
-                    }
-                    LabeledField(label: "房间") {
-                        TextField("lattice", text: $room).textFieldStyle(.plain)
-                    }
-                    LabeledField(label: "配对令牌") {
-                        SecureField("cast-agent 签发", text: $token).textFieldStyle(.plain)
-                            .font(.system(.caption, design: .monospaced))
-                    }
-                    LabeledField(label: "端口") {
-                        TextField("7822", text: $port).textFieldStyle(.plain)
-                            .font(.system(.caption, design: .monospaced))
-                    }
-                    Text("在 cast-agent 侧登记此名称与令牌后，即可向本机发起投屏。")
-                        .font(.caption2).foregroundColor(.secondary)
-                    HStack {
-                        Spacer()
-                        Button("保存") { save() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(name.isEmpty || room.isEmpty || token.isEmpty)
-                    }
-                }
-                .padding(16)
+        SheetScaffold(title: "配对信息", onClose: onClose) {
+            LabeledField(label: "接收端名称") {
+                TextField("lattice-mac", text: $name).textFieldStyle(.plain)
+            }
+            LabeledField(label: "房间") {
+                TextField("lattice", text: $room).textFieldStyle(.plain)
+            }
+            LabeledField(label: "配对令牌") {
+                SecureField("cast-agent 签发", text: $token).textFieldStyle(.plain)
+                    .font(.system(.caption, design: .monospaced))
+            }
+            LabeledField(label: "端口") {
+                TextField("7822", text: $port).textFieldStyle(.plain)
+                    .font(.system(.caption, design: .monospaced))
+            }
+            Text("在 cast-agent 侧登记此名称与令牌后，即可向本机发起投屏。")
+                .font(.caption2).foregroundColor(.secondary)
+            HStack {
+                Spacer()
+                Button("保存") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.isEmpty || room.isEmpty || token.isEmpty)
             }
         }
         .onAppear {

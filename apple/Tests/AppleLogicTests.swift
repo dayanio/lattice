@@ -225,28 +225,10 @@ func runLoginCoordinatorChecks() async {
 // MARK: PanelPage
 
 do {
-    eq(PanelPage.castPairing.parent, PanelPage.cast, "the pairing form goes back to the cast page")
-    eq(PanelPage.cast.parent, nil, "the cast page goes back to the first screen")
-    eq(PanelPage.networkSettings.parent, nil, "network settings goes back to the first screen")
-    eq(PanelPage.share.parent, nil, "share goes back to the first screen")
-}
-do {
-    eq(PanelPage.castPairing.destination(inPanel: true), PanelDestination.mainWindow,
-       "a typing page opened from the panel goes to the main window")
-    eq(PanelPage.castPairing.destination(inPanel: false), PanelDestination.inPlace,
-       "a typing page opened in the main window stays in place")
-    for page in PanelPage.allCases where page != .castPairing {
-        eq(page.destination(inPanel: true), PanelDestination.inPlace,
-           "\(page.rawValue) opens in place inside the panel")
-        eq(page.destination(inPanel: false), PanelDestination.inPlace,
-           "\(page.rawValue) opens in place in the main window")
-    }
-}
-do {
     eq(PanelPage(rawValue: "networkSettings"), PanelPage.networkSettings, "raw values are stable")
     eq(PanelPage(rawValue: "share"), PanelPage.share, "raw values are stable")
     eq(PanelPage(rawValue: "cast"), PanelPage.cast, "raw values are stable")
-    eq(PanelPage(rawValue: "castPairing"), PanelPage.castPairing, "raw values are stable")
+    check(PanelPage(rawValue: "castPairing") == nil, "pairing is a sheet, not a page")
     check(PanelPage(rawValue: "nope") == nil, "an unknown raw value is rejected")
     for page in PanelPage.allCases {
         check(!page.title.isEmpty, "\(page.rawValue) has a title")

@@ -32,6 +32,7 @@ struct ContentView: View {
     @State private var errorMsg = ""
     @State private var showingSettings = false
     @State private var showingJoin = false
+    @State private var showingCastPairing = false
     @State private var joined = UserDefaults.standard.bool(forKey: "lattice.joined")
     @StateObject private var tunnel = TunnelManager.shared
     @State private var renameTarget: PeerNode?
@@ -79,8 +80,14 @@ struct ContentView: View {
             } else if let page = subPage {
                 subPageView(page)
             } else {
-                mainPanel
+                homeScreen
             }
+            if !opError.isEmpty {
+                opErrorBanner
+            }
+            // The tab bar is persistent chrome: it stays visible on secondary
+            // pages and device detail so switching never needs a "back" first.
+            PanelNavBar(items: navItems)
         }
         .background(
             WindowHiddenObserver {
@@ -97,7 +104,7 @@ struct ContentView: View {
         .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
         .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
         .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
-        .onChange(of: ui.page) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showCastPairing) { _ in syncUIStateRequests() }
         // A management action (rename, delete, ...) that needs a login asks for
         // one here and carries on once it succeeds. Only the main window presents
         // it; the menu-bar panel cannot host a sheet.
@@ -131,6 +138,12 @@ struct ContentView: View {
                     }
                 },
                 onClose: { showingJoin = false }
+            )
+        }
+        .sheet(isPresented: $showingCastPairing) {
+            CastPairingView(
+                onDone: { showingCastPairing = false },
+                onClose: { showingCastPairing = false }
             )
         }
         .alert("重命名节点", isPresented: Binding(
@@ -196,21 +209,21 @@ struct ContentView: View {
                 }
             }
         }
-        if let page = ui.page {
-            ui.page = nil
-            subPage = page
+        if ui.showCastPairing {
+            ui.showCastPairing = false
+            // Land on the cast tab so the sheet has its context behind it.
+            subPage = .cast
+            showingCastPairing = true
         }
     }
 
-    private var mainPanel: some View {
+    /// The 设备 tab: status header + device list / states. The tab bar and
+    /// error banner are persistent chrome around it, not part of it.
+    private var homeScreen: some View {
         VStack(spacing: 0) {
             header
             Divider()
             content
-            if !opError.isEmpty {
-                opErrorBanner
-            }
-            PanelNavBar(items: navItems)
         }
         .task {
             tunnel.load()
@@ -254,9 +267,22 @@ struct ContentView: View {
 
     private var navItems: [PanelNavItem] {
         [
-            PanelNavItem(id: "network", icon: "network", title: "网络") { open(.networkSettings) },
-            PanelNavItem(id: "share", icon: "arrow.up.forward.app", title: "共享") { open(.share) },
-            PanelNavItem(id: "cast", icon: "tv", title: "投屏", showsDot: castReceiver.isRunning) { open(.cast) },
+            PanelNavItem(id: "devices", icon: "personalhotspot", title: "设备", isActive: subPage == nil) {
+                subPage = nil
+                detailPeer = nil
+            },
+            PanelNavItem(id: "network", icon: "network", title: "网络", isActive: subPage == .networkSettings) {
+                subPage = .networkSettings
+                detailPeer = nil
+            },
+            PanelNavItem(id: "share", icon: "arrow.up.forward.app", title: "共享", isActive: subPage == .share) {
+                subPage = .share
+                detailPeer = nil
+            },
+            PanelNavItem(id: "cast", icon: "tv", title: "投屏", showsDot: castReceiver.isRunning, isActive: subPage == .cast) {
+                subPage = .cast
+                detailPeer = nil
+            },
             PanelNavItem(id: "ai", icon: "sparkles", title: "AI") {
                 openAIWindow(id: "ai")
                 NSApp.activate(ignoringOtherApps: true)
@@ -290,28 +316,14 @@ struct ContentView: View {
     private func subPageView(_ page: PanelPage) -> some View {
         switch page {
         case .networkSettings:
-            NetworkSettingsView { subPage = page.parent }
+            NetworkSettingsView { subPage = nil }
         case .share:
-            ShareView { subPage = page.parent }
+            ShareView { subPage = nil }
         case .cast:
             CastPage(
-                onBack: { subPage = page.parent },
-                onEditPairing: { open(.castPairing) }
+                onBack: { subPage = nil },
+                onEditPairing: { presentCastPairing() }
             )
-        case .castPairing:
-            CastPairingView { subPage = page.parent }
-        }
-    }
-
-    /// Opens a secondary page: in place, or — for pages with text fields
-    /// opened from the panel — in the main window.
-    private func open(_ page: PanelPage) {
-        switch page.destination(inPanel: inPanel) {
-        case .inPlace:
-            subPage = page
-        case .mainWindow:
-            UIState.shared.page = page
-            openMain?()
         }
     }
 
@@ -330,6 +342,15 @@ struct ContentView: View {
             openMain?()
         } else {
             showingSettings = true
+        }
+    }
+
+    private func presentCastPairing() {
+        if inPanel {
+            UIState.shared.showCastPairing = true
+            openMain?()
+        } else {
+            showingCastPairing = true
         }
     }
 

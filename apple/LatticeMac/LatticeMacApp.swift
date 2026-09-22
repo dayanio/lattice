@@ -21,10 +21,8 @@ final class UIState: ObservableObject {
     static let shared = UIState()
     @Published var showJoin = false
     @Published var showSettings = false
+    @Published var showCastPairing = false
     @Published var detailPeerName: String?
-    @Published var page: Page?
-
-    typealias Page = PanelPage
 }
 
 // MARK: - App Entry
