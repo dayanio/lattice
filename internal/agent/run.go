@@ -46,6 +46,12 @@ func Start(ctx context.Context, flags *config.Config) error {
 	log.SetLevel(flags.Level)
 	logger := log.GetLogger("lattice")
 
+	// viper's Unmarshal misses env-only keys on some paths; read the
+	// ingress address from the environment deterministically.
+	if flags.IngressAddr == "" {
+		flags.IngressAddr = os.Getenv("LATTICE_INGRESS_ADDR")
+	}
+
 	if flags.EnableDaemon && os.Getenv("LATTICE_DAEMON") == "" {
 		return startDaemon(flags, logger)
 	}
@@ -115,6 +121,13 @@ func Start(ctx context.Context, flags *config.Config) error {
 
 	// Start heartbeat so the management server can track online status.
 	go c.StartHeartbeat(gCtx)
+
+	// 对外发布网关（v1 gateway mode）：订阅发布表广播并提供 HTTP ingress。
+	if flags.IngressAddr != "" {
+		if err := c.StartIngress(gCtx, flags.IngressAddr); err != nil {
+			logger.Error("publish ingress start failed", err)
+		}
+	}
 
 	// Local IPC socket: `lattice status` / `lattice down` talk to the node
 	// through it (daemon mode). Failure to serve is logged, not fatal —

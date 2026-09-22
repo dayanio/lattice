@@ -113,6 +113,23 @@ final class LatticeAPI {
         return try JSONDecoder().decode(Response.self, from: data).data ?? []
     }
 
+    // MARK: 对外发布 (publish gateway, v1)
+
+    func listPublishes() async throws -> [PublishItem] {
+        let data = try await request(method: "GET", path: "/api/v1/publish/list")
+        struct Response: Codable { let data: [PublishItem]? }
+        return try JSONDecoder().decode(Response.self, from: data).data ?? []
+    }
+
+    func createPublish(name: String, peer: String, port: Int) async throws {
+        try await request(method: "POST", path: "/api/v1/publish",
+                          body: ["name": name, "peerName": peer, "port": port])
+    }
+
+    func deletePublish(_ name: String) async throws {
+        try await request(method: "DELETE", path: "/api/v1/publish/\(encodePath(name))")
+    }
+
     // MARK: Policies (ACL view)
 
     func listPolicies() async throws -> [LatticePolicy] {
@@ -370,6 +387,16 @@ final class LatticeAPI {
 }
 
 // MARK: - API Response Types
+
+/// One 对外发布 rule as returned by /api/v1/publish/list.
+struct PublishItem: Codable, Identifiable {
+    let name: String
+    let peerName: String
+    let port: Int
+    let enabled: Bool
+
+    var id: String { name }
+}
 
 struct PeerListResponse: Codable {
     let code: Int

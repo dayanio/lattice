@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net"
+	"regexp"
 
 	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -70,6 +71,11 @@ type PeerService interface {
 	DeletePeer(ctx context.Context, namespace, name string) error
 	SetPeerApproval(ctx context.Context, namespace, name, status string) error
 	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
+
+	// 对外发布 (publish gateway rules, v1 gateway mode)
+	ListPublishes(ctx context.Context) ([]vo.PublishVo, error)
+	CreatePublish(ctx context.Context, name, peerName string, port int) error
+	DeletePublish(ctx context.Context, name string) error
 	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
 	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
 }
@@ -1230,4 +1236,109 @@ func (p *peerService) PolicyDeliveryStatus(ctx context.Context, workspaceID stri
 	out.ConvergedCount = converged
 	out.Converged = converged == out.Total && out.Total > 0
 	return &out, nil
+}
+
+// MARK: 对外发布 (publish gateway rules)
+
+var publishNameRE = regexp.MustCompile(`^[a-z0-9-]{3,32}$`)
+
+func (p *peerService) workspaceIDFrom(ctx context.Context) (string, error) {
+	wsV := ctx.Value(infra.WorkspaceKey)
+	if wsV == nil {
+		return "", stderrors.New("workspace required")
+	}
+	wsID, _ := wsV.(string)
+	if wsID == "" {
+		return "", stderrors.New("workspace required")
+	}
+	return wsID, nil
+}
+
+func (p *peerService) ListPublishes(ctx context.Context) ([]vo.PublishVo, error) {
+	wsID, err := p.workspaceIDFrom(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.store.Publishes().ListByWorkspace(ctx, wsID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]vo.PublishVo, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, vo.PublishVo{Name: r.Name, PeerName: r.PeerName, Port: r.Port, Enabled: r.Enabled})
+	}
+	return out, nil
+}
+
+func (p *peerService) CreatePublish(ctx context.Context, name, peerName string, port int) error {
+	wsID, err := p.workspaceIDFrom(ctx)
+	if err != nil {
+		return err
+	}
+	if !publishNameRE.MatchString(name) {
+		return stderrors.New("发布名只能是 3-32 位小写字母、数字或连字符")
+	}
+	if port < 1 || port > 65535 {
+		return stderrors.New("端口必须在 1-65535 之间")
+	}
+	if _, dupErr := p.store.Publishes().GetByName(ctx, wsID, name); dupErr == nil {
+		return stderrors.New("该发布名已存在")
+	}
+	peers, err := p.store.Peers().ListByWorkspace(ctx, wsID)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, r := range peers {
+		if r.Name == peerName {
+			found = true
+			if r.ApprovalStatus != models.ApprovalApproved {
+				return stderrors.New("目标节点尚未通过审批")
+			}
+			break
+		}
+	}
+	if !found {
+		return stderrors.New("目标节点不存在")
+	}
+	if err := p.store.Publishes().Create(ctx, &models.Publish{
+		WorkspaceID: wsID, Name: name, PeerName: peerName, Port: port, Enabled: true,
+	}); err != nil {
+		return err
+	}
+	p.announcePublishes(ctx, wsID)
+	return nil
+}
+
+func (p *peerService) DeletePublish(ctx context.Context, name string) error {
+	wsID, err := p.workspaceIDFrom(ctx)
+	if err != nil {
+		return err
+	}
+	if err := p.store.Publishes().Delete(ctx, wsID, name); err != nil {
+		return err
+	}
+	p.announcePublishes(ctx, wsID)
+	return nil
+}
+
+// announcePublishes broadcasts the workspace's full publish table to
+// gateways. A nil signal (internal token.go use) is a silent no-op.
+func (p *peerService) announcePublishes(ctx context.Context, wsID string) {
+	if p.signal == nil {
+		return
+	}
+	rows, err := p.store.Publishes().ListByWorkspace(ctx, wsID)
+	if err != nil {
+		return
+	}
+	table := make([]vo.PublishVo, 0, len(rows))
+	for _, r := range rows {
+		table = append(table, vo.PublishVo{Name: r.Name, PeerName: r.PeerName, Port: r.Port, Enabled: r.Enabled})
+	}
+	blob, err := json.Marshal(map[string]any{"workspaceId": wsID, "publishes": table})
+	if err != nil {
+		return
+	}
+	_ = p.signal.Publish(ctx, infra.PublishesChangedSubject, blob)
 }

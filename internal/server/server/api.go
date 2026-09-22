@@ -91,6 +91,14 @@ func (s *Server) apiRouter() error {
 		peerApi.GET("/:name/route-selection", s.listRouteSelections)
 	}
 
+	publishApi := s.Group("/api/v1/publish")
+	publishApi.Use(s.middleware.WorkspaceAuthMiddleware(dto.RoleViewer))
+	{
+		publishApi.GET("/list", s.listPublishes)
+		publishApi.POST("", s.createPublish)
+		publishApi.DELETE("/:name", s.middleware.WorkspaceAuthMiddleware(dto.RoleAdmin), s.deletePublish)
+	}
+
 	policyApi := s.Group("/api/v1/policies")
 	policyApi.Use(s.middleware.WorkspaceAuthMiddleware(dto.RoleViewer))
 	{
