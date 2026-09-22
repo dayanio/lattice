@@ -19,8 +19,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 )
@@ -198,4 +200,99 @@ func TestEmbeddedEngine_StartStop(t *testing.T) {
 	if err := e.Stop(); err != nil {
 		t.Fatalf("Stop: %v", err)
 	}
+}
+
+// startEmbeddedEngine registers a fresh device and waits for it to come up,
+// returning the running engine and a cleanup func. Shared by tests in this
+// file that need a live engine, not just Start/Stop.
+func startEmbeddedEngine(t *testing.T, namePrefix string) (*EmbeddedEngine, context.CancelFunc) {
+	t.Helper()
+	bearer, workspaceID := adminToken(t)
+	deviceName := fmt.Sprintf("%s-%d", namePrefix, time.Now().UnixNano())
+	token := mintEnrollmentToken(t, bearer, workspaceID, deviceName)
+
+	configJSON, _ := json.Marshal(Config{
+		ServerURL: testControlPlane(),
+		Token:     token,
+		Name:      deviceName,
+	})
+	e, err := New(string(configJSON))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go e.Start(ctx)
+
+	deadline := time.Now().Add(15 * time.Second)
+	for e.OverlayAddress() == "" && time.Now().Before(deadline) {
+		approvePeer(t, bearer, workspaceID, deviceName)
+		time.Sleep(500 * time.Millisecond)
+	}
+	if e.OverlayAddress() == "" {
+		cancel()
+		t.Fatal("timed out waiting for engine to acquire an overlay address")
+	}
+	// Give the netmap/ICE handshake a moment to converge with mac-node-a
+	// before the test tries to talk to it.
+	time.Sleep(3 * time.Second)
+	return e, cancel
+}
+
+func TestEmbeddedEngine_Listen_ReachableFromContainer(t *testing.T) {
+	requireIntegration(t)
+
+	e, cancel := startEmbeddedEngine(t, "embed-listen")
+	defer cancel()
+
+	ln, err := e.Listen("tcp", e.OverlayAddress()+":9500")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+
+	accepted := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		close(accepted)
+		io.Copy(conn, conn)
+	}()
+
+	out, err := exec.Command("docker", "exec", "mac-node-a", "nc", "-zv", "-w", "3", e.OverlayAddress(), "9500").CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker exec nc -zv: %v (%s)", err, out)
+	}
+
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Listen never accepted the connection from mac-node-a")
+	}
+}
+
+func TestEmbeddedEngine_Dial_ReachesContainer(t *testing.T) {
+	requireIntegration(t)
+
+	e, cancel := startEmbeddedEngine(t, "embed-dial")
+	defer cancel()
+
+	// mac-node-a listens on 10.96.0.2:9501 for the duration of the nc call.
+	listenCmd := exec.Command("docker", "exec", "mac-node-a", "nc", "-l", "-p", "9501")
+	if err := listenCmd.Start(); err != nil {
+		t.Fatalf("start docker exec nc -l: %v", err)
+	}
+	defer listenCmd.Process.Kill()
+	time.Sleep(1 * time.Second)
+
+	ctx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer dialCancel()
+	conn, err := e.Dial(ctx, "tcp", "10.96.0.2:9501")
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer conn.Close()
 }

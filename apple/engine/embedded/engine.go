@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 
 	"github.com/alatticeio/lattice-shim/shim"
@@ -26,8 +27,8 @@ import (
 	latticeagent "github.com/alatticeio/lattice/internal/agent"
 	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/gvisor"
-	agentlog "github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/infra"
+	agentlog "github.com/alatticeio/lattice/internal/agent/log"
 )
 
 // EmbeddedEngine is a Lattice mesh node that runs entirely in user space:
@@ -147,4 +148,28 @@ func (e *EmbeddedEngine) OverlayAddress() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.overlay
+}
+
+// Dial dials a remote overlay address. Returns an error if Start has not
+// yet completed registration.
+func (e *EmbeddedEngine) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	e.mu.Lock()
+	srv := e.server
+	e.mu.Unlock()
+	if srv == nil {
+		return nil, errors.New("embedded engine not started")
+	}
+	return srv.Dial(ctx, network, addr)
+}
+
+// Listen creates a TCP listener on the overlay netstack. Returns an error
+// if Start has not yet completed registration.
+func (e *EmbeddedEngine) Listen(network, addr string) (net.Listener, error) {
+	e.mu.Lock()
+	srv := e.server
+	e.mu.Unlock()
+	if srv == nil {
+		return nil, errors.New("embedded engine not started")
+	}
+	return srv.Listen(network, addr)
 }
