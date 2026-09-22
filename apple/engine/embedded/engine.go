@@ -105,7 +105,7 @@ func (e *EmbeddedEngine) Start(ctx context.Context) error {
 		ProvisionerFactory: gvisor.NewSandboxProvisionerFactory(overlayIP, e.cfg.Name),
 	})
 	if err != nil {
-		srv.Close()
+		_ = srv.Close()
 		return fmt.Errorf("create node: %w", err)
 	}
 
@@ -114,7 +114,7 @@ func (e *EmbeddedEngine) Start(ctx context.Context) error {
 	}
 
 	if err := node.Start(ctx); err != nil {
-		srv.Close()
+		_ = srv.Close()
 		return fmt.Errorf("start node: %w", err)
 	}
 	go node.StartHeartbeat(ctx)
