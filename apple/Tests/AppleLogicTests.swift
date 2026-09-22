@@ -242,6 +242,7 @@ do {
     eq(PanelPage(rawValue: "networkSettings"), PanelPage.networkSettings, "raw values are stable")
     eq(PanelPage(rawValue: "share"), PanelPage.share, "raw values are stable")
     eq(PanelPage(rawValue: "cast"), PanelPage.cast, "raw values are stable")
+    eq(PanelPage(rawValue: "ai"), PanelPage.ai, "raw values are stable")
     check(PanelPage(rawValue: "castPairing") == nil, "pairing is a sheet, not a page")
     check(PanelPage(rawValue: "nope") == nil, "an unknown raw value is rejected")
     for page in PanelPage.allCases {

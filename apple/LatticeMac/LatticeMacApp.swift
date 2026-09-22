@@ -22,6 +22,7 @@ final class UIState: ObservableObject {
     @Published var showJoin = false
     @Published var showSettings = false
     @Published var showCastPairing = false
+    @Published var showAI = false
     @Published var detailPeerName: String?
 }
 
@@ -48,13 +49,6 @@ struct LatticeMacApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 760, height: 640)
-        .windowResizability(.contentMinSize)
-
-        Window("Lattice AI 助手", id: "ai") {
-            ChatWindow()
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 900, height: 660)
         .windowResizability(.contentMinSize)
     }
 }
@@ -106,10 +100,6 @@ struct MenuBarPanel: View {
             inPanel: true,
             openMain: {
                 openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
-            },
-            openAI: {
-                openWindow(id: "ai")
                 NSApp.activate(ignoringOtherApps: true)
             }
         )

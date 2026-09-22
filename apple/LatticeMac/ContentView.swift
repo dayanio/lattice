@@ -24,8 +24,6 @@ struct ContentView: View {
     var inPanel: Bool = false
     /// Opens the main window (used only in panel mode).
     var openMain: (() -> Void)? = nil
-    /// Opens the AI assistant window (used only in panel mode).
-    var openAI: (() -> Void)? = nil
 
     @State private var peers: [PeerNode] = []
     @State private var isLoading = true
@@ -52,7 +50,6 @@ struct ContentView: View {
     @ObservedObject private var auth = AuthSession.shared
     @State private var searchQuery = ""
     @ObservedObject private var ui = UIState.shared
-    @Environment(\.openWindow) private var openAIWindow
 
     var body: some View {
         GeometryReader { geo in
@@ -73,6 +70,7 @@ struct ContentView: View {
         .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
         .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
         .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showAI) { _ in syncUIStateRequests() }
         .onChange(of: ui.showCastPairing) { _ in syncUIStateRequests() }
         // Silent refresh while the UI is up: approval states and presence
         // arrive on this cadence; there is no management-plane push.
@@ -214,9 +212,13 @@ struct ContentView: View {
         if let detail = detailPeer {
             peerDetail(detail, wide: true)
         } else if let page = subPage {
-            subPageView(page)
-                .frame(maxWidth: 560, alignment: .leading)
-                .frame(maxWidth: .infinity)
+            if page == .ai {
+                AIChatPane()
+            } else {
+                subPageView(page)
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+            }
         } else {
             overviewPane
         }
@@ -315,6 +317,10 @@ struct ContentView: View {
                 }
             }
         }
+        if ui.showAI {
+            ui.showAI = false
+            subPage = .ai
+        }
         if ui.showCastPairing {
             ui.showCastPairing = false
             // Land on the cast tab so the sheet has its context behind it.
@@ -389,9 +395,14 @@ struct ContentView: View {
                 subPage = .cast
                 detailPeer = nil
             },
-            PanelNavItem(id: "ai", icon: "sparkles", title: "AI") {
-                openAIWindow(id: "ai")
-                NSApp.activate(ignoringOtherApps: true)
+            PanelNavItem(id: "ai", icon: "sparkles", title: "AI", isActive: subPage == .ai) {
+                detailPeer = nil
+                if inPanel {
+                    UIState.shared.showAI = true
+                    openMain?()
+                } else {
+                    subPage = .ai
+                }
             },
         ]
     }
@@ -430,6 +441,8 @@ struct ContentView: View {
                 onBack: { subPage = nil },
                 onEditPairing: { presentCastPairing() }
             )
+        case .ai:
+            AIChatPane()
         }
     }
 
