@@ -150,14 +150,24 @@ func (e *EmbeddedEngine) OverlayAddress() string {
 	return e.overlay
 }
 
-// Dial dials a remote overlay address. Returns an error if Start has not
+// netstack returns the running shim server, or an error if Start has not
 // yet completed registration.
-func (e *EmbeddedEngine) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+func (e *EmbeddedEngine) netstack() (*shim.Server, error) {
 	e.mu.Lock()
 	srv := e.server
 	e.mu.Unlock()
 	if srv == nil {
 		return nil, errors.New("embedded engine not started")
+	}
+	return srv, nil
+}
+
+// Dial dials a remote overlay address. Returns an error if Start has not
+// yet completed registration.
+func (e *EmbeddedEngine) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	srv, err := e.netstack()
+	if err != nil {
+		return nil, err
 	}
 	return srv.Dial(ctx, network, addr)
 }
@@ -165,11 +175,9 @@ func (e *EmbeddedEngine) Dial(ctx context.Context, network, addr string) (net.Co
 // Listen creates a TCP listener on the overlay netstack. Returns an error
 // if Start has not yet completed registration.
 func (e *EmbeddedEngine) Listen(network, addr string) (net.Listener, error) {
-	e.mu.Lock()
-	srv := e.server
-	e.mu.Unlock()
-	if srv == nil {
-		return nil, errors.New("embedded engine not started")
+	srv, err := e.netstack()
+	if err != nil {
+		return nil, err
 	}
 	return srv.Listen(network, addr)
 }
