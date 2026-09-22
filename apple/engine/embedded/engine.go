@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/alatticeio/lattice-shim/shim"
 	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
@@ -41,6 +42,12 @@ type EmbeddedEngine struct {
 	server  *shim.Server
 	node    *latticeagent.Node
 	overlay string
+
+	// Lifecycle state for the context-free StartAsync/Stop pair. Start(ctx)
+	// does not touch these.
+	running bool
+	cancel  context.CancelFunc
+	done    chan struct{}
 }
 
 // New validates configJSON and returns an EmbeddedEngine bound to it.
@@ -132,13 +139,55 @@ func (e *EmbeddedEngine) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop is a no-op placeholder for callers that prefer an explicit method
-// over cancelling the context passed to Start; Start already tears
-// everything down when ctx is cancelled or done. Embedders that called
-// Start with context.Background() should cancel their own context instead
-// of relying on Stop to do anything — this method exists so the type has a
-// symmetrical Start/Stop pair matching apple/engine's Engine.
+// StartAsync launches the engine in the background and returns immediately;
+// registration and data-plane bring-up happen on a goroutine. It is the
+// gomobile-facing form of Start — context.Context cannot cross the gobind
+// boundary, so the engine manages its own context and Stop cancels it.
+// Poll OverlayAddress to see when registration has completed.
+func (e *EmbeddedEngine) StartAsync() error {
+	e.mu.Lock()
+	if e.running {
+		e.mu.Unlock()
+		return errors.New("engine already running")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	e.cancel = cancel
+	e.done = make(chan struct{})
+	e.running = true
+	e.mu.Unlock()
+
+	go func() {
+		defer close(e.done)
+		defer func() {
+			e.mu.Lock()
+			e.running = false
+			e.cancel = nil
+			e.mu.Unlock()
+		}()
+		// Start tears everything down and clears state once ctx is done.
+		_ = e.Start(ctx)
+	}()
+	return nil
+}
+
+// Stop cancels an engine launched with StartAsync and blocks (bounded at
+// 10 seconds) until teardown finishes. When the engine was started through
+// Start(ctx) instead, the caller's own cancellation already tears it down
+// and Stop is a harmless no-op.
 func (e *EmbeddedEngine) Stop() error {
+	e.mu.Lock()
+	cancel := e.cancel
+	done := e.done
+	e.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+		}
+	}
 	return nil
 }
 

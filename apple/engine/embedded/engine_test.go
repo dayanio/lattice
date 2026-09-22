@@ -202,6 +202,58 @@ func TestEmbeddedEngine_StartStop(t *testing.T) {
 	}
 }
 
+func TestEmbeddedEngine_StartAsyncStop(t *testing.T) {
+	requireIntegration(t)
+
+	bearer, workspaceID := adminToken(t)
+	deviceName := fmt.Sprintf("embed-async-%d", time.Now().UnixNano())
+	token := mintEnrollmentToken(t, bearer, workspaceID, deviceName)
+
+	configJSON, _ := json.Marshal(Config{
+		ServerURL: testControlPlane(),
+		Token:     token,
+		Name:      deviceName,
+	})
+	e, err := New(string(configJSON))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// StartAsync returns immediately; registration happens in the background.
+	if err := e.StartAsync(); err != nil {
+		t.Fatalf("StartAsync: %v", err)
+	}
+	if err := e.StartAsync(); err == nil {
+		t.Error("expected second StartAsync to report the engine already running")
+	}
+
+	deadline := time.Now().Add(15 * time.Second)
+	for e.OverlayAddress() == "" && time.Now().Before(deadline) {
+		approvePeer(t, bearer, workspaceID, deviceName)
+		time.Sleep(500 * time.Millisecond)
+	}
+	if e.OverlayAddress() == "" {
+		t.Fatal("timed out waiting for the engine to acquire an overlay address")
+	}
+	t.Logf("embedded engine (StartAsync) got overlay address %s", e.OverlayAddress())
+
+	// Stop cancels the engine's own context and waits for teardown.
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if e.OverlayAddress() != "" {
+		t.Errorf("expected overlay address to be cleared after Stop, got %q", e.OverlayAddress())
+	}
+
+	// A stopped engine can be started again.
+	if err := e.StartAsync(); err != nil {
+		t.Fatalf("StartAsync after Stop: %v", err)
+	}
+	if err := e.Stop(); err != nil {
+		t.Fatalf("Stop after restart: %v", err)
+	}
+}
+
 // startEmbeddedEngine registers a fresh device and waits for it to come up,
 // returning the running engine and a cleanup func. Shared by tests in this
 // file that need a live engine, not just Start/Stop.
