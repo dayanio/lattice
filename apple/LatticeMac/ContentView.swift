@@ -55,40 +55,8 @@ struct ContentView: View {
     @Environment(\.openWindow) private var openAIWindow
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let detail = detailPeer {
-                PeerDetailView(
-                    peer: detail,
-                    quality: tunnel.peerStates[detail.appID],
-                    stat: tunnel.peerStats[detail.appID],
-                    onBack: { detailPeer = nil },
-                    onRename: { name in
-                        renameText = peers.first { $0.name == name }?.displayName ?? ""
-                        renameTarget = detailPeer
-                    },
-                    onSetEndpoint: { _ in
-                        endpointText = ""
-                        endpointTarget = detailPeer
-                    },
-                    onToggleDisabled: {
-                        Task {
-                            await toggleDisabled(detail)
-                            detailPeer = peers.first { $0.name == detail.name }
-                        }
-                    },
-                    onDelete: { deleteTarget = detail }
-                )
-            } else if let page = subPage {
-                subPageView(page)
-            } else {
-                homeScreen
-            }
-            if !opError.isEmpty {
-                opErrorBanner
-            }
-            // The tab bar is persistent chrome: it stays visible on secondary
-            // pages and device detail so switching never needs a "back" first.
-            PanelNavBar(items: navItems)
+        GeometryReader { geo in
+            content(split: !inPanel && geo.size.width >= 680)
         }
         .background(
             WindowHiddenObserver {
@@ -190,6 +158,137 @@ struct ContentView: View {
         } message: {
             Text("该节点将被移出网络，需重新入网才能恢复。")
         }
+    }
+
+    /// Two-pane layout above 680pt (main window), single column below and in
+    /// the panel — both forms share the same child views.
+    @ViewBuilder
+    private func content(split: Bool) -> some View {
+        if split {
+            HStack(spacing: 0) {
+                leftColumn
+                Divider()
+                rightPane
+            }
+        } else {
+            VStack(spacing: 0) {
+                switchArea
+                if !opError.isEmpty {
+                    opErrorBanner
+                }
+                // The tab bar is persistent chrome: it stays visible on secondary
+                // pages and device detail so switching never needs a "back" first.
+                PanelNavBar(items: navItems)
+            }
+        }
+    }
+
+    /// The left column of the two-pane layout: the first screen as navigation.
+    private var leftColumn: some View {
+        VStack(spacing: 0) {
+            homeScreen
+            if !opError.isEmpty {
+                opErrorBanner
+            }
+            PanelNavBar(items: navItems)
+        }
+        .frame(width: 320)
+    }
+
+    /// Single-column content stack (panel and narrow windows).
+    @ViewBuilder
+    private var switchArea: some View {
+        if let detail = detailPeer {
+            peerDetail(detail, wide: false)
+        } else if let page = subPage {
+            subPageView(page)
+        } else {
+            homeScreen
+        }
+    }
+
+    /// The right pane of the two-pane layout: device detail, a secondary page,
+    /// or the overview when nothing is selected.
+    @ViewBuilder
+    private var rightPane: some View {
+        if let detail = detailPeer {
+            peerDetail(detail, wide: true)
+        } else if let page = subPage {
+            subPageView(page)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity)
+        } else {
+            overviewPane
+        }
+    }
+
+    @ViewBuilder
+    private func peerDetail(_ detail: PeerNode, wide: Bool) -> some View {
+        PeerDetailView(
+            peer: detail,
+            quality: tunnel.peerStates[detail.appID],
+            stat: tunnel.peerStats[detail.appID],
+            wide: wide,
+            onBack: { detailPeer = nil },
+            onRename: { name in
+                renameText = peers.first { $0.name == name }?.displayName ?? ""
+                renameTarget = detailPeer
+            },
+            onSetEndpoint: { _ in
+                endpointText = ""
+                endpointTarget = detailPeer
+            },
+            onToggleDisabled: {
+                Task {
+                    await toggleDisabled(detail)
+                    detailPeer = peers.first { $0.name == detail.name }
+                }
+            },
+            onDelete: { deleteTarget = detail }
+        )
+    }
+
+    /// What the right pane shows when nothing is selected.
+    private var overviewPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("概览")
+                    .font(.title3.weight(.semibold))
+                HStack(spacing: 12) {
+                    overviewCard(icon: "personalhotspot", title: "设备在线", value: "\(connectedPeers.count) 台")
+                    overviewCard(icon: "bolt.fill", title: "直连链路", value: "\(directCount) 条")
+                    overviewCard(icon: "point.3.connected.trianglepath.dotted", title: "隧道", value: tunnel.statusText)
+                }
+                overviewCard(icon: "network", title: "本机地址", value: tunnel.localOverlayIP.isEmpty ? "—" : tunnel.localOverlayIP)
+                if hasPendingApprovals {
+                    Text("有 \(pendingPeers.count) 台设备等待审批")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var directCount: Int {
+        tunnel.peerStates.values.filter { $0 == "ice-ready" }.count
+    }
+
+    private func overviewCard(icon: String, title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: icon)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
     }
 
     /// Consumes pending cross-window requests (from the menu-bar panel).

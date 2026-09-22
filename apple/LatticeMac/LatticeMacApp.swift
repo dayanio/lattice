@@ -44,11 +44,10 @@ struct LatticeMacApp: App {
 
         Window("Lattice", id: "main") {
             ContentView()
-                .frame(width: 360)
-                .frame(minHeight: 480, maxHeight: 900)
+                .frame(minWidth: 680, minHeight: 480, maxHeight: 1000)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 360, height: 640)
+        .defaultSize(width: 760, height: 640)
         .windowResizability(.contentMinSize)
 
         Window("Lattice AI 助手", id: "ai") {

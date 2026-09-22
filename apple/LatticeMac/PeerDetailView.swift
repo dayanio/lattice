@@ -23,6 +23,8 @@ struct PeerDetailView: View {
     var quality: String?
     /// Merged connection metrics from the tunnel poll (latency, counters).
     var stat: PeerStat?
+    /// Wide layout (two-pane main window): metric cards and a taller chart.
+    var wide: Bool = false
     var onBack: () -> Void
     var onRename: (String) -> Void
     var onSetEndpoint: (String) -> Void
@@ -169,18 +171,34 @@ struct PeerDetailView: View {
             Text("连接质量")
                 .font(.caption2.weight(.semibold))
                 .foregroundColor(.secondary)
-            HStack(spacing: 14) {
-                metric("延迟", currentStat?.rtt.flatMap { $0 > 0 ? "\($0) ms" : nil } ?? "—")
-                metric("最近握手", handshakeText)
-                metric("↑ 速率", rateText(txRate))
-                metric("↓ 速率", rateText(rxRate))
-                Spacer()
+            if wide {
+                HStack(spacing: 10) {
+                    metricCard("延迟", delayText)
+                    metricCard("最近握手", handshakeText)
+                    metricCard("↑ 速率", rateText(txRate))
+                    metricCard("↓ 速率", rateText(rxRate))
+                }
+            } else {
+                HStack(spacing: 14) {
+                    metric("延迟", delayText)
+                    metric("最近握手", handshakeText)
+                    metric("↑ 速率", rateText(txRate))
+                    metric("↓ 速率", rateText(rxRate))
+                    Spacer()
+                }
             }
             rttSparkline
-            HStack(spacing: 14) {
-                metric("累计发送", totalText(currentStat?.tx))
-                metric("累计接收", totalText(currentStat?.rx))
-                Spacer()
+            if wide {
+                HStack(spacing: 10) {
+                    metricCard("累计发送", totalText(currentStat?.tx))
+                    metricCard("累计接收", totalText(currentStat?.rx))
+                }
+            } else {
+                HStack(spacing: 14) {
+                    metric("累计发送", totalText(currentStat?.tx))
+                    metric("累计接收", totalText(currentStat?.rx))
+                    Spacer()
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -189,11 +207,29 @@ struct PeerDetailView: View {
         .onReceive(tunnel.$peerStats) { _ in sample() }
     }
 
+    private var delayText: String {
+        currentStat?.rtt.flatMap { $0 > 0 ? "\($0) ms" : nil } ?? "—"
+    }
+
     private func metric(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label).font(.caption2).foregroundColor(.secondary)
             Text(value).font(.system(.caption, design: .monospaced))
         }
+    }
+
+    private func metricCard(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption2).foregroundColor(.secondary)
+            Text(value)
+                .font(.system(.body, design: .rounded).weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.08)))
     }
 
     private var handshakeText: String {
@@ -235,7 +271,7 @@ struct PeerDetailView: View {
             }
             .stroke(Color.accentColor, lineWidth: 1.5)
         }
-        .frame(height: 26)
+        .frame(height: wide ? 36 : 26)
     }
 
     /// 由最新快照采样：RTT 进环形缓冲，计数器差分出瞬时速率（2s 间隔）。
