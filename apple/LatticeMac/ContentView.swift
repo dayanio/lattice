@@ -70,6 +70,7 @@ struct ContentView: View {
         .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
         .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
         .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showAccount) { _ in syncUIStateRequests() }
         .onChange(of: ui.showAI) { _ in syncUIStateRequests() }
         .onChange(of: ui.showCastPairing) { _ in syncUIStateRequests() }
         // Silent refresh while the UI is up: approval states and presence
@@ -251,6 +252,9 @@ struct ContentView: View {
     }
 
     /// What the right pane shows when nothing is selected.
+    @State private var workspaceName = ""
+    @State private var copiedKey = false
+
     private var overviewPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -261,7 +265,44 @@ struct ContentView: View {
                     overviewCard(icon: "bolt.fill", title: "直连链路", value: "\(directCount) 条")
                     overviewCard(icon: "point.3.connected.trianglepath.dotted", title: "隧道", value: tunnel.statusText)
                 }
-                overviewCard(icon: "network", title: "本机地址", value: tunnel.localOverlayIP.isEmpty ? "—" : tunnel.localOverlayIP)
+                overviewGroup(title: "本机") {
+                    infoRow("设备名", deviceDisplayName)
+                    infoRow("地址", tunnel.localOverlayIP.isEmpty ? "—" : tunnel.localOverlayIP)
+                    HStack(spacing: 6) {
+                        Text("公钥").font(.caption2).foregroundColor(.secondary)
+                        Text(shortKey)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button {
+                            copyToPasteboard(tunnel.localPublicKey)
+                            copiedKey = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copiedKey = false }
+                        } label: {
+                            Image(systemName: copiedKey ? "checkmark" : "doc.on.doc")
+                                .font(.caption2)
+                                .foregroundColor(copiedKey ? .green : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("复制公钥")
+                        .disabled(tunnel.localPublicKey.isEmpty)
+                    }
+                }
+                overviewGroup(title: "加入的网络") {
+                    infoRow("工作区", workspaceName.isEmpty ? "—" : workspaceName)
+                    infoRow("服务器", UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "—")
+                    HStack {
+                        Spacer()
+                        Button {
+                            detailPeer = nil
+                            subPage = .account
+                        } label: {
+                            Label("管理", systemImage: "chevron.right").font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                    }
+                }
                 if hasPendingApprovals {
                     Text("有 \(pendingPeers.count) 台设备等待审批")
                         .font(.caption)
@@ -270,6 +311,54 @@ struct ContentView: View {
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task {
+            if workspaceName.isEmpty, let ws = try? await LatticeAPI.shared.listWorkspaces().first {
+                workspaceName = ws.displayName ?? ws.slug ?? ""
+            }
+        }
+    }
+
+    private var deviceDisplayName: String {
+        UserDefaults.standard.string(forKey: "lattice.nodeName") ?? Host.current().localizedName ?? "—"
+    }
+
+    private var shortKey: String {
+        let key = tunnel.localPublicKey
+        guard key.count > 16 else { return key.isEmpty ? "—" : key }
+        return "\(key.prefix(10))…\(key.suffix(6))"
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(.caption2).foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func overviewGroup<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption2.weight(.bold))
+                .textCase(.uppercase)
+                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                content()
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
         }
     }
 
@@ -316,6 +405,11 @@ struct ContentView: View {
                     detailPeer = peers.first { $0.name == name }
                 }
             }
+        }
+        if ui.showAccount {
+            ui.showAccount = false
+            detailPeer = nil
+            subPage = .account
         }
         if ui.showAI {
             ui.showAI = false
@@ -443,6 +537,8 @@ struct ContentView: View {
             )
         case .ai:
             AIChatPane()
+        case .account:
+            AccountNetworkPage(onBack: { subPage = nil })
         }
     }
 
@@ -672,6 +768,16 @@ struct ContentView: View {
 
     private var moreMenu: some View {
         Menu {
+            Button("账号与网络…") {
+                detailPeer = nil
+                if inPanel {
+                    UIState.shared.showAccount = true
+                    openMain?()
+                } else {
+                    subPage = .account
+                }
+            }
+            Divider()
             Button("加入网络 / 重新入网…") { presentJoin() }
             Button("连接设置…") { presentSettings() }
             Button("刷新设备列表") { Task { await loadPeers() } }

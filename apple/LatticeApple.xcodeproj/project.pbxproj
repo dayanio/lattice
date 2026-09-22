@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		00140F5ED99BBE357CC1F951 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D60E634E669109A674D97AC /* KeychainStore.swift */; };
+		026547D910763D195877A6EC /* AccountPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 044E0028DE229A1C103E4E31 /* AccountPage.swift */; };
 		02AAD2A81C61D9265999E855 /* PeerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293355084BBA1A64A7029EB5 /* PeerDetailView.swift */; };
 		0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D651343557480E291D4C242C /* QRScanner.swift */; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
@@ -111,6 +112,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		044E0028DE229A1C103E4E31 /* AccountPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountPage.swift; sourceTree = "<group>"; };
 		05B18389E61765B68DB7CF7D /* DesignComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignComponents.swift; sourceTree = "<group>"; };
 		0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/MacOS/LatticeCore.xcframework; sourceTree = "<group>"; };
 		0B144916D9450C4F743FDA7B /* LatticeCastKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LatticeCastKit; path = "../../lattice-cast/swift/LatticeCastKit"; sourceTree = SOURCE_ROOT; };
@@ -272,6 +274,7 @@
 		A5623A6924E4876DCA9099EC /* LatticeMac */ = {
 			isa = PBXGroup;
 			children = (
+				044E0028DE229A1C103E4E31 /* AccountPage.swift */,
 				14A9894E398BA1C95006D8A3 /* CastReceiver.swift */,
 				165E8316190B31DE582046CA /* CastSink.swift */,
 				4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */,
@@ -496,6 +499,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				026547D910763D195877A6EC /* AccountPage.swift in Sources */,
 				DCC32482F0EFB9182AE419AF /* CastReceiver.swift in Sources */,
 				26CEACDA4053E98196979856 /* CastSink.swift in Sources */,
 				1D82F9675920AB6D70A8A707 /* ChatViewModel.swift in Sources */,

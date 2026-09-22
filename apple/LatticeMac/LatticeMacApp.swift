@@ -23,6 +23,7 @@ final class UIState: ObservableObject {
     @Published var showSettings = false
     @Published var showCastPairing = false
     @Published var showAI = false
+    @Published var showAccount = false
     @Published var detailPeerName: String?
 }
 

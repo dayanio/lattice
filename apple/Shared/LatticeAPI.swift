@@ -56,7 +56,8 @@ final class LatticeAPI {
                 labels: p.labels,
                 advertisedRoutes: p.advertisedRoutes ?? [],
                 lastSeen: p.lastSeen ?? "",
-                approvalStatus: p.approvalStatus
+                approvalStatus: p.approvalStatus,
+                publicKey: p.publicKey ?? ""
             )
         }
     }
@@ -91,6 +92,26 @@ final class LatticeAPI {
         try await request(method: "PUT",
                           path: "/api/v1/peers/\(encodePath(name))/approval",
                           body: ["status": approved ? "approved" : "revoked"])
+    }
+
+    // MARK: Account & workspace (账号与网络页)
+
+    struct MeInfo: Codable {
+        let username: String?
+        let systemRole: String?
+    }
+
+    /// The logged-in account. Empty strings when the token is invalid.
+    func fetchMe() async throws -> MeInfo {
+        let data = try await request(method: "GET", path: "/api/v1/users/getme")
+        struct Response: Codable { let data: MeInfo? }
+        return try JSONDecoder().decode(Response.self, from: data).data ?? MeInfo(username: nil, systemRole: nil)
+    }
+
+    func listWorkspaces() async throws -> [WorkspaceItem] {
+        let data = try await request(method: "GET", path: "/api/v1/workspaces/list")
+        let decoded = try JSONDecoder().decode(WorkspaceListResponse.self, from: data)
+        return decoded.data?.list ?? []
     }
 
     /// Declares (or clears, if `routes` is empty) the CIDRs `name` offers to
@@ -419,6 +440,7 @@ struct PeerListResponse: Codable {
         let labels: [String: String]?
         let advertisedRoutes: [String]?
         let approvalStatus: String?
+        let publicKey: String?
     }
 }
 
@@ -432,6 +454,16 @@ struct LoginResponse: Codable {
     }
 }
 
+/// One workspace as the account page shows it (name, quota).
+struct WorkspaceItem: Codable, Identifiable {
+    let id: String?
+    let displayName: String?
+    let slug: String?
+    let nodeCount: Int?
+    let quotaUsage: Int?
+    let maxNodeCount: Int?
+}
+
 struct WorkspaceListResponse: Codable {
     let code: Int
     let data: WorkspaceListData?
@@ -439,10 +471,6 @@ struct WorkspaceListResponse: Codable {
 
     struct WorkspaceListData: Codable {
         let list: [WorkspaceItem]?
-    }
-
-    struct WorkspaceItem: Codable {
-        let id: String?
     }
 }
 

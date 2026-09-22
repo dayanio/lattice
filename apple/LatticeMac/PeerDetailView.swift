@@ -57,6 +57,8 @@ struct PeerDetailView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     connectionSection
 
+                    publicKeyRow
+
                     Text("策略")
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(.secondary)
@@ -209,6 +211,34 @@ struct PeerDetailView: View {
 
     private var delayText: String {
         currentStat?.rtt.flatMap { $0 > 0 ? "\($0) ms" : nil } ?? "—"
+    }
+
+    /// 节点的 WireGuard 公钥：截断展示，一键复制全文。
+    private var publicKeyRow: some View {
+        Group {
+            if !peer.publicKey.isEmpty {
+                HStack(spacing: 6) {
+                    Text("公钥")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("\(peer.publicKey.prefix(10))…\(peer.publicKey.suffix(6))")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(peer.publicKey, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("复制公钥")
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
+            }
+        }
     }
 
     private func metric(_ label: String, _ value: String) -> some View {

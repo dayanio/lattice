@@ -48,6 +48,8 @@ struct PeerNode: Identifiable {
     /// "approved" | "pending" | "revoked". nil for tunnel-only peers —
     /// the tunnel's netmap has no notion of approval.
     var approvalStatus: String? = nil
+    /// The peer's WireGuard public key (base64) from the management API.
+    var publicKey: String = ""
 
     var shownName: String { displayName.isEmpty ? name : displayName }
 }
