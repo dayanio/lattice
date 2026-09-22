@@ -49,6 +49,9 @@ type PeerController interface {
 	SetPeerApproval(ctx context.Context, namespace, name, status string) error
 	DeletePeer(ctx context.Context, namespace, name string) error
 	SetAdvertisedRoutes(ctx context.Context, name string, routes []string) error
+	ListPublishes(ctx context.Context) ([]vo.PublishVo, error)
+	CreatePublish(ctx context.Context, name, peerName string, port int) error
+	DeletePublish(ctx context.Context, name string) error
 	SetRouteSelection(ctx context.Context, consumerName, providerName string, selected bool) error
 	ListRouteSelections(ctx context.Context, consumerName string) ([]string, error)
 }
@@ -169,4 +172,16 @@ func (p *peerController) GetNetmap(ctx context.Context, request []byte) ([]byte,
 		return nil, status.Errorf(codes.Internal, "marshal failed: %v", err)
 	}
 	return data, nil
+}
+
+func (c *peerController) ListPublishes(ctx context.Context) ([]vo.PublishVo, error) {
+	return c.peerService.ListPublishes(ctx)
+}
+
+func (c *peerController) CreatePublish(ctx context.Context, name, peerName string, port int) error {
+	return c.peerService.CreatePublish(ctx, name, peerName, port)
+}
+
+func (c *peerController) DeletePublish(ctx context.Context, name string) error {
+	return c.peerService.DeletePublish(ctx, name)
 }

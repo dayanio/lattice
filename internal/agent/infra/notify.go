@@ -56,3 +56,9 @@ func PublishNetmapChanged(ctx context.Context, signal SignalService, appID strin
 	}
 	return signal.Publish(ctx, NetmapChangedSubject(appID), []byte("changed"))
 }
+
+// PublishesChangedSubject carries the full publish-rule table to any publish
+// gateways. v1 is a flat subject: standalone deployments serve one workspace
+// and gateways filter nothing. There is no initial fetch — gateways keep the
+// last announced table, so they stay empty until the first mutation.
+const PublishesChangedSubject = "lattice.signals.publishes"

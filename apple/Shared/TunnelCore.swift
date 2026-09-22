@@ -44,6 +44,12 @@ struct PeerNode: Identifiable {
     var isAgent: Bool = false
     /// gVisor sandbox state from the AgentIdentity ("none" | "gvisor" | ...).
     var sandbox: String? = nil
+    /// Enrollment approval state from the management API (ADR-0003):
+    /// "approved" | "pending" | "revoked". nil for tunnel-only peers —
+    /// the tunnel's netmap has no notion of approval.
+    var approvalStatus: String? = nil
+    /// The peer's WireGuard public key (base64) from the management API.
+    var publicKey: String = ""
 
     var shownName: String { displayName.isEmpty ? name : displayName }
 }
@@ -74,6 +80,43 @@ enum PeerListMerge {
         guard !api.isEmpty else { return tunnel }
         let known = Set(api.flatMap { [$0.appID, $0.name] }.filter { !$0.isEmpty })
         return api + tunnel.filter { !known.contains($0.appID) && !known.contains($0.name) }
+    }
+}
+
+/// One peer's merged connection metrics from the tunnel process (engine
+/// pollPeerStates payload). Absent fields = unknown. Also decodes the older
+/// extension payload shape where the value was just the state string.
+struct PeerStat: Codable {
+    var state: String?
+    var rx: UInt64?
+    var tx: UInt64?
+    var handshakeAgo: Int64?
+    var rtt: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case state, rx, tx, handshakeAgo, rtt
+    }
+
+    init(state: String? = nil, rx: UInt64? = nil, tx: UInt64? = nil,
+         handshakeAgo: Int64? = nil, rtt: Int64? = nil) {
+        self.state = state
+        self.rx = rx
+        self.tx = tx
+        self.handshakeAgo = handshakeAgo
+        self.rtt = rtt
+    }
+
+    init(from decoder: Decoder) throws {
+        if let legacy = try? decoder.singleValueContainer().decode(String.self) {
+            state = legacy
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = try c.decodeIfPresent(String.self, forKey: .state)
+        rx = try c.decodeIfPresent(UInt64.self, forKey: .rx)
+        tx = try c.decodeIfPresent(UInt64.self, forKey: .tx)
+        handshakeAgo = try c.decodeIfPresent(Int64.self, forKey: .handshakeAgo)
+        rtt = try c.decodeIfPresent(Int64.self, forKey: .rtt)
     }
 }
 

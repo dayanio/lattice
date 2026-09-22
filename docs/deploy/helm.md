@@ -24,7 +24,7 @@ helm install lattice oci://ghcr.io/alatticeio/charts/lattice \
 kubectl port-forward -n lattice-system svc/lattice 8080:8080
 ```
 
-打开 `http://localhost:8080`，默认账号 `admin / changeme`。
+打开 `http://localhost:8080`，默认账号 `admin / 123456`（来自服务端 `app.initAdmins` 默认值），**登录后立即修改**。
 
 > 如需指定版本，加上 `--version 0.x.x`。查看可用版本：
 > ```bash
@@ -101,7 +101,7 @@ config:
   stunUrl: "stun.alattice.io:3478"
 
 extraEnv:
-  - name: APP_DATABASE_DSN
+  - name: LATTICE_DATABASE_DSN
     value: "user:pass@tcp(mysql:3306)/lattice?charset=utf8mb4&parseTime=True"
 ```
 
@@ -151,8 +151,8 @@ coturn 以 `--stun-only` 模式运行（纯 STUN，不做 TURN relay），通过
 | `config.jwt.expireHours` | Token 有效期（小时） | `24` |
 | `config.signalingUrl` | 外部 NATS 地址；为空时使用 Pod 内嵌 NATS | `""` |
 | `config.stunUrl` | STUN 服务地址 | `stun.alattice.io:3478` |
-| `config.database.dsn` | SQLite 路径；设置 `APP_DATABASE_DSN` 环境变量可切换 MySQL | `data/lattice.db` |
-| `service.type` | Service 类型 | `LoadBalancer` |
+| `config.database.dsn` | SQLite 路径；设置 `LATTICE_DATABASE_DSN` 环境变量可切换 MySQL | `data/lattice.db` |
+| `service.type` | Service 类型 | `ClusterIP` |
 | `service.natsHostPort` | 将 NATS 4222 绑定到宿主机 hostPort（k3s 推荐） | `true` |
 | `ingressRouteTCP.enabled` | 启用 Traefik IngressRouteTCP 暴露 NATS | `false` |
 | `ingressRouteTCP.entrypoint` | Traefik TCP entrypoint 名称 | `nats` |
@@ -167,7 +167,7 @@ coturn 以 `--stun-only` 模式运行（纯 STUN，不做 TURN relay），通过
 | `coturn.enabled` | 是否部署内置 STUN 服务 | `false` |
 | `license.enabled` | 是否挂载 Pro 授权文件 | `false` |
 | `license.fileContents` | Pro license JWT 内容 | `""` |
-| `extraEnv` | 追加环境变量（如 `APP_DATABASE_DSN`） | `[]` |
+| `extraEnv` | 追加环境变量（如 `LATTICE_DATABASE_DSN`） | `[]` |
 
 ---
 

@@ -139,7 +139,7 @@ docker run -d --name lattice-stun --network host --restart unless-stopped \
 
 ### 4.5 首次登录、工作区与入网令牌
 
-Dashboard 在 `http://<云主机IP>:18090`。管理员账号是 `admin`，初始密码由配置里的 `app.initAdmins` 决定（All-in-One 文档示例是 `changeme`，部署脚本会先尝试生成的密码再尝试 `123456`，具体以你的配置为准，**待确认**）。登录后立即改成强密码。
+Dashboard 在 `http://<云主机IP>:18090`。管理员账号是 `admin`，初始密码取配置里的 `app.initAdmins`（未配置时默认 `123456`）。`hack/deploy-cloud.sh` 会依次尝试 `/etc/lattice/credentials` 里的 `ADMIN_PASSWORD` 和 `123456` 登录，**不会自动修改密码**——首次登录后立即改成强密码。
 
 然后创建工作区和入网令牌，可以在 Dashboard 的"令牌"页面操作（它还能生成二维码，见第 7 节），也可以用 API：
 
@@ -331,4 +331,4 @@ ssh root@<云主机IP> 'cd /tmp/agentimg && mv -f lattice.new lattice && chmod 7
 - 控制面暴露在公网，第一次登录后立即修改管理员密码。
 - NATS 4222 目前没有鉴权（部署脚本的交付说明里也标注了这一点），只适合测试和受控环境；生产环境请限制来源地址或放在受保护的网络里。
 - 中继令牌、入网令牌、管理员密码都保存在 `/etc/lattice/credentials`，权限要保持仅 root 可读，不要写进仓库、日志或聊天。
-- 入网令牌的次数、有效期以服务器实现为准，发给设备后按需要回收（**语义待确认**）。
+- 入网令牌默认 7 天有效、最多 5 次使用（生成时可在 Dashboard 调整），过期或用尽后由服务端定期清理，需要重新签发；发给设备的令牌不再使用时，应在 Dashboard 里撤销。

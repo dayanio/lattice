@@ -14,11 +14,12 @@
 
 import SwiftUI
 
-/// LLM assistant window, Codex/Claude style: conversation-history sidebar on
+/// AI assistant pane, Codex/Claude style: conversation-history sidebar on
 /// the left, streaming thread + composer on the right. Conversations stream
 /// from the control plane's /api/v1/ai/chat endpoint, where the model drives
-/// MCP tools against the live network.
-struct ChatWindow: View {
+/// MCP tools against the live network. Embedded as the AI tab's right pane
+/// in the main window (formerly a standalone window).
+struct AIChatPane: View {
     @StateObject private var chat = ChatViewModel()
 
     var body: some View {
@@ -27,7 +28,6 @@ struct ChatWindow: View {
             Divider()
             thread
         }
-        .frame(minWidth: 780, idealWidth: 900, minHeight: 540, idealHeight: 660)
         .onAppear { chat.loadStore() }
     }
 

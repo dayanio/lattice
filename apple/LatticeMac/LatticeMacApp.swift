@@ -21,13 +21,10 @@ final class UIState: ObservableObject {
     static let shared = UIState()
     @Published var showJoin = false
     @Published var showSettings = false
+    @Published var showCastPairing = false
+    @Published var showAI = false
+    @Published var showAccount = false
     @Published var detailPeerName: String?
-    @Published var page: Page?
-
-    enum Page: String {
-        case networkSettings
-        case share
-    }
 }
 
 // MARK: - App Entry
@@ -49,17 +46,10 @@ struct LatticeMacApp: App {
 
         Window("Lattice", id: "main") {
             ContentView()
-                .frame(width: 360)
-                .frame(minHeight: 420, maxHeight: 640)
+                .frame(minWidth: 680, minHeight: 480)
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentMinSize)
-
-        Window("Lattice AI 助手", id: "ai") {
-            ChatWindow()
-        }
-        .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 900, height: 660)
+        .defaultSize(width: 760, height: 640)
         .windowResizability(.contentMinSize)
     }
 }
@@ -101,46 +91,21 @@ struct MenuBarGlyph: View {
 }
 
 /// Popover content: the shared main panel in panel mode (read-mostly —
-/// every flow that needs typing routes to the main window).
+/// every flow that needs typing routes to the main window). "加入网络" and
+/// "退出 Lattice" live in the header's ⋯ menu.
 struct MenuBarPanel: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        VStack(spacing: 0) {
-            ContentView(
-                inPanel: true,
-                openMain: {
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                },
-                openAI: {
-                    openWindow(id: "ai")
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-            )
-            .frame(width: 340)
-            .frame(minHeight: 380, maxHeight: 560)
-            Divider()
-            HStack {
-                Button {
-                    UIState.shared.showJoin = true
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                } label: {
-                    Text("加入网络…").font(.caption)
-                }
-                .buttonStyle(.plain)
-                Spacer()
-                Button {
-                    NSApp.terminate(nil)
-                } label: {
-                    Text("退出 Lattice").font(.caption)
-                }
-                .buttonStyle(.plain)
+        ContentView(
+            inPanel: true,
+            openMain: {
+                openWindow(id: "main")
+                NSApp.activate(ignoringOtherApps: true)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-        }
+        )
+        .frame(width: 340)
+        .frame(minHeight: 380, maxHeight: 560)
     }
 }
 

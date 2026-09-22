@@ -35,9 +35,9 @@ jwt:
   secret: "replace-with-random-secret"   # ⚠ 替换为随机值：openssl rand -base64 32
 
 app:
-  init_admins:
+  initAdmins:
     - username: "admin"
-      password: "changeme"               # ⚠ 替换为强密码
+      password: "123456"                 # ⚠ overlay 默认值，替换为强密码
 ```
 
 如需接入 AI 功能，同时填写：

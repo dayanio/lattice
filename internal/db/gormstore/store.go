@@ -38,6 +38,7 @@ type GormStore struct {
 	peerIdentities        store.PeerIdentityRepository
 	peers                 store.PeerRepository
 	routeSelections       store.PeerRouteSelectionRepository
+	publishes             store.PublishRepository
 	enrollmentTokens      store.EnrollmentTokenRepository
 	policyVersions        store.PolicyVersionRepository
 	agentIdentities       store.AgentIdentityRepository
@@ -75,6 +76,7 @@ func newStore(db *gorm.DB) *GormStore {
 		peerIdentities:        newPeerIdentityRepo(db),
 		peers:                 newPeerRepo(db),
 		routeSelections:       newPeerRouteSelectionRepo(db),
+		publishes:             newPublishRepo(db),
 		enrollmentTokens:      newEnrollmentTokenRepo(db),
 		policyVersions:        newPolicyVersionRepo(db),
 		agentIdentities:       newAgentIdentityRepo(db),
@@ -107,6 +109,7 @@ func (s *GormStore) FlowEvents() store.FlowEventRepository               { retur
 func (s *GormStore) PeerIdentities() store.PeerIdentityRepository        { return s.peerIdentities }
 func (s *GormStore) Peers() store.PeerRepository                         { return s.peers }
 func (s *GormStore) RouteSelections() store.PeerRouteSelectionRepository { return s.routeSelections }
+func (s *GormStore) Publishes() store.PublishRepository                  { return s.publishes }
 func (s *GormStore) EnrollmentTokens() store.EnrollmentTokenRepository   { return s.enrollmentTokens }
 func (s *GormStore) PolicyVersions() store.PolicyVersionRepository       { return s.policyVersions }
 func (s *GormStore) AgentIdentities() store.AgentIdentityRepository      { return s.agentIdentities }

@@ -2,8 +2,8 @@
 
 > Single source of truth for what Lattice actually delivers. Every capability is verified against actual code, with implementation status and first-release version.
 >
-> Last updated: 2026-05-18
-> Based on: `cmd/lattice/cmd/sandbox/`, `internal/agent/gvisor/`, `api/v1alpha1/`, `internal/server/controller/`
+> Last updated: 2026-09-22
+> Based on: `cmd/lattice/cmd/sandbox/`, `internal/agent/gvisor/`, `api/v1alpha1/`, `internal/server/controller/`, plus the 2026-09 mesh-management work (see §Mesh Management & Clients)
 
 Legend: ✅ Done (merged to master, usable) / 🔨 In Progress (under development) / 📋 Planned (not yet started)
 
@@ -72,6 +72,26 @@ Legend: ✅ Done (merged to master, usable) / 🔨 In Progress (under developmen
 | iptables policy enforcement | ✅ | — | v0.1.0 | Community enforcer |
 | eBPF TC ingress enforcement (kernel-level) | — | ✅ | v0.1.0 | `internal/agent/ebpf/` |
 | pfctl policy enforcement (macOS) | ✅ | — | v0.1.0 | — |
+
+---
+
+## Mesh Management & Clients (verified 2026-09)
+
+All items below are verified end-to-end on real devices (cloud control plane at a public IP + macOS/iOS clients + Linux container nodes).
+
+| Capability | Status | When | Source |
+|------------|--------|------|--------|
+| Peer enrollment approval (`require_peer_approval`: register → `pending` → admin approves → netmap served) | ✅ | 2026-09 | ADR-0003, `internal/server/service/peer.go` |
+| Client-side WireGuard keygen (private key never leaves the device; server rejects pubkey mismatch on re-register) | ✅ | 2026-09 | ADR-0003, `internal/agent/` |
+| Join QR: dashboard token page renders `lattice://join?server=<origin>&token=<token>`, Apple clients auto-enroll on scan | ✅ | 2026-09 | `frontend/src/pages/manage/tokens`, apple `JoinView` |
+| LatticeDNS: built-in `*.lattice` DNS responder wired into the engine | ✅ | 2026-09 | engine commit 6cb51a13, `docs/latticedns-technical.md` |
+| Subnet routes / exit node with CIDR validation (gateway for devices that can't run an agent) | ✅ | 2026-09 | spec 2026-09-14, mac editor commit 620c7ce3 |
+| Publish gateway: mesh-member ingress (`ingress-addr`) + share links + public share page | ✅ | 2026-09 | commit 3dfe10dd |
+| Per-peer latency & traffic stats on device detail | ✅ | 2026-09 | commit 59079d39 |
+| Enrollment approval flow in device list (client + dashboard) | ✅ | 2026-09 | commit 95cb08d0 |
+| macOS client: Go engine embedded in a Network Extension — a true mesh member; host apps can bind/listen on the overlay (verified 2026-09-22, netstack project archived as unnecessary) | ✅ | 2026-09 | `apple/`, spec 2026-09-22-netstack (archived) |
+| iOS client: Tailscale-style UI, QR join, tunnel log export for diagnostics | ✅ | 2026-09 | `apple/`, spec 2026-09-16-ios-app-design |
+| Standalone single-binary control plane (embedded NATS + SQLite + in-process relay) hardened for cloud deploy (`hack/deploy-cloud.sh` + systemd) | ✅ | 2026-09 | `cmd/latticed`, `hack/deploy-cloud.sh` |
 
 ---
 

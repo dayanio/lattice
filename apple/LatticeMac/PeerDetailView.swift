@@ -21,11 +21,22 @@ import SwiftUI
 struct PeerDetailView: View {
     let peer: PeerNode
     var quality: String?
+    /// Merged connection metrics from the tunnel poll (latency, counters).
+    var stat: PeerStat?
+    /// Wide layout (two-pane main window): metric cards and a taller chart.
+    var wide: Bool = false
     var onBack: () -> Void
     var onRename: (String) -> Void
     var onSetEndpoint: (String) -> Void
     var onToggleDisabled: () -> Void
     var onDelete: () -> Void
+
+    @ObservedObject private var tunnel = TunnelManager.shared
+    @State private var rttSamples: [Double] = []
+    @State private var prevRx: UInt64?
+    @State private var prevTx: UInt64?
+    @State private var rxRate: Double = 0
+    @State private var txRate: Double = 0
 
     @State private var policies: [LatticePolicy] = []
     @State private var isLoadingPolicies = true
@@ -44,6 +55,10 @@ struct PeerDetailView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    connectionSection
+
+                    publicKeyRow
+
                     Text("策略")
                         .font(.caption2.weight(.semibold))
                         .foregroundColor(.secondary)
@@ -146,6 +161,163 @@ struct PeerDetailView: View {
         case "failed": return ("失败", .red)
         case "closed": return ("不可达", .secondary)
         default: return nil
+        }
+    }
+
+    // MARK: Connection quality & traffic
+
+    private var currentStat: PeerStat? { stat ?? tunnel.peerStats[peer.appID] }
+
+    private var connectionSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("连接质量")
+                .font(.caption2.weight(.semibold))
+                .foregroundColor(.secondary)
+            if wide {
+                HStack(spacing: 10) {
+                    metricCard("延迟", delayText)
+                    metricCard("最近握手", handshakeText)
+                    metricCard("↑ 速率", rateText(txRate))
+                    metricCard("↓ 速率", rateText(rxRate))
+                }
+            } else {
+                HStack(spacing: 14) {
+                    metric("延迟", delayText)
+                    metric("最近握手", handshakeText)
+                    metric("↑ 速率", rateText(txRate))
+                    metric("↓ 速率", rateText(rxRate))
+                    Spacer()
+                }
+            }
+            rttSparkline
+            if wide {
+                HStack(spacing: 10) {
+                    metricCard("累计发送", totalText(currentStat?.tx))
+                    metricCard("累计接收", totalText(currentStat?.rx))
+                }
+            } else {
+                HStack(spacing: 14) {
+                    metric("累计发送", totalText(currentStat?.tx))
+                    metric("累计接收", totalText(currentStat?.rx))
+                    Spacer()
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+        .onReceive(tunnel.$peerStats) { _ in sample() }
+    }
+
+    private var delayText: String {
+        currentStat?.rtt.flatMap { $0 > 0 ? "\($0) ms" : nil } ?? "—"
+    }
+
+    /// 节点的 WireGuard 公钥：截断展示，一键复制全文。
+    private var publicKeyRow: some View {
+        Group {
+            if !peer.publicKey.isEmpty {
+                HStack(spacing: 6) {
+                    Text("公钥")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    Text("\(peer.publicKey.prefix(10))…\(peer.publicKey.suffix(6))")
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundColor(.secondary)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(peer.publicKey, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("复制公钥")
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 4)
+            }
+        }
+    }
+
+    private func metric(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label).font(.caption2).foregroundColor(.secondary)
+            Text(value).font(.system(.caption, design: .monospaced))
+        }
+    }
+
+    private func metricCard(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption2).foregroundColor(.secondary)
+            Text(value)
+                .font(.system(.body, design: .rounded).weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.08)))
+    }
+
+    private var handshakeText: String {
+        guard let ago = currentStat?.handshakeAgo, ago >= 0 else { return "—" }
+        return ago < 60 ? "\(ago)s 前" : "\(ago / 60)m 前"
+    }
+
+    private func rateText(_ bytesPerSecond: Double) -> String {
+        guard bytesPerSecond > 0 else { return "—" }
+        let fmt = ByteCountFormatter()
+        fmt.countStyle = .memory
+        return fmt.string(fromByteCount: Int64(bytesPerSecond)) + "/s"
+    }
+
+    /// WireGuard 层计数（含隧道开销），与应用层流量略有出入。
+    private func totalText(_ bytes: UInt64?) -> String {
+        guard let bytes, bytes > 0 else { return "—" }
+        let fmt = ByteCountFormatter()
+        fmt.countStyle = .file
+        return fmt.string(fromByteCount: Int64(bytes))
+    }
+
+    /// 60 样本 × 2s 的 RTT 走势；平线段表示该样本未测得（probing/中继）。
+    private var rttSparkline: some View {
+        GeometryReader { geo in
+            Path { p in
+                let values = rttSamples
+                guard values.count > 1, values.max() ?? 0 > 0 else { return }
+                let maxV = max(values.max() ?? 1, 1)
+                for (i, v) in values.enumerated() {
+                    let x = geo.size.width * CGFloat(i) / CGFloat(values.count - 1)
+                    let y = geo.size.height * (1 - CGFloat(v / maxV))
+                    if i == 0 {
+                        p.move(to: CGPoint(x: x, y: y))
+                    } else {
+                        p.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+            }
+            .stroke(Color.accentColor, lineWidth: 1.5)
+        }
+        .frame(height: wide ? 36 : 26)
+    }
+
+    /// 由最新快照采样：RTT 进环形缓冲，计数器差分出瞬时速率（2s 间隔）。
+    private func sample() {
+        guard let s = tunnel.peerStats[peer.appID] else { return }
+        rttSamples.append(Double(s.rtt ?? 0))
+        if rttSamples.count > 60 {
+            rttSamples.removeFirst(rttSamples.count - 60)
+        }
+        if let rx = s.rx, let tx = s.tx {
+            if let prx = prevRx, let ptx = prevTx {
+                rxRate = max(0, Double(rx &- prx) / 2)
+                txRate = max(0, Double(tx &- ptx) / 2)
+            }
+            prevRx = rx
+            prevTx = tx
         }
     }
 

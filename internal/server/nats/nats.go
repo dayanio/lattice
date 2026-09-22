@@ -182,6 +182,15 @@ func (s *NatsSignalService) SubscribeRaw(subject string, onMessage func()) error
 	return err
 }
 
+// SubscribeRawPayload subscribes like SubscribeRaw but hands the message
+// payload to onMessage (used by the publish gateway for rule tables).
+func (s *NatsSignalService) SubscribeRawPayload(subject string, onMessage func(payload []byte)) error {
+	_, err := s.nc.Subscribe(subject, func(m *natsgo.Msg) {
+		onMessage(m.Data)
+	})
+	return err
+}
+
 func (s *NatsSignalService) Send(_ context.Context, peerId infra.PeerID, data []byte) error {
 	subject := fmt.Sprintf("lattice.signals.peers.%s", peerId)
 	return s.nc.Publish(subject, data)

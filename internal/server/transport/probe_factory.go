@@ -632,3 +632,16 @@ func (p *ProbeFactory) PeerConnectionStates() map[string]string {
 	}
 	return states
 }
+
+// PeerRTTs snapshots each tracked peer's latest direct-path echo RTT in
+// milliseconds, keyed by remote AppID. 0 = not measured (older agent,
+// relayed path, or no echo yet).
+func (p *ProbeFactory) PeerRTTs() map[string]int64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make(map[string]int64, len(p.probes))
+	for appID, probe := range p.probes {
+		out[appID] = probe.RTT().Milliseconds()
+	}
+	return out
+}

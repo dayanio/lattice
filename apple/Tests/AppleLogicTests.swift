@@ -222,6 +222,36 @@ func runLoginCoordinatorChecks() async {
     check(!c.isPresenting, "a late finish is harmless")
 }
 
+// MARK: SubnetRoutes
+
+do {
+    eq(SubnetRoute.normalized("192.168.1.5/24"), "192.168.1.0/24", "host bits are masked")
+    eq(SubnetRoute.normalized(" 10.0.0.0/8 "), "10.0.0.0/8", "trimmed")
+    eq(SubnetRoute.normalized("172.16.0.0/12"), "172.16.0.0/12", "rfc1918 kept")
+    eq(SubnetRoute.normalized("fd00::/8"), "fd00::/8", "ipv6 kept")
+    check(SubnetRoute.normalized("192.168.1.5") == nil, "a bare address is not a route")
+    check(SubnetRoute.normalized("192.168.1.5/33") == nil, "prefix > 32 rejected")
+    check(SubnetRoute.normalized("abc/24") == nil, "garbage rejected")
+    check(SubnetRoute.normalized("0.0.0.0/0") == nil, "default route is the exit node's business")
+    check(SubnetRoute.normalized("::/0") == nil, "v6 default rejected too")
+}
+
+// MARK: PanelPage
+
+do {
+    eq(PanelPage(rawValue: "networkSettings"), PanelPage.networkSettings, "raw values are stable")
+    eq(PanelPage(rawValue: "share"), PanelPage.share, "raw values are stable")
+    eq(PanelPage(rawValue: "cast"), PanelPage.cast, "raw values are stable")
+    eq(PanelPage(rawValue: "ai"), PanelPage.ai, "raw values are stable")
+    eq(PanelPage(rawValue: "account"), PanelPage.account, "raw values are stable")
+    check(PanelPage(rawValue: "castPairing") == nil, "pairing is a sheet, not a page")
+    check(PanelPage(rawValue: "nope") == nil, "an unknown raw value is rejected")
+    for page in PanelPage.allCases {
+        check(!page.title.isEmpty, "\(page.rawValue) has a title")
+    }
+    eq(Set(PanelPage.allCases.map(\.title)).count, PanelPage.allCases.count, "titles are unique")
+}
+
 var coordinatorDone = false
 Task { @MainActor in
     await runLoginCoordinatorChecks()

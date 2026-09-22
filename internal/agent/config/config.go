@@ -311,6 +311,8 @@ type Config struct {
 	EnforcerMode         string `mapstructure:"enforcer-mode"` // "auto", "iptables", "ebpf"
 
 	// ── Feature flags ─────────────────────────────────────────────
+	IngressAddr string `mapstructure:"ingress-addr"` // 对外发布 HTTP ingress listen address, empty = disabled
+
 	EnableRelay  bool `mapstructure:"enable-relay"`
 	EnableTLS    bool `mapstructure:"enable-tls"`
 	EnableMetric bool `mapstructure:"enable-metric"`
@@ -628,6 +630,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("standalone", false)
 	v.SetDefault("resync-interval", "")
 	v.SetDefault("netmap-poll-interval", "30s")
+	v.SetDefault("ingress-addr", "")
+	_ = v.BindEnv("ingress-addr")
 	v.SetDefault("level", "info")
 	v.SetDefault("env", "dev")
 

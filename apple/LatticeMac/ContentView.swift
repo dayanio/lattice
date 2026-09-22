@@ -24,14 +24,13 @@ struct ContentView: View {
     var inPanel: Bool = false
     /// Opens the main window (used only in panel mode).
     var openMain: (() -> Void)? = nil
-    /// Opens the AI assistant window (used only in panel mode).
-    var openAI: (() -> Void)? = nil
 
     @State private var peers: [PeerNode] = []
     @State private var isLoading = true
     @State private var errorMsg = ""
     @State private var showingSettings = false
     @State private var showingJoin = false
+    @State private var showingCastPairing = false
     @State private var joined = UserDefaults.standard.bool(forKey: "lattice.joined")
     @StateObject private var tunnel = TunnelManager.shared
     @State private var renameTarget: PeerNode?
@@ -41,8 +40,9 @@ struct ContentView: View {
     @State private var deleteTarget: PeerNode?
     @State private var opError = ""
     @State private var detailPeer: PeerNode?
-    @State private var showingNetworkSettings = false
-    @State private var showingShare = false
+    /// The secondary page shown in place of the first screen; nil = first screen.
+    @State private var subPage: PanelPage?
+    @ObservedObject private var castReceiver = CastReceiverManager.shared
     /// The management API is unavailable (not logged in, or the login expired);
     /// the device list still shows what the tunnel knows.
     @State private var needsLogin = false
@@ -50,42 +50,75 @@ struct ContentView: View {
     @ObservedObject private var auth = AuthSession.shared
     @State private var searchQuery = ""
     @ObservedObject private var ui = UIState.shared
-    @Environment(\.openWindow) private var openAIWindow
 
     var body: some View {
-        VStack(spacing: 0) {
-            if let detail = detailPeer {
-                PeerDetailView(
-                    peer: detail,
-                    quality: tunnel.peerStates[detail.appID],
-                    onBack: { detailPeer = nil },
-                    onRename: { name in
-                        renameText = peers.first { $0.name == name }?.displayName ?? ""
-                        renameTarget = detailPeer
-                    },
-                    onSetEndpoint: { _ in
-                        endpointText = ""
-                        endpointTarget = detailPeer
-                    },
-                    onToggleDisabled: {
-                        Task {
-                            await toggleDisabled(detail)
-                            detailPeer = peers.first { $0.name == detail.name }
-                        }
-                    },
-                    onDelete: { deleteTarget = detail }
-                )
-            } else if showingNetworkSettings {
-                NetworkSettingsView {
-                    showingNetworkSettings = false
-                }
-            } else if showingShare {
-                ShareView {
-                    showingShare = false
-                }
-            } else {
-                mainPanel
+        GeometryReader { geo in
+            content(split: !inPanel && geo.size.width >= 680)
+        }
+        .background(
+            WindowHiddenObserver {
+                // Only the menu-bar panel resets; the main window can be occluded
+                // by other windows without losing its place.
+                guard inPanel else { return }
+                subPage = nil
+                detailPeer = nil
             }
+        )
+        .onAppear { syncUIStateRequests() }
+        // onChange fires after the update — safe to mutate state here
+        // (onReceive could land mid-update and crash SwiftUI).
+        .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
+        .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showAccount) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showAI) { _ in syncUIStateRequests() }
+        .onChange(of: ui.showCastPairing) { _ in syncUIStateRequests() }
+        // Silent refresh while the UI is up: approval states and presence
+        // arrive on this cadence; there is no management-plane push.
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { _ in
+            guard !isLoading else { return }
+            Task { await loadPeers() }
+        }
+        // A management action (rename, delete, ...) that needs a login asks for
+        // one here and carries on once it succeeds. Only the main window presents
+        // it; the menu-bar panel cannot host a sheet.
+        .sheet(isPresented: Binding(
+            get: { loginCoordinator.isPresenting && !inPanel },
+            set: { if !$0 { loginCoordinator.finish(success: false) } }
+        )) {
+            ManageLoginView { loginCoordinator.finish(success: $0) }
+        }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(
+                onDone: {
+                    showingSettings = false
+                    Task { await loadPeers() }
+                },
+                onJoin: {
+                    showingSettings = false
+                    showingJoin = true
+                },
+                onClose: { showingSettings = false }
+            )
+        }
+        .sheet(isPresented: $showingJoin) {
+            JoinView(
+                onDone: {
+                    showingJoin = false
+                    joined = true
+                    UserDefaults.standard.set(true, forKey: "lattice.joined")
+                    tunnel.load {
+                        tunnel.connect()
+                    }
+                },
+                onClose: { showingJoin = false }
+            )
+        }
+        .sheet(isPresented: $showingCastPairing) {
+            CastPairingView(
+                onDone: { showingCastPairing = false },
+                onClose: { showingCastPairing = false }
+            )
         }
         .alert("重命名节点", isPresented: Binding(
             get: { renameTarget != nil },
@@ -126,6 +159,229 @@ struct ContentView: View {
         }
     }
 
+    /// Two-pane layout above 680pt (main window), single column below and in
+    /// the panel — both forms share the same child views.
+    @ViewBuilder
+    private func content(split: Bool) -> some View {
+        if split {
+            HStack(spacing: 0) {
+                leftColumn
+                Divider()
+                rightPane
+            }
+        } else {
+            VStack(spacing: 0) {
+                switchArea
+                if !opError.isEmpty {
+                    opErrorBanner
+                }
+                // The tab bar is persistent chrome: it stays visible on secondary
+                // pages and device detail so switching never needs a "back" first.
+                PanelNavBar(items: navItems)
+            }
+        }
+    }
+
+    /// The left column of the two-pane layout: the first screen as navigation.
+    private var leftColumn: some View {
+        VStack(spacing: 0) {
+            homeScreen
+            if !opError.isEmpty {
+                opErrorBanner
+            }
+            PanelNavBar(items: navItems)
+        }
+        .frame(width: 320)
+    }
+
+    /// Single-column content stack (panel and narrow windows).
+    @ViewBuilder
+    private var switchArea: some View {
+        if let detail = detailPeer {
+            peerDetail(detail, wide: false)
+        } else if let page = subPage {
+            subPageView(page)
+        } else {
+            homeScreen
+        }
+    }
+
+    /// The right pane of the two-pane layout: device detail, a secondary page,
+    /// or the overview when nothing is selected.
+    @ViewBuilder
+    private var rightPane: some View {
+        if let detail = detailPeer {
+            peerDetail(detail, wide: true)
+        } else if let page = subPage {
+            if page == .ai {
+                AIChatPane()
+            } else {
+                subPageView(page)
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+            }
+        } else {
+            overviewPane
+        }
+    }
+
+    @ViewBuilder
+    private func peerDetail(_ detail: PeerNode, wide: Bool) -> some View {
+        PeerDetailView(
+            peer: detail,
+            quality: tunnel.peerStates[detail.appID],
+            stat: tunnel.peerStats[detail.appID],
+            wide: wide,
+            onBack: { detailPeer = nil },
+            onRename: { name in
+                renameText = peers.first { $0.name == name }?.displayName ?? ""
+                renameTarget = detailPeer
+            },
+            onSetEndpoint: { _ in
+                endpointText = ""
+                endpointTarget = detailPeer
+            },
+            onToggleDisabled: {
+                Task {
+                    await toggleDisabled(detail)
+                    detailPeer = peers.first { $0.name == detail.name }
+                }
+            },
+            onDelete: { deleteTarget = detail }
+        )
+    }
+
+    /// What the right pane shows when nothing is selected.
+    @State private var workspaceName = ""
+    @State private var copiedKey = false
+
+    private var overviewPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("概览")
+                    .font(.title3.weight(.semibold))
+                HStack(spacing: 12) {
+                    overviewCard(icon: "personalhotspot", title: "设备在线", value: "\(connectedPeers.count) 台")
+                    overviewCard(icon: "bolt.fill", title: "直连链路", value: "\(directCount) 条")
+                    overviewCard(icon: "point.3.connected.trianglepath.dotted", title: "隧道", value: tunnel.statusText)
+                }
+                overviewGroup(title: "本机") {
+                    infoRow("设备名", deviceDisplayName)
+                    infoRow("地址", tunnel.localOverlayIP.isEmpty ? "—" : tunnel.localOverlayIP)
+                    HStack(spacing: 6) {
+                        Text("公钥").font(.caption2).foregroundColor(.secondary)
+                        Text(shortKey)
+                            .font(.system(.caption2, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button {
+                            copyToPasteboard(tunnel.localPublicKey)
+                            copiedKey = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copiedKey = false }
+                        } label: {
+                            Image(systemName: copiedKey ? "checkmark" : "doc.on.doc")
+                                .font(.caption2)
+                                .foregroundColor(copiedKey ? .green : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("复制公钥")
+                        .disabled(tunnel.localPublicKey.isEmpty)
+                    }
+                }
+                overviewGroup(title: "加入的网络") {
+                    infoRow("工作区", workspaceName.isEmpty ? "—" : workspaceName)
+                    infoRow("服务器", UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "—")
+                    HStack {
+                        Spacer()
+                        Button {
+                            detailPeer = nil
+                            subPage = .account
+                        } label: {
+                            Label("管理", systemImage: "chevron.right").font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                    }
+                }
+                if hasPendingApprovals {
+                    Text("有 \(pendingPeers.count) 台设备等待审批")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .task {
+            if workspaceName.isEmpty, let ws = try? await LatticeAPI.shared.listWorkspaces().first {
+                workspaceName = ws.displayName ?? ws.slug ?? ""
+            }
+        }
+    }
+
+    private var deviceDisplayName: String {
+        UserDefaults.standard.string(forKey: "lattice.nodeName") ?? Host.current().localizedName ?? "—"
+    }
+
+    private var shortKey: String {
+        let key = tunnel.localPublicKey
+        guard key.count > 16 else { return key.isEmpty ? "—" : key }
+        return "\(key.prefix(10))…\(key.suffix(6))"
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(.caption2).foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func overviewGroup<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption2.weight(.bold))
+                .textCase(.uppercase)
+                .foregroundColor(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                content()
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
+        }
+    }
+
+    private var directCount: Int {
+        tunnel.peerStates.values.filter { $0 == "ice-ready" }.count
+    }
+
+    private func overviewCard(icon: String, title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(title, systemImage: icon)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.04)))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.08)))
+    }
+
     /// Consumes pending cross-window requests (from the menu-bar panel).
     /// Called from onAppear/onChange only — never mid-view-update.
     private func syncUIStateRequests() {
@@ -150,67 +406,30 @@ struct ContentView: View {
                 }
             }
         }
-        if let page = ui.page {
-            ui.page = nil
-            switch page {
-            case .networkSettings: showingNetworkSettings = true
-            case .share: showingShare = true
-            }
+        if ui.showAccount {
+            ui.showAccount = false
+            detailPeer = nil
+            subPage = .account
+        }
+        if ui.showAI {
+            ui.showAI = false
+            subPage = .ai
+        }
+        if ui.showCastPairing {
+            ui.showCastPairing = false
+            // Land on the cast tab so the sheet has its context behind it.
+            subPage = .cast
+            showingCastPairing = true
         }
     }
 
-    private var mainPanel: some View {
+    /// The 设备 tab: status header + device list / states. The tab bar and
+    /// error banner are persistent chrome around it, not part of it.
+    private var homeScreen: some View {
         VStack(spacing: 0) {
             header
             Divider()
-
-            if !joined {
-                Spacer()
-                VStack(spacing: 10) {
-                    Image(systemName: "personalhotspot")
-                        .font(.system(size: 32))
-                        .foregroundColor(.secondary)
-                    Text("尚未加入 Lattice 网络")
-                        .foregroundColor(.secondary)
-                    Button("加入网络") { showingJoin = true }
-                        .buttonStyle(.borderedProminent)
-                }
-                Spacer()
-            } else if isLoading && displayPeers.isEmpty {
-                Spacer()
-                ProgressView("加载中…")
-                Spacer()
-            } else if !errorMsg.isEmpty && displayPeers.isEmpty {
-                Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.title2).foregroundColor(.orange)
-                    Text(errorMsg).font(.caption).foregroundColor(.secondary)
-                    Button("重试") { Task { await loadPeers() } }
-                        .buttonStyle(.bordered)
-                }
-                Spacer()
-            } else if displayPeers.isEmpty {
-                Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "personalhotspot")
-                        .font(.system(size: 32))
-                        .foregroundColor(.secondary)
-                    Text("没有已连接的节点").foregroundColor(.secondary)
-                    if needsLogin {
-                        Button("登录以查看和管理设备") { requestManageLogin() }
-                            .buttonStyle(.bordered)
-                    }
-                }
-                Spacer()
-            } else {
-                deviceList
-            }
-
-            CastSectionView()
-                .padding(.bottom, 4)
-
-            bottomNav
+            content
         }
         .task {
             tunnel.load()
@@ -220,40 +439,133 @@ struct ContentView: View {
         .onChange(of: auth.isLoggedIn) { _ in
             Task { await loadPeers() }
         }
-        // A management action (rename, delete, ...) that needs a login asks for
-        // one here and carries on once it succeeds. Only the main window presents
-        // it; the menu-bar panel cannot host a sheet.
-        .sheet(isPresented: Binding(
-            get: { loginCoordinator.isPresenting && !inPanel },
-            set: { if !$0 { loginCoordinator.finish(success: false) } }
-        )) {
-            ManageLoginView { loginCoordinator.finish(success: $0) }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if !joined {
+            StateView(
+                icon: "personalhotspot",
+                title: "尚未加入 Lattice 网络",
+                actionTitle: "加入网络",
+                prominent: true
+            ) { presentJoin() }
+        } else if isLoading && displayPeers.isEmpty {
+            StateView(title: "加载中…", isLoading: true)
+        } else if !errorMsg.isEmpty && displayPeers.isEmpty {
+            StateView(
+                icon: "exclamationmark.triangle",
+                iconColor: .orange,
+                title: "加载失败",
+                message: errorMsg,
+                actionTitle: "重试"
+            ) { Task { await loadPeers() } }
+        } else if displayPeers.isEmpty {
+            StateView(
+                icon: "personalhotspot",
+                title: "没有已连接的节点",
+                actionTitle: needsLogin ? "登录以查看和管理设备" : nil
+            ) { requestManageLogin() }
+        } else {
+            deviceList
         }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView {
-                showingSettings = false
-                Task { await loadPeers() }
-            } onJoin: {
-                showingSettings = false
-                showingJoin = true
-            }
-        }
-        .onAppear { syncUIStateRequests() }
-        // onChange fires after the update — safe to mutate state here
-        // (onReceive could land mid-update and crash SwiftUI).
-        .onChange(of: ui.showJoin) { _ in syncUIStateRequests() }
-        .onChange(of: ui.showSettings) { _ in syncUIStateRequests() }
-        .onChange(of: ui.detailPeerName) { _ in syncUIStateRequests() }
-        .onChange(of: ui.page) { _ in syncUIStateRequests() }
-        .sheet(isPresented: $showingJoin) {
-            JoinView {
-                showingJoin = false
-                joined = true
-                UserDefaults.standard.set(true, forKey: "lattice.joined")
-                tunnel.load {
-                    tunnel.connect()
+    }
+
+    private var navItems: [PanelNavItem] {
+        [
+            PanelNavItem(id: "devices", icon: "personalhotspot", title: "设备", showsDot: hasPendingApprovals, isActive: subPage == nil) {
+                subPage = nil
+                detailPeer = nil
+            },
+            PanelNavItem(id: "network", icon: "network", title: "网络", isActive: subPage == .networkSettings) {
+                subPage = .networkSettings
+                detailPeer = nil
+            },
+            PanelNavItem(id: "share", icon: "arrow.up.forward.app", title: "共享", isActive: subPage == .share) {
+                subPage = .share
+                detailPeer = nil
+            },
+            PanelNavItem(id: "cast", icon: "tv", title: "投屏", showsDot: castReceiver.isRunning, isActive: subPage == .cast) {
+                subPage = .cast
+                detailPeer = nil
+            },
+            PanelNavItem(id: "ai", icon: "sparkles", title: "AI", isActive: subPage == .ai) {
+                detailPeer = nil
+                if inPanel {
+                    UIState.shared.showAI = true
+                    openMain?()
+                } else {
+                    subPage = .ai
                 }
+            },
+        ]
+    }
+
+    /// A management action failed (rename, delete, ...): a dismissible strip
+    /// above the nav bar. Replaces the old footer's inline error text.
+    private var opErrorBanner: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.circle.fill").foregroundColor(.red)
+            Text(opError)
+                .font(.caption2)
+                .foregroundColor(.red)
+                .lineLimit(2)
+            Spacer()
+            Button { opError = "" } label: {
+                Image(systemName: "xmark").font(.caption2)
             }
+            .buttonStyle(.plain)
+            .foregroundColor(.secondary)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .background(Color.red.opacity(0.08))
+        .help(opError)
+    }
+
+    @ViewBuilder
+    private func subPageView(_ page: PanelPage) -> some View {
+        switch page {
+        case .networkSettings:
+            NetworkSettingsView { subPage = nil }
+        case .share:
+            ShareView { subPage = nil }
+        case .cast:
+            CastPage(
+                onBack: { subPage = nil },
+                onEditPairing: { presentCastPairing() }
+            )
+        case .ai:
+            AIChatPane()
+        case .account:
+            AccountNetworkPage(onBack: { subPage = nil })
+        }
+    }
+
+    private func presentJoin() {
+        if inPanel {
+            UIState.shared.showJoin = true
+            openMain?()
+        } else {
+            showingJoin = true
+        }
+    }
+
+    private func presentSettings() {
+        if inPanel {
+            UIState.shared.showSettings = true
+            openMain?()
+        } else {
+            showingSettings = true
+        }
+    }
+
+    private func presentCastPairing() {
+        if inPanel {
+            UIState.shared.showCastPairing = true
+            openMain?()
+        } else {
+            showingCastPairing = true
         }
     }
 
@@ -279,7 +591,40 @@ struct ContentView: View {
     }
 
     private func requestManageLogin() {
+        // The login sheet is presented by the main window only.
+        if inPanel { openMain?() }
         Task { _ = await LoginCoordinator.shared.requestLogin() }
+    }
+
+    /// Approves or rejects a pending enrollment; the list refreshes so the
+    /// device moves between sections (and the agent connects on approval).
+    private func setApproval(_ peer: PeerNode, approved: Bool) async {
+        do {
+            try await LatticeAPI.shared.setPeerApproval(peer.name, approved: approved)
+            await loadPeers()
+        } catch {
+            opError = (approved ? "批准失败: " : "拒绝失败: ") + error.localizedDescription
+        }
+    }
+
+    private func pendingRow(_ peer: PeerNode) -> some View {
+        HStack(spacing: 10) {
+            HaloDot(color: .orange, size: 9)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(peer.shownName).font(.system(size: 13))
+                Text("等待管理员批准").font(.caption2).foregroundColor(.orange)
+            }
+            Spacer()
+            Button("批准") { Task { await setApproval(peer, approved: true) } }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            Button("拒绝") { Task { await setApproval(peer, approved: false) } }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 15)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
     }
 
     private var deviceList: some View {
@@ -288,26 +633,44 @@ struct ContentView: View {
                 if needsLogin {
                     loginHint
                 }
-                SectionHead(title: "设备", trailing: "\(filteredPeers.count) 台在线")
+                HStack {
+                    Text("设备")
+                        .font(.caption2.weight(.bold))
+                        .textCase(.uppercase)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    if isLoading {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Button {
+                            Task { await loadPeers() }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("刷新设备列表")
+                    }
+                    Text("\(connectedPeers.count) 台在线")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .padding(.leading, 6)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
                 if !inPanel, displayPeers.count >= 4 {
                     PanelSearchField(text: $searchQuery)
                 }
-                NavRow(
-                    icon: "arrow.left.arrow.right",
-                    iconColor: .gray,
-                    title: "退出节点",
-                    value: "无",
-                    showsChevron: true
-                ) {
-                    if inPanel {
-                        UIState.shared.page = .networkSettings
-                        openMain?()
-                    } else {
-                        showingNetworkSettings = true
+                if !pendingPeers.isEmpty {
+                    SectionHead(title: "待审批 \(pendingPeers.count) 台")
+                    ForEach(pendingPeers) { peer in
+                        pendingRow(peer)
+                        Divider().padding(.leading, 44)
                     }
                 }
-                Divider()
-                ForEach(filteredPeers) { peer in
+                ForEach(connectedPeers) { peer in
                     peerRow(peer)
                     Divider().padding(.leading, 44)
                 }
@@ -348,52 +711,6 @@ struct ContentView: View {
         )
     }
 
-    /// Bottom quick-nav stack: AI assistant, sharing, network settings, footer.
-    private var bottomNav: some View {
-        VStack(spacing: 0) {
-            Divider()
-            NavRow(
-                icon: "sparkles",
-                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
-                title: "AI 助手",
-                showsChevron: true
-            ) {
-                openAIWindow(id: "ai")
-                NSApp.activate(ignoringOtherApps: true)
-            }
-            Divider()
-            NavRow(
-                icon: "arrow.up.forward",
-                iconColor: Color(red: 0.49, green: 0.48, blue: 1.0),
-                title: "共享本地服务",
-                showsChevron: true
-            ) {
-                if inPanel {
-                    UIState.shared.page = .share
-                    openMain?()
-                } else {
-                    showingShare = true
-                }
-            }
-            Divider()
-            NavRow(
-                icon: "gearshape",
-                iconColor: .accentColor,
-                title: "网络设置",
-                showsChevron: true
-            ) {
-                if inPanel {
-                    UIState.shared.page = .networkSettings
-                    openMain?()
-                } else {
-                    showingNetworkSettings = true
-                }
-            }
-            Divider()
-            footer
-        }
-    }
-
     private var connected: Binding<Bool> {
         Binding(
             get: { tunnel.status == .connected },
@@ -402,7 +719,7 @@ struct ContentView: View {
                     if tunnel.isConfigured {
                         tunnel.connect()
                     } else {
-                        showingJoin = true
+                        presentJoin()
                     }
                 } else {
                     tunnel.disconnect()
@@ -443,9 +760,38 @@ struct ContentView: View {
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .labelsHidden()
+            moreMenu
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 12)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("账号与网络…") {
+                detailPeer = nil
+                if inPanel {
+                    UIState.shared.showAccount = true
+                    openMain?()
+                } else {
+                    subPage = .account
+                }
+            }
+            Divider()
+            Button("加入网络 / 重新入网…") { presentJoin() }
+            Button("连接设置…") { presentSettings() }
+            Button("刷新设备列表") { Task { await loadPeers() } }
+            Divider()
+            Button("退出 Lattice") { NSApp.terminate(nil) }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("更多")
     }
 
     /// Aggregate quality for the header pill: direct wins over relay.
@@ -473,6 +819,21 @@ struct ContentView: View {
         }
     }
 
+    /// Devices waiting for an administrator's approval (ADR-0003), shown as
+    /// their own section above the connected list. Only the management API
+    /// knows about approval, so this is empty without a login.
+    private var pendingPeers: [PeerNode] {
+        displayPeers.filter { $0.approvalStatus == "pending" }
+    }
+
+    private var connectedPeers: [PeerNode] {
+        filteredPeers.filter { $0.approvalStatus != "pending" }
+    }
+
+    private var hasPendingApprovals: Bool {
+        LatticeAPI.shared.isLoggedIn && !pendingPeers.isEmpty
+    }
+
     private var statusColor: Color {
         switch tunnel.status {
         case .connected: return LatticePalette.online
@@ -488,57 +849,6 @@ struct ContentView: View {
         case .disconnecting: return "断开中…"
         default: return "未连接"
         }
-    }
-
-    private var footer: some View {
-        HStack {
-            if !opError.isEmpty {
-                Text(opError)
-                    .font(.caption2)
-                    .foregroundColor(.red)
-                    .lineLimit(1)
-                    .help(opError)
-                    .onTapGesture { opError = "" }
-            } else {
-                Text("Lattice standalone").font(.caption2).foregroundColor(.secondary)
-            }
-            Spacer()
-            Button {
-                if inPanel {
-                    UIState.shared.showJoin = true
-                    openMain?()
-                } else {
-                    showingJoin = true
-                }
-            } label: {
-                Image(systemName: "plus.circle")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("加入网络 / 重新入网")
-
-            Button {
-                if inPanel {
-                    UIState.shared.showSettings = true
-                    openMain?()
-                } else {
-                    showingSettings = true
-                }
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("登录管理面板")
-
-            Button("刷新") { Task { await loadPeers() } }
-                .font(.caption)
-                .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     private func loadPeers() async {
@@ -753,6 +1063,7 @@ struct PeerRow: View {
 /// connects the tunnel.
 struct JoinView: View {
     var onDone: () -> Void
+    var onClose: () -> Void
 
     @State private var input = ""
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? ""
@@ -783,10 +1094,7 @@ struct JoinView: View {
     private var needsServer: Bool { payload != nil && payload?.serverURL == nil && serverURL.isEmpty }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("加入 Lattice 网络")
-                .font(.system(.headline, design: .rounded))
-
+        SheetScaffold(title: "加入 Lattice 网络", onClose: onClose) {
             Picker("", selection: $accountMode) {
                 Text("邀请链接 / 令牌").tag(false)
                 Text("账号登录").tag(true)
@@ -908,8 +1216,6 @@ struct JoinView: View {
                 }
             }
         }
-        .padding(20)
-        .frame(width: 340)
         .onAppear { detectClipboardInvite() }
         .onChange(of: needsServer) { needed in
             if needed { showAdvanced = true }
@@ -1027,9 +1333,7 @@ struct ManageLoginView: View {
     private var serverURL: String { UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "" }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("登录以管理设备")
-                .font(.system(.headline, design: .rounded))
+        SheetScaffold(title: "登录以管理设备", onClose: { onFinished(false) }) {
             Text("改名、下线、删除等管理操作需要账号；设备列表和连接不受影响。")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -1074,8 +1378,6 @@ struct ManageLoginView: View {
                 }
             }
         }
-        .padding(20)
-        .frame(width: 300)
     }
 
     private func login() async {
@@ -1096,6 +1398,7 @@ struct ManageLoginView: View {
 struct SettingsView: View {
     var onDone: () -> Void
     var onJoin: (() -> Void)? = nil
+    var onClose: () -> Void
 
     @State private var serverURL = UserDefaults.standard.string(forKey: "lattice.serverURL") ?? "http://127.0.0.1:8080"
     @State private var username = UserDefaults.standard.string(forKey: "lattice.adminUser") ?? "admin"
@@ -1104,10 +1407,7 @@ struct SettingsView: View {
     @State private var loginError = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("连接到 Lattice")
-                .font(.system(.headline, design: .rounded))
-
+        SheetScaffold(title: "连接到 Lattice", onClose: onClose) {
             LabeledField(label: "服务器地址") {
                 TextField("http://127.0.0.1:8080", text: $serverURL)
                     .textFieldStyle(.plain)
@@ -1165,8 +1465,6 @@ struct SettingsView: View {
                     .strokeBorder(Color.secondary.opacity(0.3))
             )
         }
-        .padding(20)
-        .frame(width: 300)
     }
 
     private func login() async {
@@ -1197,11 +1495,7 @@ struct JoinScannerView: View {
     @State private var errorText = ""
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text("扫描入网二维码")
-                .font(.system(.headline, design: .rounded))
-                .padding(.top, 14)
-
+        SheetScaffold(title: "扫描入网二维码", onClose: onCancel) {
             CameraScannerView(
                 onCode: { code in
                     if let payload = JoinPayload(code) {
@@ -1215,6 +1509,7 @@ struct JoinScannerView: View {
             .frame(width: 280, height: 280)
             .cornerRadius(12)
             .clipped()
+            .frame(maxWidth: .infinity)
 
             Text("二维码内容格式：lattice://join?server=…&token=…")
                 .font(.caption2)
@@ -1224,13 +1519,7 @@ struct JoinScannerView: View {
                 Text(errorText)
                     .font(.caption)
                     .foregroundColor(.red)
-                    .padding(.horizontal, 14)
             }
-
-            Button("取消") { onCancel() }
-                .buttonStyle(.bordered)
-                .padding(.bottom, 14)
         }
-        .frame(width: 320)
     }
 }

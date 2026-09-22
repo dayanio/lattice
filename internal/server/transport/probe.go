@@ -63,6 +63,10 @@ type Probe struct {
 	running           atomic.Bool
 	restartInProgress atomic.Bool
 
+	// rttNano records the latest direct-path echo RTT (nanoseconds; 0 =
+	// unknown / not measured yet). Written by startPathPing's echo loop.
+	rttNano atomic.Int64
+
 	// startedAt records when the current Probing cycle began, so the factory
 	// reconciler can restart probes frozen in Probing. A discover goroutine
 	// that loses the epoch race returns without touching the probe state,

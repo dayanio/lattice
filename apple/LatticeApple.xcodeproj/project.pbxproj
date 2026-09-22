@@ -8,17 +8,21 @@
 
 /* Begin PBXBuildFile section */
 		00140F5ED99BBE357CC1F951 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D60E634E669109A674D97AC /* KeychainStore.swift */; };
+		026547D910763D195877A6EC /* AccountPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 044E0028DE229A1C103E4E31 /* AccountPage.swift */; };
 		02AAD2A81C61D9265999E855 /* PeerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293355084BBA1A64A7029EB5 /* PeerDetailView.swift */; };
 		0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D651343557480E291D4C242C /* QRScanner.swift */; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		1D82F9675920AB6D70A8A707 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */; };
 		1EB51D02EC978D6692E1ADD9 /* LatticeTunnelMac.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 280D2D1DA245A0FD3DB0E443 /* LatticeTunnelMac.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		26C9902A138DE8D7AD524485 /* SubnetRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */; };
 		26CEACDA4053E98196979856 /* CastSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165E8316190B31DE582046CA /* CastSink.swift */; };
+		38A2BDDB52959E2210158F81 /* PanelRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B01FF96F795E26001237E0BD /* PanelRoute.swift */; };
 		3949790EF906AFA4A4AF9A91 /* ChatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6632B8E3AF0967CD62378C /* ChatWindow.swift */; };
 		3F6959622E55A023B45FA1B4 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 239FC0A7F79E63F4E5BF729B /* TunnelManager.swift */; };
 		42F5C0F09765D9837FE4E78C /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0665648C57C97A61F3F0A51 /* RootView.swift */; };
 		48B2B6E27C1C013AEE18D905 /* LatticeTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CC55D463910D975F56B8342B /* LatticeTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		4C67BC58EF90C9FA7420538A /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A96A5BA984924A4BE08A5B2 /* QRScannerView.swift */; };
+		4E2314DDF6678275F0FFAA84 /* PanelComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8547FD5E834594667D509110 /* PanelComponents.swift */; };
 		4E329B34A339DC67506C3423 /* LatticeCore.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		518B29B45861F274510B47CC /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE4CF185A86A9E5B9DCDB935 /* PacketTunnelProvider.swift */; };
 		5460D39AA904935F95C98BAB /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
@@ -45,6 +49,7 @@
 		C57A26F25C649ED6C6B71FF5 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F838CD20F6150A9C5E1F3402 /* OverviewView.swift */; };
 		C5D855A3DA02C11765207DDE /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		CB573F157F641243D23A8271 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
+		D68C7846A411CC37814ED76C /* SubnetRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */; };
 		DCC32482F0EFB9182AE419AF /* CastReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A9894E398BA1C95006D8A3 /* CastReceiver.swift */; };
 		E67E73C171D445673D559589 /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
 		E9FBD46E90777EBAFE9E1D3F /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
@@ -107,6 +112,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		044E0028DE229A1C103E4E31 /* AccountPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountPage.swift; sourceTree = "<group>"; };
 		05B18389E61765B68DB7CF7D /* DesignComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignComponents.swift; sourceTree = "<group>"; };
 		0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/MacOS/LatticeCore.xcframework; sourceTree = "<group>"; };
 		0B144916D9450C4F743FDA7B /* LatticeCastKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LatticeCastKit; path = "../../lattice-cast/swift/LatticeCastKit"; sourceTree = SOURCE_ROOT; };
@@ -128,11 +134,13 @@
 		4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		8287DD726BF401E4637ECBC7 /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8547FD5E834594667D509110 /* PanelComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelComponents.swift; sourceTree = "<group>"; };
 		8D60E634E669109A674D97AC /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		960BD20764F178AA8EE601C2 /* ExitNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitNodeView.swift; sourceTree = "<group>"; };
 		A087BE65958F460FCF0CC468 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
 		A2B465D56E6931B309FAEF61 /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
 		A40878B1329E02B2C70EB9E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B01FF96F795E26001237E0BD /* PanelRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelRoute.swift; sourceTree = "<group>"; };
 		B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkPages.swift; sourceTree = "<group>"; };
 		C0665648C57C97A61F3F0A51 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeMacApp.swift; sourceTree = "<group>"; };
@@ -140,6 +148,7 @@
 		D4F83921F212A6B53C281796 /* LatticeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeAPI.swift; sourceTree = "<group>"; };
 		D651343557480E291D4C242C /* QRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScanner.swift; sourceTree = "<group>"; };
 		E3E5909331047D47021B484E /* FavoritesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FavoritesStore.swift; sourceTree = "<group>"; };
+		E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubnetRoutes.swift; sourceTree = "<group>"; };
 		E73ACB07B695A778DE7339C3 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		F13B3A4F2C310EAA9B9C1E7F /* LatticeMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = LatticeMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F838CD20F6150A9C5E1F3402 /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
@@ -227,6 +236,7 @@
 				3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */,
 				8D60E634E669109A674D97AC /* KeychainStore.swift */,
 				D4F83921F212A6B53C281796 /* LatticeAPI.swift */,
+				E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */,
 				2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */,
 				239FC0A7F79E63F4E5BF729B /* TunnelManager.swift */,
 			);
@@ -264,6 +274,7 @@
 		A5623A6924E4876DCA9099EC /* LatticeMac */ = {
 			isa = PBXGroup;
 			children = (
+				044E0028DE229A1C103E4E31 /* AccountPage.swift */,
 				14A9894E398BA1C95006D8A3 /* CastReceiver.swift */,
 				165E8316190B31DE582046CA /* CastSink.swift */,
 				4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */,
@@ -272,6 +283,8 @@
 				E73ACB07B695A778DE7339C3 /* Info.plist */,
 				C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */,
 				B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */,
+				8547FD5E834594667D509110 /* PanelComponents.swift */,
+				B01FF96F795E26001237E0BD /* PanelRoute.swift */,
 				FA822E36FCF84A5FB4C48F09 /* PeerDetailView.swift */,
 				D651343557480E291D4C242C /* QRScanner.swift */,
 			);
@@ -476,6 +489,7 @@
 				4C67BC58EF90C9FA7420538A /* QRScannerView.swift in Sources */,
 				42F5C0F09765D9837FE4E78C /* RootView.swift in Sources */,
 				C389EB4080C7F9FD556938E8 /* SettingsView.swift in Sources */,
+				26C9902A138DE8D7AD524485 /* SubnetRoutes.swift in Sources */,
 				18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */,
 				6830D61E55C183794559B204 /* TunnelManager.swift in Sources */,
 			);
@@ -485,6 +499,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				026547D910763D195877A6EC /* AccountPage.swift in Sources */,
 				DCC32482F0EFB9182AE419AF /* CastReceiver.swift in Sources */,
 				26CEACDA4053E98196979856 /* CastSink.swift in Sources */,
 				1D82F9675920AB6D70A8A707 /* ChatViewModel.swift in Sources */,
@@ -496,8 +511,11 @@
 				5A6CBB67B97087769CC247F2 /* LatticeAPI.swift in Sources */,
 				6A2DC249F454BC91FB65FC4A /* LatticeMacApp.swift in Sources */,
 				A8FEB6A60B7D5B4254818DCA /* NetworkPages.swift in Sources */,
+				4E2314DDF6678275F0FFAA84 /* PanelComponents.swift in Sources */,
+				38A2BDDB52959E2210158F81 /* PanelRoute.swift in Sources */,
 				60BD6805501BB1BEE557786E /* PeerDetailView.swift in Sources */,
 				0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */,
+				D68C7846A411CC37814ED76C /* SubnetRoutes.swift in Sources */,
 				C5D855A3DA02C11765207DDE /* TunnelCore.swift in Sources */,
 				3F6959622E55A023B45FA1B4 /* TunnelManager.swift in Sources */,
 			);

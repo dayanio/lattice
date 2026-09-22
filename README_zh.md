@@ -124,23 +124,27 @@ lattice sandbox start \
 
 ## 快速开始
 
-### Docker (单命令，无需 Kubernetes)
+### 单机启动控制面(无需 Kubernetes)
 
 ```bash
-docker run -d \
-  --name lattice-k3s \
-  --privileged \
-  -p 8080:8080 \
-  ghcr.io/alatticeio/lattice-k3s:latest
+# 构建(或下载发布包,见下方"安装")
+make build SERVICE=latticed
+
+./bin/latticed --standalone --config-dir .lattice-demo
 ```
 
-约 30 秒后：
-- 控制台/API：`http://localhost:8080`
+- 控制台/API:`http://localhost:8080`,初始账号 `admin / 123456`(登录后立即改密)
+- 内嵌 NATS 信令 `:4222`、LRP 中继 `:6266`
+
+> 要让其它设备加入,需把"下发给设备的地址"设为设备可达的地址:
+> `LATTICE_SIGNALING_URL=nats://<本机IP>:4222`、`LATTICE_RELAY_ADVERTISE_URL=<本机IP>:6266`。
+> 详见 [All-in-One 部署](docs/deploy/all-in-one.md)。
 
 ### 已有 K8s 集群
 
 ```bash
-kubectl apply -k https://github.com/alatticeio/lattice/config/lattice/overlays/all-in-one
+kubectl apply -k https://github.com/dayanio/lattice/config/lattice/overlays/all-in-one
+# 或 Helm:helm install lattice oci://ghcr.io/alatticeio/charts/lattice
 ```
 
 ---
@@ -164,20 +168,26 @@ kubectl apply -k https://github.com/alatticeio/lattice/config/lattice/overlays/a
 
 ## 安装
 
+### 一键脚本
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/winstonfly/lattice/master/docs/public/install.sh | bash
+```
+
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew tap alatticeio/tap
+brew tap dayanio/tap
 brew install lattice
 ```
 
 ### 二进制下载
 
-从 [GitHub Releases](https://github.com/alatticeio/lattice/releases) 下载：
+从 [GitHub Releases](https://github.com/winstonfly/lattice/releases) 下载：
 
 ```bash
-VERSION=$(curl -s https://api.github.com/repos/alatticeio/lattice/releases/latest | grep tag_name | cut -d'"' -f4)
-curl -sSL "https://github.com/alatticeio/lattice/releases/download/${VERSION}/lattice_${VERSION}_linux_amd64.tar.gz" | tar xz
+VERSION=$(curl -s https://api.github.com/repos/winstonfly/lattice/releases/latest | grep tag_name | cut -d'"' -f4)
+curl -sSL "https://github.com/winstonfly/lattice/releases/download/${VERSION}/lattice_${VERSION}_linux_amd64.tar.gz" | tar xz
 sudo mv lattice /usr/local/bin/
 ```
 
@@ -195,7 +205,7 @@ sudo mv lattice /usr/local/bin/
 ### 从源码构建
 
 ```bash
-git clone https://github.com/alatticeio/lattice.git
+git clone https://github.com/dayanio/lattice.git
 cd lattice
 make build-all
 ```

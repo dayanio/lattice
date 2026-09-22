@@ -55,7 +55,9 @@ final class LatticeAPI {
                 appID: p.appId ?? "",
                 labels: p.labels,
                 advertisedRoutes: p.advertisedRoutes ?? [],
-                lastSeen: p.lastSeen ?? ""
+                lastSeen: p.lastSeen ?? "",
+                approvalStatus: p.approvalStatus,
+                publicKey: p.publicKey ?? ""
             )
         }
     }
@@ -84,6 +86,34 @@ final class LatticeAPI {
         try await request(method: "DELETE", path: "/api/v1/peers/\(encodePath(name))")
     }
 
+    /// Approves ("approved") or rejects ("revoked") a pending enrollment
+    /// (ADR-0003). Requires a workspace-admin login.
+    func setPeerApproval(_ name: String, approved: Bool) async throws {
+        try await request(method: "PUT",
+                          path: "/api/v1/peers/\(encodePath(name))/approval",
+                          body: ["status": approved ? "approved" : "revoked"])
+    }
+
+    // MARK: Account & workspace (账号与网络页)
+
+    struct MeInfo: Codable {
+        let username: String?
+        let systemRole: String?
+    }
+
+    /// The logged-in account. Empty strings when the token is invalid.
+    func fetchMe() async throws -> MeInfo {
+        let data = try await request(method: "GET", path: "/api/v1/users/getme")
+        struct Response: Codable { let data: MeInfo? }
+        return try JSONDecoder().decode(Response.self, from: data).data ?? MeInfo(username: nil, systemRole: nil)
+    }
+
+    func listWorkspaces() async throws -> [WorkspaceItem] {
+        let data = try await request(method: "GET", path: "/api/v1/workspaces/list")
+        let decoded = try JSONDecoder().decode(WorkspaceListResponse.self, from: data)
+        return decoded.data?.list ?? []
+    }
+
     /// Declares (or clears, if `routes` is empty) the CIDRs `name` offers to
     /// route for other peers in the workspace.
     func setAdvertisedRoutes(_ name: String, routes: [String]) async throws {
@@ -102,6 +132,23 @@ final class LatticeAPI {
         let data = try await request(method: "GET", path: "/api/v1/peers/\(encodePath(consumer))/route-selection")
         struct Response: Codable { let data: [String]? }
         return try JSONDecoder().decode(Response.self, from: data).data ?? []
+    }
+
+    // MARK: 对外发布 (publish gateway, v1)
+
+    func listPublishes() async throws -> [PublishItem] {
+        let data = try await request(method: "GET", path: "/api/v1/publish/list")
+        struct Response: Codable { let data: [PublishItem]? }
+        return try JSONDecoder().decode(Response.self, from: data).data ?? []
+    }
+
+    func createPublish(name: String, peer: String, port: Int) async throws {
+        try await request(method: "POST", path: "/api/v1/publish",
+                          body: ["name": name, "peerName": peer, "port": port])
+    }
+
+    func deletePublish(_ name: String) async throws {
+        try await request(method: "DELETE", path: "/api/v1/publish/\(encodePath(name))")
     }
 
     // MARK: Policies (ACL view)
@@ -362,6 +409,16 @@ final class LatticeAPI {
 
 // MARK: - API Response Types
 
+/// One 对外发布 rule as returned by /api/v1/publish/list.
+struct PublishItem: Codable, Identifiable {
+    let name: String
+    let peerName: String
+    let port: Int
+    let enabled: Bool
+
+    var id: String { name }
+}
+
 struct PeerListResponse: Codable {
     let code: Int
     let data: PeerListData?
@@ -382,6 +439,8 @@ struct PeerListResponse: Codable {
         let disabled: Bool?
         let labels: [String: String]?
         let advertisedRoutes: [String]?
+        let approvalStatus: String?
+        let publicKey: String?
     }
 }
 
@@ -395,6 +454,16 @@ struct LoginResponse: Codable {
     }
 }
 
+/// One workspace as the account page shows it (name, quota).
+struct WorkspaceItem: Codable, Identifiable {
+    let id: String?
+    let displayName: String?
+    let slug: String?
+    let nodeCount: Int?
+    let quotaUsage: Int?
+    let maxNodeCount: Int?
+}
+
 struct WorkspaceListResponse: Codable {
     let code: Int
     let data: WorkspaceListData?
@@ -402,10 +471,6 @@ struct WorkspaceListResponse: Codable {
 
     struct WorkspaceListData: Codable {
         let list: [WorkspaceItem]?
-    }
-
-    struct WorkspaceItem: Codable {
-        let id: String?
     }
 }
 

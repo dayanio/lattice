@@ -122,3 +122,32 @@ func TestPeerStatsFromIpc_IgnoresUnknownAndMalformedLines(t *testing.T) {
 		t.Fatalf("rx=%d err=%v, want 42 and no error", rx, err)
 	}
 }
+
+func TestPeerStatsAllFromIpc(t *testing.T) {
+	a, b := keyOf(1), keyOf(2)
+	all := PeerStatsAllFromIpc(ipcSample(a, b))
+	if len(all) != 2 {
+		t.Fatalf("peers = %d, want 2", len(all))
+	}
+	got := all[hexOf(a)]
+	if got.RxBytes != 3400 || got.TxBytes != 1200 {
+		t.Errorf("peer a counters rx/tx = %d/%d, want 3400/1200", got.RxBytes, got.TxBytes)
+	}
+	if want := time.Unix(1789805000, 250000000); !got.LastHandshake.Equal(want) {
+		t.Errorf("peer a handshake = %v, want %v", got.LastHandshake, want)
+	}
+	other := all[hexOf(b)]
+	if other.RxBytes != 9 || other.TxBytes != 7 || !other.LastHandshake.IsZero() {
+		t.Errorf("peer b = %+v, want rx 9 tx 7, no handshake", other)
+	}
+}
+
+func TestPeerStatsAllFromIpc_EmptyAndDeviceOnlyLines(t *testing.T) {
+	if all := PeerStatsAllFromIpc(""); len(all) != 0 {
+		t.Fatalf("empty ipc = %v, want no peers", all)
+	}
+	// Device-level lines before any peer section must not become a peer.
+	if all := PeerStatsAllFromIpc("errno=0\nprivate_key=abc=\nlisten_port=51820\nrx_bytes=99\n"); len(all) != 0 {
+		t.Fatalf("device-only ipc = %v, want no peers", all)
+	}
+}

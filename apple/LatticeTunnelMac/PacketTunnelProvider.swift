@@ -56,9 +56,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         if String(data: messageData, encoding: .utf8) == "peerStates" {
-            // latestPeerStates 本身是 map 的 JSON 字符串——先解成对象再装进
-            // 信封，避免把整个 map 当字符串二次编码（App 端会解码失败）。
-            let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: String] ?? [:]
+            // latestPeerStates 是 name→metrics 对象的 JSON——原样解成对象塞进
+            // 信封（字段由引擎定义，这里不感知具体结构）。
+            let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: Any] ?? [:]
             let peers = (try? JSONSerialization.jsonObject(with: Data((engine?.peers() ?? "[]").utf8))) as? [[String: Any]] ?? []
             let snapshot: [String: Any] = [
                 "peerStates": states,
@@ -158,6 +158,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // 其余域名的解析走系统默认 DNS。
         let dns = NEDNSSettings(servers: ["10.96.0.1"])
         dns.matchDomains = ["lattice"]
+        dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice
         settings.dnsSettings = dns
 
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
@@ -264,10 +265,10 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
         }
     }
 
-    /// Per-peer connection-quality snapshot changed (JSON: name → state).
+    /// Per-peer connection-quality snapshot changed (JSON: name → metrics).
+    /// Logged only in outline — this fires every couple of seconds.
     func onPeerStates(_ statesJSON: String!) {
         latestPeerStates = statesJSON ?? "{}"
-        TunnelLog.write("peer states: \(latestPeerStates)")
     }
 
     /// Extra CIDRs to route into the tunnel changed — reapply network

@@ -38,3 +38,20 @@ apple/Frameworks/iOS/LatticeCore.xcframework/
 bin/
 lattice.db*
 apple/build/
+
+# Xcode per-user UI state (changes on every open/close)
+xcuserdata/
+
+# Apple signing material — must never be committed regardless of where a
+# dev/CI script happens to drop it (apple/build/ already covers the default
+# DerivedData location; these patterns catch anything placed elsewhere).
+*.mobileprovision
+*.p12
+*.p8
+*.cer
+*.pfx
+ExportOptions.plist
+
+# Local tooling / scratch
+.zcodeignore
+tmp-syntool/

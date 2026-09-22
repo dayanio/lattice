@@ -42,11 +42,21 @@ type Store interface {
 	PeerIdentities() PeerIdentityRepository
 	Peers() PeerRepository
 	RouteSelections() PeerRouteSelectionRepository
+	Publishes() PublishRepository
 	EnrollmentTokens() EnrollmentTokenRepository
 	PolicyVersions() PolicyVersionRepository
 	AgentIdentities() AgentIdentityRepository
 
 	Close() error
+}
+
+// PublishRepository stores 对外发布 (publish gateway) rules. Publishes live
+// only in standalone mode; gateways learn them via NATS broadcast.
+type PublishRepository interface {
+	ListByWorkspace(ctx context.Context, workspaceID string) ([]*models.Publish, error)
+	GetByName(ctx context.Context, workspaceID, name string) (*models.Publish, error)
+	Create(ctx context.Context, p *models.Publish) error
+	Delete(ctx context.Context, workspaceID, name string) error
 }
 
 // UserRepository defines user-related data operations.
