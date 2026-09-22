@@ -16,6 +16,7 @@ package embedded
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -42,6 +43,7 @@ type EmbeddedEngine struct {
 	server  *shim.Server
 	node    *latticeagent.Node
 	overlay string
+	privKey wgtypes.Key
 
 	// Lifecycle state for the context-free StartAsync/Stop pair. Start(ctx)
 	// does not touch these.
@@ -57,7 +59,26 @@ func New(configJSON string) (*EmbeddedEngine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &EmbeddedEngine{cfg: cfg}, nil
+	e := &EmbeddedEngine{cfg: cfg}
+	if cfg.PrivateKey != "" {
+		key, err := wgtypes.ParseKey(cfg.PrivateKey)
+		if err != nil {
+			return nil, fmt.Errorf("config: privateKey: %w", err)
+		}
+		e.privKey = key
+	}
+	return e, nil
+}
+
+// PrivateKey returns the base64 WireGuard private key this engine registers
+// with. When Config did not carry privateKey, the key is generated at Start
+// and available afterwards — persist it and pass it back via
+// Config.PrivateKey on later runs, because re-registering the same device
+// name under a different key is rejected by the control plane.
+func (e *EmbeddedEngine) PrivateKey() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return base64.StdEncoding.EncodeToString(e.privKey[:])
 }
 
 // Start registers with the control plane, brings up the WireGuard data
@@ -68,10 +89,19 @@ func (e *EmbeddedEngine) Start(ctx context.Context) error {
 	agentconfig.Conf.ServerUrl = e.cfg.ServerURL
 	agentconfig.Conf.WgPort = 0
 
-	privKey, err := wgtypes.GeneratePrivateKey()
-	if err != nil {
-		return fmt.Errorf("generate key: %w", err)
+	e.mu.Lock()
+	privKey := e.privKey
+	e.mu.Unlock()
+	if privKey == (wgtypes.Key{}) {
+		generated, err := wgtypes.GeneratePrivateKey()
+		if err != nil {
+			return fmt.Errorf("generate key: %w", err)
+		}
+		privKey = generated
 	}
+	e.mu.Lock()
+	e.privKey = privKey
+	e.mu.Unlock()
 
 	peer, err := latticeagent.RegisterSandboxViaNATSNotify(ctx, e.cfg.ServerURL, e.cfg.Token, e.cfg.Name, privKey, nil)
 	if err != nil {
