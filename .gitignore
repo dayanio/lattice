@@ -33,6 +33,10 @@ apple/Frameworks/iOS/LatticeCore.xcframework/
 # embedded engine (no NE) — regenerate via apple/scripts/build_embedded_framework.sh
 apple/Frameworks/MacOS/LatticeEmbedded.xcframework/
 apple/Frameworks/iOS/LatticeEmbedded.xcframework/
+apple/Frameworks/Combined/LatticeEmbedded.xcframework/
+# Swift Package for the embedded engine
+apple/EmbeddedKit/.build/
+apple/EmbeddedKit/.swiftpm/
 
 
 # logs & local demo environment
