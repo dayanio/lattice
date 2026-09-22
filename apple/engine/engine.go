@@ -73,10 +73,13 @@ type EngineDelegate interface {
 	// OnTunnelUp reports this node's assigned overlay IP once registration
 	// completes. The Swift side then applies NEPacketTunnelNetworkSettings.
 	OnTunnelUp(overlayIP string)
-	// OnPeerStates reports per-peer connection quality as a JSON object
-	// mapping peer name to lifecycle state ("ice-ready" = direct,
-	// "relay-ready" = relayed, "probing" = still negotiating). Emitted
-	// whenever the snapshot changes while the tunnel is up.
+	// OnPeerStates reports per-peer connection metrics as a JSON object
+	// mapping peer name to {"state","rx","tx","handshakeAgo","rtt"} —
+	// state is the lifecycle ("ice-ready" = direct, "relay-ready" =
+	// relayed), rx/tx are WireGuard byte counters, handshakeAgo the seconds
+	// since the last handshake (absent = never) and rtt the latest
+	// direct-path echo RTT in ms (absent = unmeasured). Emitted whenever
+	// the snapshot changes while the tunnel is up.
 	OnPeerStates(statesJSON string)
 	// OnRoutesChanged reports the current set of extra CIDRs (beyond the
 	// base overlay /24) this node should route into the tunnel, as a JSON
@@ -361,9 +364,10 @@ func (e *Engine) periodicRefresh(ctx context.Context, node *latticeagent.Node) {
 	}
 }
 
-// pollPeerStates watches the probe factory's per-peer connection lifecycle
-// and pushes the snapshot to Swift whenever it changes — this is what lets
-// the UI show 直连 (ice-ready) vs 经中继 (relay-ready) per peer.
+// pollPeerStates watches each peer's merged connection metrics (lifecycle
+// state, WireGuard counters, direct-path RTT) and pushes the snapshot to
+// Swift whenever it changes. The handshake age is bucketed to 10 s so an
+// idle mesh produces identical snapshots and emits nothing.
 func (e *Engine) pollPeerStates(ctx context.Context, node *latticeagent.Node) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -373,11 +377,25 @@ func (e *Engine) pollPeerStates(ctx context.Context, node *latticeagent.Node) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			states := node.ConnectionStates()
-			if len(states) == 0 {
+			merged := node.PeerStatsSnapshot()
+			if len(merged) == 0 {
 				continue
 			}
-			blob, err := json.Marshal(states)
+			out := make(map[string]peerStatJSON, len(merged))
+			for appID, s := range merged {
+				hs := s.HandshakeAgo
+				if hs < 0 {
+					hs = 0
+				}
+				if hs > 0 {
+					hs = hs / 10 * 10
+				}
+				out[appID] = peerStatJSON{
+					State: s.State, Rx: s.RxBytes, Tx: s.TxBytes,
+					HandshakeAgo: hs, RttMs: s.RttMs,
+				}
+			}
+			blob, err := json.Marshal(out)
 			if err != nil {
 				continue
 			}
@@ -390,6 +408,16 @@ func (e *Engine) pollPeerStates(ctx context.Context, node *latticeagent.Node) {
 			}
 		}
 	}
+}
+
+// peerStatJSON is one peer's merged metrics as pushed to Swift. omitempty
+// keeps never-handshaked / unmeasured fields out of the payload.
+type peerStatJSON struct {
+	State        string `json:"state,omitempty"`
+	Rx           uint64 `json:"rx,omitempty"`
+	Tx           uint64 `json:"tx,omitempty"`
+	HandshakeAgo int64  `json:"handshakeAgo,omitempty"`
+	RttMs        int64  `json:"rtt,omitempty"`
 }
 
 // pollRoutes watches the peer manager's AllowedIPs and pushes the extra-

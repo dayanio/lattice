@@ -38,6 +38,18 @@ const (
 // pathPinger sends one echo request to a direct address and returns its RTT.
 type pathPinger func(ctx context.Context, addr string, timeout time.Duration) (time.Duration, error)
 
+// SetRTT records the latest direct-path echo RTT (d<=0 clears it).
+func (p *Probe) SetRTT(d time.Duration) {
+	if d <= 0 {
+		p.rttNano.Store(0)
+		return
+	}
+	p.rttNano.Store(int64(d))
+}
+
+// RTT returns the latest measured direct-path RTT, 0 if none.
+func (p *Probe) RTT() time.Duration { return time.Duration(p.rttNano.Load()) }
+
 // startPathPing watches the direct path with periodic echoes while the probe is
 // ice-ready. Only the initiator pings; a reply proves both directions work.
 //
@@ -82,6 +94,7 @@ func (p *Probe) startPathPing() {
 			}
 			if err == nil {
 				armed, unanswered = true, 0
+				p.SetRTT(rtt)
 				p.log.Debug("direct path echo ok", "remoteId", p.remoteId.AppID, "rtt", rtt.Round(time.Millisecond))
 				continue
 			}

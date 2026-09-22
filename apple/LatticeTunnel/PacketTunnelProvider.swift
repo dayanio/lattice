@@ -42,9 +42,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         if String(data: messageData, encoding: .utf8) == "peerStates" {
-            // latestPeerStates 本身是 map 的 JSON 字符串——先解成对象再装进
-            // 信封，避免把整个 map 当字符串二次编码（App 端会解码失败）。
-            let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: String] ?? [:]
+            // latestPeerStates 是 name→metrics 对象的 JSON——原样解成对象塞进
+            // 信封（字段由引擎定义，这里不感知具体结构）。
+            let states = (try? JSONSerialization.jsonObject(with: Data(latestPeerStates.utf8))) as? [String: Any] ?? [:]
             let peers = (try? JSONSerialization.jsonObject(with: Data((engine?.peers() ?? "[]").utf8))) as? [[String: Any]] ?? []
             let snapshot: [String: Any] = [
                 "peerStates": states,

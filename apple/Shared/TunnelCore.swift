@@ -77,6 +77,43 @@ enum PeerListMerge {
     }
 }
 
+/// One peer's merged connection metrics from the tunnel process (engine
+/// pollPeerStates payload). Absent fields = unknown. Also decodes the older
+/// extension payload shape where the value was just the state string.
+struct PeerStat: Codable {
+    var state: String?
+    var rx: UInt64?
+    var tx: UInt64?
+    var handshakeAgo: Int64?
+    var rtt: Int64?
+
+    private enum CodingKeys: String, CodingKey {
+        case state, rx, tx, handshakeAgo, rtt
+    }
+
+    init(state: String? = nil, rx: UInt64? = nil, tx: UInt64? = nil,
+         handshakeAgo: Int64? = nil, rtt: Int64? = nil) {
+        self.state = state
+        self.rx = rx
+        self.tx = tx
+        self.handshakeAgo = handshakeAgo
+        self.rtt = rtt
+    }
+
+    init(from decoder: Decoder) throws {
+        if let legacy = try? decoder.singleValueContainer().decode(String.self) {
+            state = legacy
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        state = try c.decodeIfPresent(String.self, forKey: .state)
+        rx = try c.decodeIfPresent(UInt64.self, forKey: .rx)
+        tx = try c.decodeIfPresent(UInt64.self, forKey: .tx)
+        handshakeAgo = try c.decodeIfPresent(Int64.self, forKey: .handshakeAgo)
+        rtt = try c.decodeIfPresent(Int64.self, forKey: .rtt)
+    }
+}
+
 
 // MARK: - Management login
 

@@ -60,6 +60,7 @@ struct ContentView: View {
                 PeerDetailView(
                     peer: detail,
                     quality: tunnel.peerStates[detail.appID],
+                    stat: tunnel.peerStats[detail.appID],
                     onBack: { detailPeer = nil },
                     onRename: { name in
                         renameText = peers.first { $0.name == name }?.displayName ?? ""

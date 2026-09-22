@@ -19,6 +19,7 @@ package agent
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -843,6 +844,60 @@ func (c *Node) ConnectionStates() map[string]string {
 		return nil
 	}
 	return c.probeFactory.PeerConnectionStates()
+}
+
+// PeerStat is one remote peer's merged connection metrics for embedded
+// engine clients (Apple NE UI).
+type PeerStat struct {
+	State        string
+	RxBytes      uint64
+	TxBytes      uint64
+	HandshakeAgo int64 // seconds since the last handshake; -1 = never
+	RttMs        int64 // latest direct-path echo RTT; 0 = unknown
+}
+
+// PeerStatsSnapshot merges the probe lifecycle states, direct-path RTTs and
+// the WireGuard device's per-peer counters into one snapshot keyed by remote
+// AppID. Counters come from a single in-process IpcGet (no UAPI socket —
+// same reason as GetPeerStats).
+func (c *Node) PeerStatsSnapshot() map[string]PeerStat {
+	out := map[string]PeerStat{}
+	if c.probeFactory == nil {
+		return out
+	}
+	states := c.probeFactory.PeerConnectionStates()
+	rtts := c.probeFactory.PeerRTTs()
+	var ipc map[string]wireguard.IpcPeerStats
+	if c.iface != nil {
+		if conf, err := c.iface.IpcGet(); err == nil {
+			ipc = wireguard.PeerStatsAllFromIpc(conf)
+		}
+	}
+	for _, p := range c.GetPeerManager().GetAll() {
+		if p == nil || p.AppID == "" {
+			continue
+		}
+		stat := PeerStat{State: "none", HandshakeAgo: -1}
+		if s, ok := states[p.AppID]; ok {
+			stat.State = s
+		}
+		if r, ok := rtts[p.AppID]; ok {
+			stat.RttMs = r
+		}
+		if ipc != nil && p.PublicKey != "" {
+			if key, kerr := wgtypes.ParseKey(p.PublicKey); kerr == nil {
+				if wg, ok := ipc[hex.EncodeToString(key[:])]; ok {
+					stat.RxBytes = wg.RxBytes
+					stat.TxBytes = wg.TxBytes
+					if !wg.LastHandshake.IsZero() {
+						stat.HandshakeAgo = int64(time.Since(wg.LastHandshake).Seconds())
+					}
+				}
+			}
+		}
+		out[p.AppID] = stat
+	}
+	return out
 }
 
 // GetNetMap fetches the current network map from the control plane using the

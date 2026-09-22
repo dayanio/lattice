@@ -55,6 +55,9 @@ final class TunnelManager: ObservableObject {
     /// Per-peer connection quality from the tunnel process
     /// (peer name → "ice-ready" | "lrp-ready" | "probing" | ...).
     @Published private(set) var peerStates: [String: String] = [:]
+    /// Per-peer merged metrics (state + WireGuard counters + RTT) from the
+    /// tunnel process, refreshed with the same poll as peerStates.
+    @Published private(set) var peerStats: [String: PeerStat] = [:]
     /// This device's own WireGuard public key, polled from the running
     /// extension — "" until the engine has loaded/generated its identity.
     @Published private(set) var localPublicKey: String = ""
@@ -259,6 +262,9 @@ final class TunnelManager: ObservableObject {
             if peerStates.isEmpty == false {
                 peerStates = [:]
             }
+            if peerStats.isEmpty == false {
+                peerStats = [:]
+            }
             if !tunnelPeerRaw.isEmpty {
                 tunnelPeerRaw = []
                 tunnelPeers = []
@@ -326,7 +332,7 @@ final class TunnelManager: ObservableObject {
     }
 
     private struct ProviderSnapshot: Codable {
-        let peerStates: [String: String]
+        let peerStates: [String: PeerStat]
         let lastError: String?
         let publicKey: String?
         let overlayIP: String?
@@ -354,7 +360,11 @@ final class TunnelManager: ObservableObject {
                         return
                     }
                     guard let snap = try? JSONDecoder().decode(ProviderSnapshot.self, from: data) else { return }
-                    self.peerStates = snap.peerStates
+                    self.peerStats = snap.peerStates
+                    let states = snap.peerStates.mapValues { $0.state ?? "" }
+                    if states != self.peerStates {
+                        self.peerStates = states
+                    }
                     if let list = snap.peers, list != self.tunnelPeerRaw {
                         self.tunnelPeerRaw = list
                         self.tunnelPeers = list.map(\.node)

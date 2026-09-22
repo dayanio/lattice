@@ -81,3 +81,63 @@ func PeerStatsFromIpc(ipc, publicKeyBase64 string) (lastHandshake time.Time, rxB
 	}
 	return lastHandshake, rxBytes, endpoint, nil
 }
+
+// IpcPeerStats is one peer's WireGuard counters as reported by IpcGet.
+type IpcPeerStats struct {
+	LastHandshake time.Time
+	RxBytes       uint64
+	TxBytes       uint64
+}
+
+// PeerStatsAllFromIpc parses every peer section of an IpcGet dump, keyed by
+// the peer public key's hex encoding (IpcGet emits keys hex-encoded).
+// Device-level lines before the first public_key are ignored, and unknown or
+// malformed lines are skipped, matching PeerStatsFromIpc's tolerance.
+func PeerStatsAllFromIpc(ipc string) map[string]IpcPeerStats {
+	out := map[string]IpcPeerStats{}
+	var (
+		curKey    string
+		cur       IpcPeerStats
+		sec, nsec int64
+	)
+	commit := func() {
+		if curKey == "" {
+			return
+		}
+		if sec != 0 || nsec != 0 {
+			cur.LastHandshake = time.Unix(sec, nsec)
+		}
+		out[curKey] = cur
+		curKey, cur, sec, nsec = "", IpcPeerStats{}, 0, 0
+	}
+	for _, line := range strings.Split(ipc, "\n") {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if k == "public_key" {
+			commit()
+			curKey = v
+			continue
+		}
+		if curKey == "" {
+			continue
+		}
+		switch k {
+		case "last_handshake_time_sec":
+			sec, _ = strconv.ParseInt(v, 10, 64)
+		case "last_handshake_time_nsec":
+			nsec, _ = strconv.ParseInt(v, 10, 64)
+		case "rx_bytes":
+			if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+				cur.RxBytes = n
+			}
+		case "tx_bytes":
+			if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+				cur.TxBytes = n
+			}
+		}
+	}
+	commit()
+	return out
+}
