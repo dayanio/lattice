@@ -28,13 +28,19 @@ struct NetworkSettingsView: View {
     @State private var selfName: String = UserDefaults.standard.string(forKey: "lattice.nodeName") ?? (Host.current().localizedName ?? "")
     @State private var isLoading = true
     @State private var errorText = ""
-    @State private var advertisingSubnet = false
     @State private var showingPicker = false
+    @State private var showingSubnetEditor = false
+    @State private var myAdvertisedRoutes: [String] = []
+    @State private var draftRoutes: [String] = []
+    @State private var newRoute = ""
+    @State private var editorError = ""
 
     var body: some View {
         VStack(spacing: 0) {
             if showingPicker {
                 exitNodePicker
+            } else if showingSubnetEditor {
+                subnetEditor
             } else {
                 settingsList
             }
@@ -56,14 +62,10 @@ struct NetworkSettingsView: View {
 
             settingsRow(
                 title: "广播子网路由",
-                desc: "把本机所在局域网开放给 workspace 里的其它设备",
-                trailing: {
-                    Toggle("", isOn: Binding(
-                        get: { advertisingSubnet },
-                        set: { toggleAdvertiseSubnet($0) }
-                    )).labelsHidden().toggleStyle(.switch).controlSize(.small)
-                }
+                desc: advertisedDesc,
+                trailing: { Text("›").font(.body).foregroundColor(.secondary) }
             )
+            .onTapGesture { showingSubnetEditor = true }
             Divider().padding(.leading, 15)
 
             settingsRow(
@@ -97,6 +99,13 @@ struct NetworkSettingsView: View {
         return "全部流量经由所选节点转发 · 当前：无"
     }
 
+    private var advertisedDesc: String {
+        guard !myAdvertisedRoutes.isEmpty else {
+            return "把本机所在局域网开放给 workspace 里的其它设备"
+        }
+        return "已广播 \(myAdvertisedRoutes.count) 条：\(myAdvertisedRoutes.joined(separator: "、"))"
+    }
+
     private func load() async {
         isLoading = true
         errorText = ""
@@ -106,7 +115,7 @@ struct NetworkSettingsView: View {
             let selected = try await LatticeAPI.shared.listRouteSelections(selfName)
             selectedProviders = Set(selected)
             if let mine = peers.first(where: { $0.name == selfName }) {
-                advertisingSubnet = !mine.advertisedRoutes.isEmpty && !mine.advertisedRoutes.contains("0.0.0.0/0")
+                myAdvertisedRoutes = mine.advertisedRoutes.filter { $0 != "0.0.0.0/0" }
             }
         } catch {
             errorText = "加载失败: \(error.localizedDescription)"
@@ -114,25 +123,6 @@ struct NetworkSettingsView: View {
         isLoading = false
     }
 
-    private func toggleAdvertiseSubnet(_ on: Bool) {
-        advertisingSubnet = on
-        Task {
-            do {
-                // MVP: hand-entered CIDR isn't collected by this pass — see
-                // the design doc §6.2 note that auto-detecting the local
-                // subnet is deferred. Advertise a placeholder-free empty
-                // set when turning off; turning on with no real CIDR input
-                // UI yet is intentionally a no-op beyond persisting the
-                // toggle, until a CIDR entry field is added.
-                if !on {
-                    try await LatticeAPI.shared.setAdvertisedRoutes(selfName, routes: [])
-                }
-            } catch {
-                errorText = "更新失败: \(error.localizedDescription)"
-                advertisingSubnet = !on
-            }
-        }
-    }
 
     private var exitNodePicker: some View {
         VStack(spacing: 0) {
@@ -173,6 +163,110 @@ struct NetworkSettingsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    // MARK: 广播子网路由编辑器
+
+    private var subnetEditor: some View {
+        VStack(spacing: 0) {
+            PageHeader(title: "广播子网路由", onBack: { showingSubnetEditor = false })
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(draftRoutes, id: \.self) { route in
+                        HStack {
+                            Text(route).font(.system(.caption, design: .monospaced))
+                            Spacer()
+                            Button {
+                                draftRoutes.removeAll { $0 == route }
+                            } label: {
+                                Image(systemName: "trash").font(.caption).foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 15)
+                        .padding(.vertical, 7)
+                    }
+                    if draftRoutes.isEmpty {
+                        Text("还没有广播任何子网")
+                            .font(.caption).foregroundColor(.secondary)
+                            .padding(.horizontal, 15)
+                    }
+
+                    HStack {
+                        TextField("192.168.1.0/24", text: $newRoute)
+                            .textFieldStyle(.plain)
+                            .font(.system(.caption, design: .monospaced))
+                        Button("添加") { addRoute() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                    .padding(.horizontal, 15)
+
+                    if let suggestion = SubnetRoute.localSuggestion(), !draftRoutes.contains(suggestion) {
+                        Button {
+                            newRoute = suggestion
+                            addRoute()
+                        } label: {
+                            Label("使用本机子网 \(suggestion)", systemImage: "wifi")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(.accentColor)
+                        .padding(.horizontal, 15)
+                    }
+
+                    if !editorError.isEmpty {
+                        Text(editorError).font(.caption).foregroundColor(.red)
+                            .padding(.horizontal, 15)
+                    }
+
+                    Text("其他设备把本机选为路由提供方后即可使用该子网；本机侧的转发能力开发中，暂不可达。")
+                        .font(.caption2).foregroundColor(.secondary)
+                        .padding(.horizontal, 15)
+                }
+                .padding(.top, 6)
+            }
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("保存") { Task { await saveRoutes() } }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(draftRoutes == myAdvertisedRoutes)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+        }
+        .onAppear {
+            draftRoutes = myAdvertisedRoutes
+            editorError = ""
+        }
+    }
+
+    private func addRoute() {
+        editorError = ""
+        guard let route = SubnetRoute.normalized(newRoute) else {
+            editorError = "不是合法的 CIDR，例如 192.168.1.0/24"
+            return
+        }
+        if draftRoutes.contains(route) {
+            editorError = "该子网已在列表里"
+            return
+        }
+        draftRoutes.append(route)
+        newRoute = ""
+    }
+
+    private func saveRoutes() async {
+        editorError = ""
+        do {
+            try await LatticeAPI.shared.setAdvertisedRoutes(selfName, routes: draftRoutes)
+            showingSubnetEditor = false
+            await load()
+        } catch {
+            editorError = "保存失败: \(error.localizedDescription)"
+        }
     }
 
     private func selectExitNode(_ name: String?) async {
