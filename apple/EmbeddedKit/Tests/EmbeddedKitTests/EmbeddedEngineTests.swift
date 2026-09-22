@@ -149,17 +149,22 @@ final class EmbeddedEngineTests: XCTestCase {
         listener.close()
 
         // --- Dial side: the engine delivers a payload to mac-node-a. ---
-        try shell("docker exec mac-node-a sh -c 'rm -f /tmp/m3-payload.txt; (nc -l -p 9501 > /tmp/m3-payload.txt &) '")
-        try await Task.sleep(nanoseconds: 1_000_000_000)
-        let conn = try engine.dial(network: "tcp", addr: "10.96.0.2:9501")
-        try conn.write(Data("hello-from-swift".utf8))
-        conn.close()
-
+        // The outbound path needs the container's inbound WireGuard handshake
+        // to arrive first, and the container's dial backoff can exceed a
+        // single attempt window — retry the whole dial+write like a real
+        // embedder would.
         var delivered = ""
-        for _ in 0..<20 {
-            try await Task.sleep(nanoseconds: 500_000_000)
-            delivered = try shell("docker exec mac-node-a cat /tmp/m3-payload.txt")
-            if !delivered.isEmpty { break }
+        dialLoop: for _ in 0..<4 {
+            try shell("docker exec mac-node-a sh -c 'rm -f /tmp/m3-payload.txt; (nc -l -p 9501 > /tmp/m3-payload.txt &)'")
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            let conn = try engine.dial(network: "tcp", addr: "10.96.0.2:9501")
+            try conn.write(Data("hello-from-swift".utf8))
+            conn.close()
+            for _ in 0..<10 {
+                try await Task.sleep(nanoseconds: 500_000_000)
+                delivered = try shell("docker exec mac-node-a cat /tmp/m3-payload.txt")
+                if !delivered.isEmpty { break dialLoop }
+            }
         }
         XCTAssertEqual(delivered, "hello-from-swift",
                        "payload dialed from Swift never reached mac-node-a")
