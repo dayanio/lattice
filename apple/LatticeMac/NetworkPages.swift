@@ -68,9 +68,9 @@ struct NetworkSettingsView: View {
 
             settingsRow(
                 title: "LatticeDNS",
-                desc: "用节点名代替 overlay IP 互相访问",
-                monoValue: "节点名.mac-demo.lattice.internal",
-                trailing: { disabledToggle }
+                desc: "已开启 · 用节点名代替 overlay IP 互相访问",
+                monoValue: "\(DeviceName.normalized(Host.current().localizedName ?? "lattice-mac")).lattice",
+                trailing: { EmptyView() }
             )
 
             if !errorText.isEmpty {
@@ -191,19 +191,6 @@ struct NetworkSettingsView: View {
         } catch {
             errorText = "选择失败: \(error.localizedDescription)"
             await load()
-        }
-    }
-
-    private var disabledToggle: some View {
-        ZStack {
-            Capsule()
-                .fill(Color.secondary.opacity(0.28))
-                .frame(width: 26, height: 16)
-            Circle()
-                .fill(Color.white)
-                .frame(width: 12, height: 12)
-                .offset(x: -5)
-                .shadow(radius: 1, y: 0.5)
         }
     }
 

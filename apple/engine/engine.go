@@ -300,6 +300,10 @@ func (e *Engine) run(ctx context.Context) {
 		e.mu.Unlock()
 	}()
 
+	// LatticeDNS: the built-in *.lattice responder resolves from the live
+	// peer table; without this the interceptor stays dormant.
+	t.SetPeerSource(node.GetPeerManager().GetAll)
+
 	node.GetNetworkMap = func() (*infra.Message, error) {
 		return node.GetNetMap(peer.Token)
 	}

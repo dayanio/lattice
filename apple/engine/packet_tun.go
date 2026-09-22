@@ -48,8 +48,8 @@ type packetTUN struct {
 	// dropped counts packets discarded because a queue was full.
 	dropped uint64
 
-	// LatticeDNS: resolves *.lattice query names to overlay IPv4s. nil 时
-	// 不拦截，所有包照常进入 WireGuard。
+	// Custom name answers for server-pushed records — not used yet; the
+	// interceptor gates on peerSource (see WriteInbound).
 	dnsResolver func(qname string) (string, bool)
 	// peerSource 提供当前组网设备表（名字 → overlay 地址）。
 	peerSource func() []*infra.Peer
@@ -128,8 +128,10 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 		return errors.New("packet TUN closed")
 	default:
 	}
-	// LatticeDNS: answer *.lattice DNS queries locally instead of tunneling.
-	if t.dnsResolver != nil {
+	// LatticeDNS: answer *.lattice DNS queries locally instead of tunneling,
+	// once a peer table is wired (engine.go does this right after the node
+	// comes up). Without a table there is nothing to resolve from.
+	if t.peerSource != nil {
 		if resp, ok := t.interceptLatticeDNS(packet); ok {
 			select {
 			case t.outbound <- resp:

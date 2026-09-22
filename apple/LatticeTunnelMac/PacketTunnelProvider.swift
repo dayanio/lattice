@@ -158,6 +158,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // 其余域名的解析走系统默认 DNS。
         let dns = NEDNSSettings(servers: ["10.96.0.1"])
         dns.matchDomains = ["lattice"]
+        dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice
         settings.dnsSettings = dns
 
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
