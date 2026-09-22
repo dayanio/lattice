@@ -41,57 +41,46 @@
 
 ## 三、架构
 
+> **修正（2026-09-22，M1 研究阶段）**：读 `apple/engine` 和 `internal/agent` 现有代码后发现，本节最初设计的 `ApplePeerManager`（实现 `shim.PeerManager`）不需要写。`internal/agent.NodeConfig` 早就有 `CustomTUN`/`ProvisionerFactory` 这个扩展点，doc comment 原话："Used by the agent sandbox, which runs WireGuard over gVisor instead of a kernel TUN"——这正是 Linux AgentSandbox 用来接 gVisor 的同一个口子。配套的桥接代码 `internal/agent/gvisor.NewTUNAdapter`/`InjectIntoChannel`/`NewSandboxProvisionerFactory` 都已经是导出的、现成能跑的。Apple 嵌入式引擎复用 `latticeagent.NewNode` 本身（跟现有 NE 版本 `engine.go` 用的是同一个函数），WireGuard peer 生命周期完全由 `NewNode` 内部通过 `Provisioner` 管理，不需要 `shim.PeerManager` 这层。`shim.Server` 构造时 `PeerManager` 传 `nil` 即可。
+
 ```
-lattice-shim（外部库，零 Lattice 依赖）
-  shim/server.go  ← 新增
-  └─ Server：Netstack + PeerManager，直接暴露 Dial/Listen
-       NewServer(overlayIP string, opts ...NetstackOption) (*Server, error)
+lattice-shim（外部库，零 Lattice 依赖，已完成，见 M0）
+  shim/server.go
+  └─ Server：Netstack + PeerManager（Apple 场景传 nil，不用），直接暴露 Dial/Listen
+       NewServer(overlayIP string, pm PeerManager, opts ...NetstackOption) (*Server, error)
        (s *Server) Dial(ctx, network, addr string) (net.Conn, error)
        (s *Server) Listen(network, addr string) (net.Listener, error)
-       (s *Server) AddPeer(pubKey [32]byte, allowedIPs []net.IPNet, endpoint string) error
-       (s *Server) RemovePeer(pubKey [32]byte) error
-       (s *Server) Close() error
+       (s *Server) Channel() *channel.Endpoint
 
 lattice（主仓库）
   apple/engine/embedded/  ← 新增
-  ├─ peer_manager.go   ApplePeerManager：实现 shim.PeerManager，
-  │                     内部复用 apple/engine 现成的 NATS 注册 + ICE/LRP 建连
-  ├─ engine.go          EmbeddedEngine：包一层 shim.Server 的生命周期管理
-  └─ gomobile.go        gomobile 导出层：EmbeddedConn / EmbeddedListener 包
-                         net.Conn / net.Listener（gomobile 不能直接导出 Go 接口）
+  ├─ engine.go       EmbeddedEngine：复用 latticeagent.RegisterSandboxViaNATSNotify +
+  │                   latticeagent.NewNode（跟 apple/engine/engine.go 的 run() 同一套调用），
+  │                   CustomTUN 换成 gvisor.NewTUNAdapter(server.Channel(), ...)，
+  │                   ProvisionerFactory 直接用现成的 gvisor.NewSandboxProvisionerFactory
+  └─ gomobile.go     gomobile 导出层：EmbeddedConn / EmbeddedListener 包
+                      net.Conn / net.Listener（gomobile 不能直接导出 Go 接口）
 
 新建 Swift Package（薄壳，包 gomobile 产物的 .xcframework）
 ```
 
-`apple/engine` 现有的 NE 模式（`packet_tun.go` + `engine.go` 的 `run()`）完全不动，`embedded/` 是平行的新增目录，不复用 `packetTUN`，只复用 peer 表/注册/传输建连这些跟"包怎么进出"无关的部分。
+`apple/engine` 现有的 NE 模式（`packet_tun.go` + `engine.go` 的 `run()`）完全不动，`embedded/` 是平行的新增目录，只换 `CustomTUN`/`ProvisionerFactory` 这两个参数，`internal/agent` 里的 NATS 注册、netmap 收敛、ICE/LRP 建连代码一字不改直接复用。
 
 ## 四、组件设计
 
-### 4.1 `lattice-shim`：`shim.Server`（新增，`shim/server.go`）
+### 4.1 `lattice-shim`：`shim.Server`（已完成，见 M0 实现计划）
 
-职责边界与现有 `Sandbox` 一致：不知道 wireguard-go 内部实现、不知道 NATS、不知道 Lattice CRD——`PeerManager` 接口由调用方注入，`Server` 只负责把 `Netstack` 和 `PeerManager` 粘在一起，直接暴露 `Dial`/`Listen`，不经过 `ForwardListener`/`Socks5Server` 那层中继。
-
-```go
-type Server struct {
-    ns    *Netstack
-    peers PeerManager
-}
-
-func NewServer(overlayIP string, opts ...NetstackOption) (*Server, error)
-func (s *Server) Dial(ctx context.Context, network, addr string) (net.Conn, error)
-func (s *Server) Listen(network, addr string) (net.Listener, error)
-func (s *Server) AddPeer(pubKey [32]byte, allowedIPs []net.IPNet, endpoint string) error
-func (s *Server) RemovePeer(pubKey [32]byte) error
-func (s *Server) Channel() *channel.Endpoint // 供 wireguard-go 挂载
-func (s *Server) Close() error
-```
-
-`PeerManager` 接口复用现有定义（`AddPeer`/`RemovePeer`/`SetPrivateKey`），不新增。
+职责边界：不知道 wireguard-go 内部实现、不知道 NATS、不知道 Lattice CRD——`PeerManager` 接口由调用方注入（可为 nil），`Server` 只负责把 `Netstack` 和 `PeerManager` 粘在一起，直接暴露 `Dial`/`Listen`，不经过 `ForwardListener`/`Socks5Server` 那层中继。Apple 嵌入式场景不用 `PeerManager`（见上方修正说明），只用 `Dial`/`Listen`/`Channel`。
 
 ### 4.2 `lattice` 主仓库：`apple/engine/embedded/`
 
-- **`ApplePeerManager`**：实现 `shim.PeerManager`。内部持有一个 wireguard-go device（跟 NE 模式共用同一套 WG 会话管理代码），把 `apple/engine` 现成的 NATS netmap 订阅 + ICE/LRP 建连结果翻译成 `AddPeer`/`RemovePeer` 调用——这部分是本设计里"新写的胶水代码"里最大的一块，但逻辑是把已有代码接到新接口上，不是重新实现建连。
-- **`EmbeddedEngine`**：持有一个 `shim.Server`，暴露 `Start(config)`/`Dial`/`Listen`/`Status()`/`Close()`，是 gomobile 导出的入口类型。
+- **`EmbeddedEngine`**：新增类型，`Start`/`Dial`/`Listen`/`Close` 方法。`Start` 内部依次调用：
+  1. `latticeagent.RegisterSandboxViaNATSNotify(ctx, serverURL, token, name, privKey, onPending)` 拿到 `*infra.Peer`（跟 `apple/engine/engine.go` 的 `run()` 一样）
+  2. `shim.NewServer(overlayIP, nil)` 创建 netstack
+  3. `gvisor.NewTUNAdapter(server.Channel(), gvisor.InjectIntoChannel(server.Channel()))` 构造 `tun.Device`（`internal/agent/gvisor/wg_device.go` 里现成的，不改）
+  4. `latticeagent.NewNode(ctx, &latticeagent.NodeConfig{CustomTUN: tunDevice, CustomName: "lattice-embedded", CurrentPeer: peer, ProvisionerFactory: gvisor.NewSandboxProvisionerFactory(overlayIP, "lattice-embedded"), ...})`（`internal/agent/gvisor/provisioner.go` 里现成的 factory，不改）
+  5. `node.Start(ctx)`
+  `Dial`/`Listen` 直接透传给 `shim.Server`。
 - **`gomobile.go`**：`EmbeddedConn`（`Read([]byte) (int, error)` / `Write([]byte) (int, error)`）、`EmbeddedListener`（`Accept() (*EmbeddedConn, error)`），各自内部持有真实的 `net.Conn`/`net.Listener`，把 gomobile 不能直接跨语言导出的 Go 接口包成结构体方法。
 
 ### 4.3 Swift Package
@@ -100,9 +89,9 @@ func (s *Server) Close() error
 
 ## 五、数据流
 
-- **启动**：宿主 App 调 `EmbeddedEngine.Start(config)` → 走 `apple/engine` 现成的 NATS 注册/ICE-LRP 建连逻辑拿到 peer 表 → `ApplePeerManager` 把每个 peer 的公钥/allowedIPs/endpoint 塞给 `shim.Server.AddPeer(...)`。
-- **出站**：宿主 App 调 `Dial("tcp", "10.96.0.x:port")` → gomobile 壳转给 `shim.Server.Dial(...)` → gVisor 构造 SYN，经 `channel.Endpoint` → wireguard-go 加密 → 走 ICE/LRP 传输发出去。
-- **入站**：宿主 App 调 `Listen("tcp", ":port")` → `shim.Server.Listen(...)` 在 netstack 里注册监听 → 对端连接进来的包解密后经 `channel.Endpoint` 注入 netstack → 三次握手在 gVisor 内完成 → `Accept()` 返回的连接包成 `EmbeddedConn` 交给宿主 App 自己读写。
+- **启动**：宿主 App 调 `EmbeddedEngine.Start(config)` → `RegisterSandboxViaNATSNotify` 拿到 overlay IP → `shim.NewServer` + `gvisor.NewTUNAdapter` + `latticeagent.NewNode`（用 `gvisor.NewSandboxProvisionerFactory` 作 Provisioner）→ `node.Start(ctx)`——netmap 订阅、ICE/LRP peer 发现与建连、WireGuard 握手全部由 `NewNode` 内部按现有逻辑跑，peer 变化时 `NewNode` 自己通过 `Provisioner.AddPeer`/`RemovePeer` 调 `wireguard-go` 的 `IpcSet`,`apple/engine/embedded` 不用感知这个过程。
+- **出站**：宿主 App 调 `Dial("tcp", "10.96.0.x:port")` → gomobile 壳转给 `shim.Server.Dial(...)` → gVisor 构造 SYN，经 `channel.Endpoint` → `gvisor.NewTUNAdapter` 的 `Read` 把包交给 wireguard-go → 加密 → 走 ICE/LRP 传输发出去。
+- **入站**：宿主 App 调 `Listen("tcp", ":port")` → `shim.Server.Listen(...)` 在 netstack 里注册监听 → 对端连接进来的包被 wireguard-go 解密后经 `gvisor.InjectIntoChannel` 注入 `channel.Endpoint` → 三次握手在 gVisor 内完成 → `Accept()` 返回的连接包成 `EmbeddedConn` 交给宿主 App 自己读写。
 
 ## 六、错误处理与状态
 
@@ -114,8 +103,8 @@ func (s *Server) Close() error
 
 | 里程碑 | 内容 | 验收 |
 |---|---|---|
-| **M0** | `lattice-shim` 加 `shim.Server`，纯 Go 单测（`go test ./shim`） | Dial/Listen 在本地两个 `Netstack` 实例之间打通（不涉及 Apple/gomobile） |
-| **M1** | `apple/engine/embedded` 骨架 + `ApplePeerManager`，先在 macOS 上（非 gomobile，普通 Go test）验证接线正确 | 对着今天已搭好的 `mac-demo` workspace + node-a/b/gateway 容器，Dial/Listen 都能连通 |
+| **M0** | `lattice-shim` 加 `shim.Server`，纯 Go 单测（`go test ./shim`）——**已完成** | Dial/Listen 在本地两个 `Netstack` 实例之间打通（不涉及 Apple/gomobile） |
+| **M1** | `apple/engine/embedded` 骨架（`EmbeddedEngine`，复用 `latticeagent.NewNode`/`gvisor.NewTUNAdapter`/`gvisor.NewSandboxProvisionerFactory`，不写 `ApplePeerManager`），先在 macOS 上（非 gomobile，普通 Go test）验证接线正确 | 对着今天已搭好的 `mac-demo` workspace + node-a/b/gateway 容器，Dial/Listen 都能连通 |
 | **M2** | gomobile bind 验证（第一个真正未知的风险点） | `lattice-shim` + `apple/engine/embedded` 能被 `gomobile bind` 编译出 iOS+macOS 产物，不需要跑通功能，先确认编译链路通 |
 | **M3** | Swift Package 封装 + 端到端验证 | 一个最小 Swift 测试壳，Dial 一边、Listen 一边，两个方向收发数据确认 |
 
