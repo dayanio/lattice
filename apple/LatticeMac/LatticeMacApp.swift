@@ -45,7 +45,7 @@ struct LatticeMacApp: App {
 
         Window("Lattice", id: "main") {
             ContentView()
-                .frame(minWidth: 680, minHeight: 480, maxHeight: 1000)
+                .frame(minWidth: 680, minHeight: 480)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 760, height: 640)
