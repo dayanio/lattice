@@ -1,6 +1,6 @@
 # gVisor 嵌入式网络设计 — 安全模型、出入栈与协议路线
 
-> 状态：v1.1（增补审批流 §四） · 日期：2026-09-23
+> 状态：v1.2（增补审批流 §四、跨平台策略一致性 §十一） · 日期：2026-09-23
 > 关联：`2026-09-22-apple-embedded-sdk-design.md`（嵌入式 SDK 总设计，其 M0–M3 已落地）、lattice-shim 仓 `docs/plans/2026-09-22-tsnet-style-server.md`
 > 实证基础：本文所有"已支持/已验证"均对应已合并代码与 mac-demo 实测；"计划"均为本文新提出的路线。
 
@@ -237,14 +237,43 @@ engine.Dial("tcp", 10.96.0.B:22)
 
 四层互补不互斥；同一 mesh 内可同时存在。WireGuard/ICE/LRP 下半身四层共用，零分叉。
 
-## 十一、测试策略
+## 十一、跨平台策略一致性（gVisor vs 内核 TUN）
+
+混合舰队（macOS 嵌入式 gVisor + Linux 内核 TUN）是常态部署。M1–M3 的集成测试本身已是混合形态：macOS gVisor 引擎 ↔ Linux 容器（内核 TUN）双向互通——WireGuard 是唯一契约，密钥/AllowedIPs/netmap/ICE-LRP 全在下半身，上半身差异不影响互通。
+
+**但策略语义今天是分叉的**：内核 TUN 的入站是隐式全端口（无逐端口执行点），gVisor 是显式清单；同一个 Grant 在两种节点上一个可执行、一个无处执行。
+
+### 11.1 统一模型：一份策略，两个执行器
+
+采用声明式策略 + 平台执行器的标准模型（先例：K8s NetworkPolicy 与各 CNI、Tailscale ACL 的协调服务器分发）：
+
+1. **Grant schema 平台无关**（§四的载荷即规范）；
+2. **节点声明执行能力**（capability manifest：逐端口？协议范围？有无 L3？）随注册上报；
+3. **控制面编译校验**：节点执行不了的 grant 拒绝下发，或降级下发并在 UI/审计明示；
+4. **节点侧适配器把同一张 grant 表编译成平台原生强制**：
+
+| 数据面 | 入站执行 | 出站执行 |
+|---|---|---|
+| gVisor（嵌入式/AgentSandbox） | Forwarder handler + `Listen` 白名单（用户态） | `PolicyChecker`/`EgressFilter`（已有） |
+| Linux 内核 TUN | iptables/eBPF 规则——挂进现有 `Provisioner` 扩展点 | 同左（该扩展点本就是内核侧装规则的口子） |
+| macOS NE | pf 规则，或产品级明示"NE=全暴露" | 随隧道设置 |
+
+5. **审计统一管线**：两路径命中审计汇入同一 `AuditWriter`/中心审计——跨平台扫描检测才有全局视图。
+
+### 11.2 一致性验收标准
+
+- 同一张 grant（同主体/协议/端口/目标）在两种节点上的放行/拒绝判定**一致**；
+- 能力差异（ICMP、任意协议、L3 网段）只在 gVisor 侧以"拒绝下发 + 明示"出现，不产生静默语义偏差；
+- 两条路径的审计事件 schema 相同，可聚合分析。
+
+## 十二、测试策略
 
 - shim 侧：沿用 M0 双 netstack 包泵法——UDP 往返、ping 往返、Forwarder 拦截全部纯 Go 单测可覆盖；SOCKS ASSOCIATE 用本地测试客户端。
 - 会话表：超时回收 + 并发场景 `-race`。
 - 集成：mac-demo 环境（容器 `nc`/`nc -u` + LatticeMac「嵌入式引擎」页），沿用 M1–M3 的环境与健康检查约定。
 - 大报文 MTU 用例进必测清单。
 
-## 十二、风险与已知限制
+## 十三、风险与已知限制
 
 1. **嵌入式节点无出站信令**：ICE 拨号依赖对端先握手（收敛窗口）。常驻对端场景已验证可用；两端同时冷启动的首连依赖收敛。**前置项：把节点的 NATS/relay 信令在嵌入式路径接通**（P 系列之前或并行）。
 2. **`agentconfig.Conf` 全局状态**：单进程单引擎；NE 与嵌入式同进程共存需独立设计（当前 macOS 上 NE 在扩展进程、嵌入式在主进程，天然隔离）。
