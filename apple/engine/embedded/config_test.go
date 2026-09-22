@@ -14,7 +14,13 @@
 
 package embedded
 
-import "testing"
+import (
+	"encoding/base64"
+	"fmt"
+	"testing"
+
+	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+)
 
 func TestParseConfig_RequiresServerURL(t *testing.T) {
 	_, err := ParseConfig(`{"token":"lt-abc","name":"x"}`)
@@ -54,5 +60,43 @@ func TestParseConfig_InvalidJSON(t *testing.T) {
 	_, err := ParseConfig(`not json`)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestParseConfig_RejectsBadPrivateKey(t *testing.T) {
+	if _, err := ParseConfig(`{"serverURL":"http://x","token":"t","privateKey":"not-base64-key"}`); err == nil {
+		t.Fatal("expected error for malformed privateKey")
+	}
+	if _, err := ParseConfig(`{"serverURL":"http://x","token":"t","privateKey":"AAAA"}`); err == nil {
+		t.Fatal("expected error for wrong-length privateKey")
+	}
+}
+
+func TestParseConfig_AcceptsValidPrivateKey(t *testing.T) {
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	cfg, err := ParseConfig(fmt.Sprintf(`{"serverURL":"http://x","token":"t","privateKey":%q}`, base64.StdEncoding.EncodeToString(key[:])))
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if cfg.PrivateKey == "" {
+		t.Error("expected privateKey to be kept")
+	}
+}
+
+func TestEmbeddedEngine_PrivateKeyRoundTrip(t *testing.T) {
+	key, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	encoded := base64.StdEncoding.EncodeToString(key[:])
+	e, err := New(fmt.Sprintf(`{"serverURL":"http://x","token":"t","privateKey":%q}`, encoded))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got := e.PrivateKey(); got != encoded {
+		t.Errorf("PrivateKey round trip mismatch:\n got %q\nwant %q", got, encoded)
 	}
 }

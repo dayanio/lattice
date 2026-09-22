@@ -29,6 +29,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	wgtypes "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // Config is the JSON-decoded configuration for a Config.
@@ -36,6 +38,12 @@ type Config struct {
 	ServerURL string `json:"serverURL"`
 	Token     string `json:"token"`
 	Name      string `json:"name"`
+	// PrivateKey, when set, is the base64-encoded WireGuard private key this
+	// engine registers with. Hosts should generate one engine, read its
+	// PrivateKey after Start, persist it, and pass it back here on every
+	// later run: re-registering the same device name with a different key is
+	// rejected by the control plane.
+	PrivateKey string `json:"privateKey,omitempty"`
 }
 
 // DefaultName is used when Config.Name is empty.
@@ -56,6 +64,11 @@ func ParseConfig(configJSON string) (Config, error) {
 	}
 	if cfg.Name == "" {
 		cfg.Name = DefaultName
+	}
+	if cfg.PrivateKey != "" {
+		if _, err := wgtypes.ParseKey(cfg.PrivateKey); err != nil {
+			return Config{}, fmt.Errorf("config: privateKey: %w", err)
+		}
 	}
 	return cfg, nil
 }
