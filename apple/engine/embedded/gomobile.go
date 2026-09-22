@@ -16,6 +16,7 @@ package embedded
 
 import (
 	"context"
+	"errors"
 	"net"
 	"time"
 )
@@ -40,6 +41,22 @@ func (c *EmbeddedConn) Write(b []byte) (int, error) { return c.conn.Write(b) }
 
 // Close implements net.Conn.
 func (c *EmbeddedConn) Close() error { return c.conn.Close() }
+
+// ReadUpTo reads up to max bytes from the connection and returns them. It
+// is the gomobile-facing form of Read: gobind copies []byte arguments into
+// Go one-way, so bytes filled into Read's caller-provided buffer never
+// reach the cross-language caller — only a returned buffer does.
+func (c *EmbeddedConn) ReadUpTo(max int) ([]byte, error) {
+	if max <= 0 {
+		return nil, errors.New("embedded: max must be positive")
+	}
+	buf := make([]byte, max)
+	n, err := c.conn.Read(buf)
+	if n > 0 {
+		return buf[:n], nil
+	}
+	return nil, err
+}
 
 // SetReadDeadline implements net.Conn.
 func (c *EmbeddedConn) SetReadDeadline(t time.Time) error { return c.conn.SetReadDeadline(t) }
