@@ -1,7 +1,9 @@
 # gVisor netstack 立项：Apple 端用户态协议栈
 
+> **⚠️ 重大修正（2026-09-22 当晚，立项同日）**：实验推翻了本立项的核心前提。实测证明 **Mac 原生就能在 overlay 上监听并接受入站连接**——cloud-node-1 与 lattice-gateway 均成功连入 Mac 上 `0.0.0.0` 监听的服务（NEPacketFlow 写回的包正确到达宿主栈，utun 接口持有 overlay 地址）。此前"Mac 只能出站、监听需要 netstack"的判断是把个别 peer 的会话故障误判为架构限制。**结论：本项目的核心卖点（监听能力）不成立，项目归档**；剩余的扩展内 L4 处理（连接粒度策略、性能优化）如未来出现真实需求再重启评估。文件传输改为两端内嵌收发端点的对称设计（无需本项目）。
+
 **日期**：2026-09-22
-**状态**：已立项（本文档为项目章程；实现按里程碑推进）
+**状态**：已归档（当日实验证伪核心前提）
 **范围**：`apple/engine`（Go 引擎）、`apple/LatticeTunnelMac`（可选接线）、go.mod。不改变 Linux 端（内核 TUN 更优，netstack 在 Linux 仅作为可选模式）。
 **关联文档**：[客户端能力补全设计 §五-二期](./2026-09-22-mac-client-capabilities-design.md)、[对外发布设计](./2026-09-22-mac-client-capabilities-design.md)、[文件传输 v1 设计（会话记录，节点接收器先行）](./2026-09-22-mac-panel-redesign-design.md)
 
