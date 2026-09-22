@@ -116,3 +116,23 @@ func TestEmbeddedEngine_DialConn_NotStarted(t *testing.T) {
 		t.Error("expected error from ListenTCP before Start")
 	}
 }
+
+func TestEmbeddedConn_ReadUpTo(t *testing.T) {
+	c1, c2 := net.Pipe()
+	ec := &EmbeddedConn{conn: c1}
+	defer ec.Close()
+	defer c2.Close()
+
+	go c2.Write([]byte("ping"))
+	buf, err := ec.ReadUpTo(16)
+	if err != nil {
+		t.Fatalf("ReadUpTo: %v", err)
+	}
+	if string(buf) != "ping" {
+		t.Errorf("expected %q, got %q", "ping", buf)
+	}
+
+	if _, err := ec.ReadUpTo(0); err == nil {
+		t.Error("expected error for non-positive max")
+	}
+}
