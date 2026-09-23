@@ -157,7 +157,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // LatticeDNS: 只有 *.lattice 的 DNS 查询进隧道（由引擎内置应答器解析），
         // 其余域名的解析走系统默认 DNS。
         let dns = NEDNSSettings(servers: ["10.96.0.1"])
-        dns.matchDomains = ["lattice"]
+        if extraRoutes.contains("0.0.0.0/0") {
+            // 出口模式：全部 DNS 经隧道由出口侧解析；同时本机作为提供方
+            // 需要系统级 IP 转发（把网内流量转出公网，root 下可设）。
+            dns.matchDomains = nil
+            enableIPForwarding()
+        } else {
+            dns.matchDomains = ["lattice"]
+        }
         dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice
         settings.dnsSettings = dns
 
@@ -170,6 +177,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         for cidr in extraRoutes {
             guard let route = Self.ipv4Route(fromCIDR: cidr) else { continue }
+            if cidr == "0.0.0.0/0" {
+                // 出口模式的 0/0 用 /1 拆分：裸 0.0.0.0/0 在 macOS 上会输给
+                // 物理网卡的默认路由（服务优先级），拆成两条 /1 确定性接管。
+                included.append(NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "128.0.0.0"))
+                included.append(NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "128.0.0.0"))
+                continue
+            }
             included.append(route)
         }
 
@@ -196,6 +210,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// isn't a plain dotted-quad CIDR (defense in depth — the engine already
     /// validates on the server side, but this is the last line before an OS
     /// API call that would otherwise silently no-op on a bad string).
+    /// 出口节点转发需要系统级 IP 转发（把网内流量转出公网）。幂等：重复
+    /// 设置无害。NE 扩展以 root 运行，具备设置权限。
+    private func enableIPForwarding() {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/sysctl")
+        proc.arguments = ["-w", "net.inet.ip.forwarding=1"]
+        proc.standardOutput = Pipe()
+        proc.standardError = Pipe()
+        do { try proc.run() } catch { NSLog("[Lattice] enable forwarding failed: \(error)") }
+    }
+
     private static func ipv4Route(fromCIDR cidr: String) -> NEIPv4Route? {
         let parts = cidr.split(separator: "/")
         guard parts.count == 2, let prefixLen = UInt8(parts[1]), prefixLen <= 32 else { return nil }

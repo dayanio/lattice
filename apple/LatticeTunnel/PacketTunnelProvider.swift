@@ -130,7 +130,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // 其余域名的解析走系统默认 DNS。10.96.0.1 是 overlay 内的保留未分配
         // 地址，发往它的 DNS 包经 TUN 进入引擎即被 LatticeDNS 拦截应答。
         let dns = NEDNSSettings(servers: ["10.96.0.1"])
-        dns.matchDomains = ["lattice"]
+        if extraRoutes.contains("0.0.0.0/0") {
+            // 出口模式（UI 已选择出口节点）：全部 DNS 经隧道由出口侧解析，
+            // 否则 google.com 等域名会被本机 DNS 污染，出口代理形同虚设。
+            dns.matchDomains = nil
+        } else {
+            dns.matchDomains = ["lattice"]
+        }
         dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice
         settings.dnsSettings = dns
 
@@ -140,6 +146,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         for cidr in extraRoutes {
             guard let route = Self.ipv4Route(fromCIDR: cidr) else { continue }
+            if cidr == "0.0.0.0/0" {
+                // 出口模式的 0/0 用 /1 拆分：裸 0.0.0.0/0 在 macOS 上会输给
+                // 物理网卡的默认路由（服务优先级），拆成两条 /1 确定性接管。
+                included.append(NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "128.0.0.0"))
+                included.append(NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "128.0.0.0"))
+                continue
+            }
             included.append(route)
         }
 

@@ -51,6 +51,11 @@ type packetTUN struct {
 	// Custom name answers for server-pushed records — not used yet; the
 	// interceptor gates on peerSource (see WriteInbound).
 	dnsResolver func(qname string) (string, bool)
+	// Upstream resolvers for non-lattice queries (exit-node DNS takeover):
+	// system resolvers, parsed once from /etc/resolv.conf. Empty until the
+	// first lookup succeeds; a built-in CN fallback list is used then.
+	upstreamDNS   []string
+	upstreamDNSed bool
 	// peerSource 提供当前组网设备表（名字 → overlay 地址）。
 	peerSource func() []*infra.Peer
 }
@@ -70,6 +75,36 @@ func (t *packetTUN) peerAddresses() []*infra.Peer {
 		return nil
 	}
 	return t.peerSource()
+}
+
+// SetUpstreamDNS overrides the resolvers used for non-lattice queries
+// (exit-node DNS takeover, design doc §四). When unset, the host's
+// resolvers from /etc/resolv.conf are used with a CN public fallback.
+func (t *packetTUN) SetUpstreamDNS(servers []string) {
+	t.upstreamDNS = servers
+}
+
+// dnsServers lazily resolves the upstream list once; the result is cached.
+func (t *packetTUN) dnsServers() []string {
+	if t.upstreamDNS != nil {
+		return t.upstreamDNS
+	}
+	var out []string
+	if data, err := os.ReadFile("/etc/resolv.conf"); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "nameserver ") {
+				if ns := strings.TrimSpace(strings.TrimPrefix(line, "nameserver ")); ns != "" {
+					out = append(out, ns)
+				}
+			}
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"223.5.5.5", "119.29.29.29"}
+	}
+	t.upstreamDNS = out
+	return out
 }
 
 func newPacketTUN(name string, mtu int) *packetTUN {
@@ -132,15 +167,17 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 	// once a peer table is wired (engine.go does this right after the node
 	// comes up). Without a table there is nothing to resolve from.
 	if t.peerSource != nil {
-		if resp, ok := t.interceptLatticeDNS(packet); ok {
-			select {
-			case t.outbound <- resp:
-			case <-t.closedCh:
-				return errors.New("packet TUN closed")
-			default:
-				t.mu.Lock()
-				t.dropped++
-				t.mu.Unlock()
+		if resp, handled := t.interceptDNS(packet); handled {
+			if resp != nil {
+				select {
+				case t.outbound <- resp:
+				case <-t.closedCh:
+					return errors.New("packet TUN closed")
+				default:
+					t.mu.Lock()
+					t.dropped++
+					t.mu.Unlock()
+				}
 			}
 			return nil
 		}
@@ -164,7 +201,7 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 // current peer table. Returns (responsePacket, true) when the packet was a
 // lattice query answered locally; (nil, false) means "forward to WireGuard
 // unchanged" (non-DNS, non-lattice, or malformed — fail-open).
-func (t *packetTUN) interceptLatticeDNS(packet []byte) ([]byte, bool) {
+func (t *packetTUN) interceptDNS(packet []byte) ([]byte, bool) {
 	fmt.Println("LATTICE-DBG-V2-ENTRY len", len(packet))
 	if len(packet) < 20 || packet[0]>>4 != 4 {
 		return nil, false
@@ -195,6 +232,12 @@ func (t *packetTUN) interceptLatticeDNS(packet []byte) ([]byte, bool) {
 	q := query.Question[0]
 	raw := strings.ToLower(strings.TrimSuffix(strings.ToLower(q.Name), "."))
 	if !strings.HasSuffix(raw, ".lattice") {
+		// 出口节点 DNS 接管（§四）：非 lattice 域名经本机系统 DNS 转发
+		// （Clash TUN 接管后按规则解析/分流），应答异步送回查询方。
+		if servers := t.dnsServers(); len(servers) > 0 {
+			t.forwardDNSAsync(query, packet, srcIP, dstIP, srcPort, dstPort, servers)
+			return nil, true
+		}
 		return nil, false
 	}
 	name := infra.NormalizeAppID(strings.TrimSuffix(raw, ".lattice"))
@@ -225,8 +268,12 @@ func (t *packetTUN) interceptLatticeDNS(packet []byte) ([]byte, bool) {
 	if err != nil {
 		return nil, false
 	}
+	return swapUDPReply(packet, ihl, srcIP, dstIP, srcPort, dstPort, dnsPayload), true
+}
 
-	// 构造响应包：源/目的 IP 与端口对调，重算 UDP 与 IPv4 校验和。
+// swapUDPReply 构造 DNS 应答包：源/目的 IP 与端口对调、填入载荷，
+// 重算 UDP 与 IPv4 校验和。lattice 本地应答与上游转发应答共用。
+func swapUDPReply(packet []byte, ihl int, srcIP, dstIP net.IP, srcPort, dstPort uint16, dnsPayload []byte) []byte {
 	total := ihl + 8 + len(dnsPayload)
 	resp := make([]byte, total)
 	resp[0] = 0x45
@@ -271,8 +318,37 @@ func (t *packetTUN) interceptLatticeDNS(packet []byte) ([]byte, bool) {
 		ipSum = (ipSum >> 16) + (ipSum & 0xffff)
 	}
 	binary.BigEndian.PutUint16(resp[10:12], ^uint16(ipSum))
+	return resp
+}
 
-	return resp, true
+// forwardDNSAsync 把非 lattice 的 DNS 查询异步转发给本机上游解析器
+// （系统 DNS → Clash 接管），应答按原查询五元组对调送回查询方。
+func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP net.IP, srcPort, dstPort uint16, servers []string) {
+	go func() {
+		client := &dns.Client{Net: "udp"}
+		var resp *dns.Msg
+		for _, server := range servers {
+			r, _, err := client.Exchange(query.Copy(), server+":53")
+			if err == nil && r != nil {
+				resp = r
+				break
+			}
+		}
+		if resp == nil {
+			resp = new(dns.Msg)
+			resp.SetRcode(query, dns.RcodeServerFailure)
+		}
+		payload, err := resp.Pack()
+		if err != nil {
+			return
+		}
+		reply := swapUDPReply(packet, int(packet[0]&0x0f)*4, srcIP, dstIP, srcPort, dstPort, payload)
+		select {
+		case t.inbound <- reply: // 送回 WG 加密 → 查询方
+		case <-t.closedCh:
+		default:
+		}
+	}()
 }
 
 // Dropped reports packets discarded due to queue backpressure.
