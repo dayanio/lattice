@@ -39,6 +39,16 @@ func testControlPlane() string {
 	return testControlPlaneDefault
 }
 
+// testWorkspaceSlug is the workspace the tests create devices in. The
+// standalone default is "mac-demo"; override when pointing the suite at a
+// control plane with a different workspace (e.g. "run-test").
+func testWorkspaceSlug() string {
+	if v := os.Getenv("LATTICE_EMBED_TEST_WORKSPACE"); v != "" {
+		return v
+	}
+	return "mac-demo"
+}
+
 // requireIntegration skips the test unless LATTICE_EMBED_INTEGRATION=1 is
 // set, so `go test ./...` stays green on machines without the local
 // mac-demo control plane + docker containers running.
@@ -91,7 +101,7 @@ func adminToken(t *testing.T) (bearer, workspaceID string) {
 		t.Fatalf("decode workspaces response: %v", err)
 	}
 	for _, ws := range wsOut.Data.List {
-		if ws.Slug == "mac-demo" {
+		if ws.Slug == testWorkspaceSlug() {
 			return out.Data.Token, ws.ID
 		}
 	}
