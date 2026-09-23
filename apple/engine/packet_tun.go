@@ -352,6 +352,11 @@ func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP 
 	go func() {
 		client := &dns.Client{Net: "udp", Timeout: 3 * time.Second}
 		if idx := tunnelIfaceIndex(); idx != 0 {
+			// Bound to the tunnel = exit mode: resolve at the exit side with
+			// anycast resolvers instead of the local network's (CN) resolver —
+			// querying 114 from the HK exit adds a CN roundtrip per lookup and
+			// yields CN-CDN answers that then route badly through the exit.
+			servers = []string{"8.8.8.8", "1.1.1.1"}
 			client.Dialer = &net.Dialer{
 				Timeout: 3 * time.Second,
 				Control: func(_, _ string, c syscall.RawConn) error {
