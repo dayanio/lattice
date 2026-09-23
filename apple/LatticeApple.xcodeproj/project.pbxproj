@@ -13,10 +13,10 @@
 		02B40AB16CC9B1E14459EC72 /* ShareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 794AEC5AF8A1150A34BF3FC2 /* ShareView.swift */; };
 		0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D651343557480E291D4C242C /* QRScanner.swift */; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
-		1D82F9675920AB6D70A8A707 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */; };
 		1EB51D02EC978D6692E1ADD9 /* LatticeTunnelMac.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 280D2D1DA245A0FD3DB0E443 /* LatticeTunnelMac.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		26C9902A138DE8D7AD524485 /* SubnetRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */; };
 		26CEACDA4053E98196979856 /* CastSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165E8316190B31DE582046CA /* CastSink.swift */; };
+		36F33F96DAFAEE5DC29A051D /* AIChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9965F1FD49D963D1DF072DEC /* AIChatView.swift */; };
 		38A2BDDB52959E2210158F81 /* PanelRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B01FF96F795E26001237E0BD /* PanelRoute.swift */; };
 		3949790EF906AFA4A4AF9A91 /* ChatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6632B8E3AF0967CD62378C /* ChatWindow.swift */; };
 		3F6959622E55A023B45FA1B4 /* TunnelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 239FC0A7F79E63F4E5BF729B /* TunnelManager.swift */; };
@@ -25,6 +25,7 @@
 		4C67BC58EF90C9FA7420538A /* QRScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A96A5BA984924A4BE08A5B2 /* QRScannerView.swift */; };
 		4E2314DDF6678275F0FFAA84 /* PanelComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8547FD5E834594667D509110 /* PanelComponents.swift */; };
 		4E329B34A339DC67506C3423 /* LatticeCore.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		504E34FBD1D9DA712D1F6B5B /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F9F4FD01889A24A4794C44 /* ChatViewModel.swift */; };
 		50F0A48C7DE30940C0BBFDD8 /* SubnetRoutesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F86C2E2366F4AFF59D622DFB /* SubnetRoutesView.swift */; };
 		518B29B45861F274510B47CC /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE4CF185A86A9E5B9DCDB935 /* PacketTunnelProvider.swift */; };
 		5460D39AA904935F95C98BAB /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
@@ -51,6 +52,7 @@
 		C57A26F25C649ED6C6B71FF5 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F838CD20F6150A9C5E1F3402 /* OverviewView.swift */; };
 		C5D855A3DA02C11765207DDE /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		CB573F157F641243D23A8271 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
+		CDFBA982655A11C4D8D14262 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F9F4FD01889A24A4794C44 /* ChatViewModel.swift */; };
 		D68C7846A411CC37814ED76C /* SubnetRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */; };
 		DCC32482F0EFB9182AE419AF /* CastReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A9894E398BA1C95006D8A3 /* CastReceiver.swift */; };
 		E67E73C171D445673D559589 /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
@@ -133,7 +135,6 @@
 		3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinPayload.swift; sourceTree = "<group>"; };
 		47DACD8B5C4EBFE6CA33C972 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
-		4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		794AEC5AF8A1150A34BF3FC2 /* ShareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareView.swift; sourceTree = "<group>"; };
@@ -141,11 +142,13 @@
 		8547FD5E834594667D509110 /* PanelComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelComponents.swift; sourceTree = "<group>"; };
 		8D60E634E669109A674D97AC /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		960BD20764F178AA8EE601C2 /* ExitNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitNodeView.swift; sourceTree = "<group>"; };
+		9965F1FD49D963D1DF072DEC /* AIChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIChatView.swift; sourceTree = "<group>"; };
 		A087BE65958F460FCF0CC468 /* LatticeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeApp.swift; sourceTree = "<group>"; };
 		A2B465D56E6931B309FAEF61 /* JoinView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinView.swift; sourceTree = "<group>"; };
 		A40878B1329E02B2C70EB9E0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B01FF96F795E26001237E0BD /* PanelRoute.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelRoute.swift; sourceTree = "<group>"; };
 		B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkPages.swift; sourceTree = "<group>"; };
+		B9F9F4FD01889A24A4794C44 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		C0665648C57C97A61F3F0A51 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		C9AFFCC82948D66E2AB0C162 /* LatticeMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LatticeMacApp.swift; sourceTree = "<group>"; };
 		CC55D463910D975F56B8342B /* LatticeTunnel.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = LatticeTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -201,6 +204,7 @@
 		0171ED0F822E990AE5A368A9 /* Lattice */ = {
 			isa = PBXGroup;
 			children = (
+				9965F1FD49D963D1DF072DEC /* AIChatView.swift */,
 				960BD20764F178AA8EE601C2 /* ExitNodeView.swift */,
 				E3E5909331047D47021B484E /* FavoritesStore.swift */,
 				0D3ADCDD9E845475BD2A27E5 /* Info.plist */,
@@ -240,6 +244,7 @@
 		3C1EDBC170D754495609ADDB /* Shared */ = {
 			isa = PBXGroup;
 			children = (
+				B9F9F4FD01889A24A4794C44 /* ChatViewModel.swift */,
 				05B18389E61765B68DB7CF7D /* DesignComponents.swift */,
 				3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */,
 				8D60E634E669109A674D97AC /* KeychainStore.swift */,
@@ -285,7 +290,6 @@
 				044E0028DE229A1C103E4E31 /* AccountPage.swift */,
 				14A9894E398BA1C95006D8A3 /* CastReceiver.swift */,
 				165E8316190B31DE582046CA /* CastSink.swift */,
-				4BE8650C14A1FB3ED7ECACF5 /* ChatViewModel.swift */,
 				0B6632B8E3AF0967CD62378C /* ChatWindow.swift */,
 				3C2F091FD3AB75D4A5F6C927 /* ContentView.swift */,
 				E73ACB07B695A778DE7339C3 /* Info.plist */,
@@ -482,6 +486,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				36F33F96DAFAEE5DC29A051D /* AIChatView.swift in Sources */,
+				CDFBA982655A11C4D8D14262 /* ChatViewModel.swift in Sources */,
 				7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */,
 				868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */,
 				FAE77EC15F11A48CBAF6B894 /* FavoritesStore.swift in Sources */,
@@ -512,7 +518,7 @@
 				026547D910763D195877A6EC /* AccountPage.swift in Sources */,
 				DCC32482F0EFB9182AE419AF /* CastReceiver.swift in Sources */,
 				26CEACDA4053E98196979856 /* CastSink.swift in Sources */,
-				1D82F9675920AB6D70A8A707 /* ChatViewModel.swift in Sources */,
+				504E34FBD1D9DA712D1F6B5B /* ChatViewModel.swift in Sources */,
 				3949790EF906AFA4A4AF9A91 /* ChatWindow.swift in Sources */,
 				70634B99C412A1430F456CB2 /* ContentView.swift in Sources */,
 				B78ADF07D928BBC23F1C2C5A /* DesignComponents.swift in Sources */,

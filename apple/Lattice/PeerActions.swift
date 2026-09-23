@@ -22,7 +22,7 @@ enum PeerActions {
     static func qualityPill(_ state: String) -> (text: String, color: Color)? {
         switch state {
         case "ice-ready": return ("直连", LatticePalette.online)
-        case "lrp-ready": return ("经中继", LatticePalette.relay)
+        case "relay-ready", "lrp-ready": return ("经中继", LatticePalette.relay)
         case "probing", "created": return ("连接中", LatticePalette.neutral)
         case "failed": return ("失败", LatticePalette.blocked)
         case "closed": return ("不可达", LatticePalette.neutral)

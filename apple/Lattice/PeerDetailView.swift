@@ -59,7 +59,7 @@ struct PeerDetailView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                LabeledContent("平台", value: peer.os.isEmpty ? "未知" : peer.os)
+                LabeledContent("平台", value: peer.displayOS)
                 LabeledContent("连接质量") {
                     if let quality, let pill = PeerActions.qualityPill(quality) {
                         QualityPill(text: pill.text, color: pill.color)

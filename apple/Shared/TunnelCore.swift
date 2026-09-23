@@ -38,6 +38,21 @@ struct PeerNode: Identifiable {
     var labels: [String: String]? = nil
     /// CIDRs this peer offers to route for others (Exit Node = ["0.0.0.0/0"]).
     var advertisedRoutes: [String] = []
+
+    /// 归一化的平台显示名：netmap 里的 os 值大小写混杂且可能缺失，
+    /// UI 统一走这个出口。
+    var displayOS: String {
+        switch os.lowercased() {
+        case "linux": return "Linux"
+        case "windows": return "Windows"
+        case "darwin", "macos", "mac": return "macOS"
+        case "android": return "Android"
+        case "ios": return "iOS"
+        case "tvos": return "tvOS"
+        case "": return "未知"
+        default: return os
+        }
+    }
     var lastSeen: String = ""
     /// True when an AgentIdentity references this peer — AI agents are
     /// first-class network citizens and get a badge (UI mockup §04).

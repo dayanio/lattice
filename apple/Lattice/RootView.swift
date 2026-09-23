@@ -25,6 +25,8 @@ struct RootView: View {
         TabView {
             OverviewView()
                 .tabItem { Label("状态", systemImage: "network") }
+            AIChatView()
+                .tabItem { Label("AI", systemImage: "sparkles") }
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }

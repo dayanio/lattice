@@ -15,6 +15,13 @@
 import SwiftUI
 
 /// A persisted AI conversation.
+/// 单条聊天消息："user" | "assistant" | "tool" | "error"。
+struct ChatDisplayMessage: Identifiable, Equatable, Codable {
+    var id = UUID()
+    let role: String
+    var text: String
+}
+
 struct ChatSession: Identifiable, Codable, Equatable {
     var id = UUID()
     var title: String

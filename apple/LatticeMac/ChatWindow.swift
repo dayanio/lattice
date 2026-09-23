@@ -243,12 +243,6 @@ struct AIChatPane: View {
 
 // MARK: - Message rendering
 
-struct ChatDisplayMessage: Identifiable, Equatable, Codable {
-    var id = UUID()
-    /// "user" | "assistant" | "tool" | "error"
-    let role: String
-    var text: String
-}
 
 struct ChatBubble: View {
     let message: ChatDisplayMessage

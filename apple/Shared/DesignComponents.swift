@@ -313,7 +313,11 @@ struct ConnectionHero: View {
                 }
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 5) {
+            VStack(alignment: .trailing, spacing: 6) {
+                // 断开走显式开关：整卡可点时一个误触就会断网。
+                Toggle("断开连接", isOn: disconnectBinding)
+                    .labelsHidden()
+                    .tint(.white)
                 if !aggregateText.isEmpty {
                     // 绿底上用白色胶囊，最易读。
                     QualityPill(text: aggregateText, color: .white)
@@ -327,11 +331,14 @@ struct ConnectionHero: View {
         }
         .padding(.horizontal, 20)
         .frame(minHeight: 92)
-        .contentShape(Rectangle())
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("断开连接")
-        .accessibilityHint("点击断开 VPN")
-        .onTapGesture { onToggle() }
+    }
+
+    /// 开关语义：连接态恒为 on；拨到 off 即断开。断开后状态切到
+    /// disconnected，卡片整体切换为未连接形态，不需要回弹。
+    private var disconnectBinding: Binding<Bool> {
+        Binding(get: { true }, set: { newValue in
+            if !newValue { onToggle() }
+        })
     }
 
     /// 未连接/连接中：居中椭圆（呼吸环动画只在连接中出现）。
@@ -363,10 +370,10 @@ struct ConnectionHero: View {
         }
         .frame(width: 200, height: 96)
         .contentShape(Capsule())
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(state == .connected ? "断开连接" : "连接网络")
-        .accessibilityHint("切换 VPN 连接状态")
-        .onTapGesture { onToggle() }
+        .accessibilityAddTraits(state == .disconnected ? [.isButton] : [])
+        .accessibilityLabel(state == .disconnected ? "连接网络" : headline)
+        .accessibilityHint(state == .disconnected ? "点击连接 VPN" : "")
+        .onTapGesture { if state == .disconnected { onToggle() } }
         .onChange(of: state) { _, newState in
             breathe = false
             if newState == .connecting {
