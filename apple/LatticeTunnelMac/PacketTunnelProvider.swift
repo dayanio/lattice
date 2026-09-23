@@ -247,7 +247,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // IPv6 接管（IPv4-only 出口）：v6 默认路由进隧道由引擎丢弃（v6 黑洞），
         // 迫使系统回退 IPv4 经出口，防止 v6 直连绕过出口。
-        let ipv6 = NEIPv6Settings(addresses: ["fd00:lattice:exit::1"], networkPrefixLengths: [64])
+        let ipv6 = NEIPv6Settings(addresses: ["fd00:0:0:10:96::1"], networkPrefixLengths: [64])
         ipv6.includedRoutes = [NEIPv6Route(destinationAddress: "::", networkPrefixLength: 0)]
         settings.ipv6Settings = ipv6
 
