@@ -136,25 +136,101 @@ func TestLatticeDNS_InterceptsLatticeQuery(t *testing.T) {
 	}
 }
 
-func TestLatticeDNS_NonLatticePassesThrough(t *testing.T) {
+func TestLatticeDNS_NonLatticeForwardedToUpstream(t *testing.T) {
 	pt := newPacketTUN("lattice", 1280)
 	defer pt.Close() //nolint:errcheck
+	pt.SetPeerSource(func() []*infra.Peer { return nil })
 	pt.SetDNSResolver(func(string) (string, bool) { return "", false })
+	// 上游指向 127.0.0.2（无监听，查询超时）：转发器应回 SERVFAIL 应答。
+	pt.SetUpstreamDNS([]string{"127.0.0.2"})
 
 	pkt := buildDNSQuery(t, "example.com", "10.96.0.8", "10.96.0.1", 54321)
 	if err := pt.WriteInbound(pkt); err != nil {
 		t.Fatalf("WriteInbound: %v", err)
 	}
 
-	// 非 *.lattice 查询必须原样进入 WG 队列（inbound）。
 	select {
-	case <-pt.inbound:
-	case <-time.After(time.Second):
-		t.Fatal("non-lattice query was not forwarded to WireGuard")
+	case resp := <-pt.inbound:
+		m := new(dns.Msg)
+		if err := m.Unpack(resp[28:]); err != nil {
+			t.Fatalf("unpack: %v", err)
+		}
+		if m.Rcode != dns.RcodeServerFailure {
+			t.Fatalf("rcode = %d, want SERVFAIL", m.Rcode)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no SERVFAIL reply from the upstream forwarder")
 	}
 	select {
 	case <-pt.outbound:
 		t.Fatal("non-lattice query must not be answered locally")
+	default:
+	}
+}
+
+func TestLatticeDNS_AAAAEmptyAnswer(t *testing.T) {
+	pt := newPacketTUN("lattice", 1280)
+	defer pt.Close() //nolint:errcheck
+	pt.SetDNSResolver(func(string) (string, bool) { return "", false })
+
+	// 构造 AAAA 查询（IPv4-only 出口：AAAA 一律空应答，客户端回退 A/IPv4）。
+	m := new(dns.Msg)
+	m.SetQuestion(dns.Fqdn("example.com"), dns.TypeAAAA)
+	payload, err := m.Pack()
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	udp := make([]byte, 8+len(payload))
+	binary.BigEndian.PutUint16(udp[0:2], 54321)
+	binary.BigEndian.PutUint16(udp[2:4], 53)
+	binary.BigEndian.PutUint16(udp[4:6], uint16(8+len(payload)))
+	copy(udp[8:], payload)
+	ip := make([]byte, 20)
+	ip[0] = 0x45
+	binary.BigEndian.PutUint16(ip[2:4], uint16(20+len(udp)))
+	ip[8] = 64
+	ip[9] = 17
+	copy(ip[12:16], net.ParseIP("10.96.0.8").To4())
+	copy(ip[16:20], net.ParseIP("10.96.0.1").To4())
+	pkt := append(append([]byte{}, ip...), udp...)
+
+	if err := pt.WriteInbound(pkt); err != nil {
+		t.Fatalf("WriteInbound: %v", err)
+	}
+
+	select {
+	case resp := <-pt.inbound:
+		rm := new(dns.Msg)
+		if err := rm.Unpack(resp[28:]); err != nil {
+			t.Fatalf("unpack: %v", err)
+		}
+		if rm.Rcode != dns.RcodeSuccess {
+			t.Fatalf("rcode = %d, want NOERROR", rm.Rcode)
+		}
+		if len(rm.Answer) != 0 {
+			t.Fatalf("AAAA answer must be empty, got %d records", len(rm.Answer))
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no AAAA reply")
+	}
+}
+
+func TestPacketTUN_DropsPeerIPv6(t *testing.T) {
+	pt := newPacketTUN("lattice", 1280)
+	defer pt.Close() //nolint:errcheck
+
+	// IPv6 包（版本号 6）从 peer 方向进入：出口模式下应被丢弃（v6 黑洞）。
+	v6 := make([]byte, 40)
+	v6[0] = 0x60
+	if _, err := pt.Write([][]byte{v6}, 0); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if d := pt.Dropped(); d != 1 {
+		t.Fatalf("dropped = %d, want 1", d)
+	}
+	select {
+	case <-pt.outbound:
+		t.Fatal("IPv6 packet must not be delivered to the system")
 	default:
 	}
 }

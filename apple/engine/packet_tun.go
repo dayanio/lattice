@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/miekg/dns"
@@ -140,7 +141,18 @@ func (t *packetTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 // layers retransmit) rather than blocking the WG routine.
 func (t *packetTUN) Write(bufs [][]byte, offset int) (int, error) {
 	for _, buf := range bufs {
-		pkt := make([]byte, len(buf)-offset)
+		raw := buf[offset:]
+		// 出口模式（IPv4-only 数据面）：丢弃来自 peer 的 IPv6 包（v6 黑洞），
+		// 客户端的 Happy Eyeballs 会快速回退 IPv4 经出口转发，避免 v6 直连
+		// 绕过出口。非出口场景下 peer 不会送来 v6（隧道本身只含 IPv4 路由）。
+		if len(raw) >= 1 && raw[0]>>4 == 6 {
+			t.mu.Lock()
+			t.dropped++
+			t.mu.Unlock()
+			continue
+		}
+		pkt := make([]byte, len(raw))
+		copy(pkt, raw)
 		copy(pkt, buf[offset:])
 		select {
 		case t.outbound <- pkt:
@@ -232,7 +244,18 @@ func (t *packetTUN) interceptDNS(packet []byte) ([]byte, bool) {
 	q := query.Question[0]
 	raw := strings.ToLower(strings.TrimSuffix(strings.ToLower(q.Name), "."))
 	if !strings.HasSuffix(raw, ".lattice") {
-		// 出口节点 DNS 接管（§四）：非 lattice 域名经本机系统 DNS 转发
+		// IPv4-only 出口：AAAA 一律空应答（NOERROR 无记录），客户端回退
+		// A/IPv4，防止解析层引导 v6 直连绕过出口。
+		if q.Qtype == dns.TypeAAAA {
+			empty := new(dns.Msg)
+			empty.SetRcode(query, dns.RcodeSuccess)
+			payload, err := empty.Pack()
+			if err != nil {
+				return nil, false
+			}
+			return swapUDPReply(packet, ihl, srcIP, dstIP, srcPort, dstPort, payload), true
+		}
+		// 出口节点 DNS 接管（§四）：非 lattice 的 A 查询经本机系统 DNS 转发
 		// （Clash TUN 接管后按规则解析/分流），应答异步送回查询方。
 		if servers := t.dnsServers(); len(servers) > 0 {
 			t.forwardDNSAsync(query, packet, srcIP, dstIP, srcPort, dstPort, servers)
@@ -325,7 +348,7 @@ func swapUDPReply(packet []byte, ihl int, srcIP, dstIP net.IP, srcPort, dstPort 
 // （系统 DNS → Clash 接管），应答按原查询五元组对调送回查询方。
 func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP net.IP, srcPort, dstPort uint16, servers []string) {
 	go func() {
-		client := &dns.Client{Net: "udp"}
+		client := &dns.Client{Net: "udp", Timeout: 3 * time.Second}
 		var resp *dns.Msg
 		for _, server := range servers {
 			r, _, err := client.Exchange(query.Copy(), server+":53")
@@ -338,6 +361,14 @@ func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP 
 			resp = new(dns.Msg)
 			resp.SetRcode(query, dns.RcodeServerFailure)
 		}
+		// 只保留 A 记录（IPv4-only 出口）。
+		filtered := resp.Answer[:0]
+		for _, rr := range resp.Answer {
+			if rr.Header().Rrtype != dns.TypeAAAA {
+				filtered = append(filtered, rr)
+			}
+		}
+		resp.Answer = filtered
 		payload, err := resp.Pack()
 		if err != nil {
 			return

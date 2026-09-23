@@ -52,6 +52,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// applied as NEIPv4Routes once the tunnel is up. Empty until the first
     /// OnRoutesChanged call.
     private var latestExtraRoutes: [String] = []
+    /// 控制面/WG 端点所在主机（来自 serverURL），出口 /1 路由的豁免对象。
+    private var serverHost: String = ""
     private var currentOverlayIP = "10.96.0.1"
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
@@ -94,6 +96,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 TunnelLog.write("startTunnel: resetIdentity failed")
             }
         }
+        if let host = URL(string: serverURL)?.host { serverHost = host }
         let name = (pc["name"] as? String) ?? (Host.current().localizedName ?? "lattice-mac")
         TunnelLog.write("startTunnel: server=\(serverURL) token=\(token.count) chars name=\(name)")
         let config = EngineConfig(serverURL: serverURL, token: token, name: name, mtu: 1280)
@@ -150,6 +153,79 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Network settings
 
+    // MARK: - 出口全局路由（route(8)；NE included 路由是接口 scoped 的，抢不过物理默认）
+
+    private var exitRoutesApplied = false
+
+    private func applyExitGlobalRoutes() {
+        let overlayIP = currentOverlayIP
+        guard let tunIf = routeInterfaceFor(overlayIP) else {
+            TunnelLog.write("applyExitGlobalRoutes: cannot resolve tunnel interface for \(overlayIP)")
+            return
+        }
+        // 先记物理网关（此时 /1 尚未安装），管理面与局域网豁免路由要用。
+        let gw = defaultGateway()
+        shell("route -n delete 0.0.0.0/1 2>/dev/null; true")
+        shell("route -n add -net 0.0.0.0/1 -interface \(tunIf)")
+        shell("route -n delete 128.0.0.0/1 2>/dev/null; true")
+        shell("route -n add -net 128.0.0.0/1 -interface \(tunIf)")
+        if let gw, !gw.isEmpty {
+            // 控制面/WG 端点/中继都在云端主机上：/32 直连豁免，防自环。
+            shell("route -n delete -host \(serverHost.isEmpty ? "" : serverHost) 2>/dev/null; true")
+            shell("route -n add -host \(serverHost) \(gw)")
+        }
+        exitRoutesApplied = true
+        TunnelLog.write("exit global /1 routes installed via \(tunIf)")
+    }
+
+    private func clearExitGlobalRoutes() {
+        shell("route -n delete 0.0.0.0/1 2>/dev/null; true")
+        shell("route -n delete 128.0.0.0/1 2>/dev/null; true")
+        exitRoutesApplied = false
+    }
+
+    /// 在 setTunnelNetworkSettings 的 completion handler 里调用——此时系统
+    /// 路由表已经装好 overlay 路由，routeInterfaceFor 才能解析到真正的 utun
+    /// 接口而不是物理网卡（见 applyExitGlobalRoutes 的踩坑记录）。
+    private func applyExitRoutesIfNeeded(_ extraRoutes: [String]) {
+        if extraRoutes.contains("0.0.0.0/0") {
+            applyExitGlobalRoutes()
+        } else if exitRoutesApplied {
+            clearExitGlobalRoutes()
+        }
+    }
+
+    @discardableResult
+    private func shell(_ command: String) -> String? {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/sh")
+        p.arguments = ["-c", command]
+        let out = Pipe()
+        let errPipe = Pipe()
+        p.standardOutput = out
+        p.standardError = errPipe
+        do { try p.run() } catch { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return String(data: data, encoding: .utf8)
+    }
+
+    private func routeInterfaceFor(_ ip: String) -> String? {
+        guard let out = shell("route -n get \(ip) 2>/dev/null") else { return nil }
+        for line in out.components(separatedBy: "\n") where line.contains("interface:") {
+            return line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    private func defaultGateway() -> String? {
+        guard let out = shell("route -n get 8.8.8.8 2>/dev/null || route -n get 1.1.1.1 2>/dev/null") else { return nil }
+        for line in out.components(separatedBy: "\n") where line.contains("gateway:") {
+            return line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
     private func makeSettings(overlayIP: String, extraRoutes: [String]) -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: overlayIP)
         settings.mtu = 1280
@@ -162,8 +238,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             // 需要系统级 IP 转发（把网内流量转出公网，root 下可设）。
             dns.matchDomains = nil
             enableIPForwarding()
-        } else {
-            dns.matchDomains = ["lattice"]
+            // 全局 /1 路由要等 setTunnelNetworkSettings 真正把 overlay
+            // 路由装进系统路由表之后才能装（见 applyExitRoutesIfNeeded），
+            // 这里提前装会把 route(8) 解析到物理网卡而不是 utun。
         }
         dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice
         settings.dnsSettings = dns
@@ -285,6 +362,7 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
             self.pendingStart?(error)
             self.pendingStart = nil
             if error == nil {
+                self.applyExitRoutesIfNeeded(self.latestExtraRoutes)
                 self.pumpPackets()
             }
         }
@@ -304,7 +382,10 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
               let routes = try? JSONDecoder().decode([String].self, from: data) else { return }
         latestExtraRoutes = routes
         guard pendingStart == nil else { return } // still starting up — onTunnelUp will apply this set
-        setTunnelNetworkSettings(makeSettings(overlayIP: currentOverlayIP, extraRoutes: routes), completionHandler: nil)
+        setTunnelNetworkSettings(makeSettings(overlayIP: currentOverlayIP, extraRoutes: routes)) { [weak self] error in
+            guard let self, error == nil else { return }
+            self.applyExitRoutesIfNeeded(routes)
+        }
     }
 }
 
