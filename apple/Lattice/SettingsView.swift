@@ -104,6 +104,7 @@ struct SettingsView: View {
                 if auth.isLoggedIn {
                     Section("共享") {
                         NavigationLink("共享发布") { ShareView() }
+                        NavigationLink("传文件") { FileDropView() }
                     }
                 }
 

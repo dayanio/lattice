@@ -18,6 +18,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -25,6 +27,10 @@
 	</dict>
 	<key>NSCameraUsageDescription</key>
 	<string>Lattice 需要使用摄像头扫描入网二维码</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Lattice 需要访问本地网络以与网内设备互传文件和通信</string>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

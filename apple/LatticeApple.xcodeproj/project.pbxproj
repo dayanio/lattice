@@ -13,9 +13,11 @@
 		02B40AB16CC9B1E14459EC72 /* ShareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 794AEC5AF8A1150A34BF3FC2 /* ShareView.swift */; };
 		0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D651343557480E291D4C242C /* QRScanner.swift */; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
+		1CD7F64715CC77020F5143E7 /* FileDropService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0599FEFE7A72AF2465374FD5 /* FileDropService.swift */; };
 		1EB51D02EC978D6692E1ADD9 /* LatticeTunnelMac.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 280D2D1DA245A0FD3DB0E443 /* LatticeTunnelMac.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		26C9902A138DE8D7AD524485 /* SubnetRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */; };
 		26CEACDA4053E98196979856 /* CastSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = 165E8316190B31DE582046CA /* CastSink.swift */; };
+		2FAF2ED5F61F6AFC76807D8D /* FileDropView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B0D1C6C764D61216E93CEEF /* FileDropView.swift */; };
 		36F33F96DAFAEE5DC29A051D /* AIChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9965F1FD49D963D1DF072DEC /* AIChatView.swift */; };
 		38A2BDDB52959E2210158F81 /* PanelRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = B01FF96F795E26001237E0BD /* PanelRoute.swift */; };
 		3949790EF906AFA4A4AF9A91 /* ChatWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6632B8E3AF0967CD62378C /* ChatWindow.swift */; };
@@ -54,6 +56,7 @@
 		CB573F157F641243D23A8271 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
 		CDFBA982655A11C4D8D14262 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9F9F4FD01889A24A4794C44 /* ChatViewModel.swift */; };
 		D68C7846A411CC37814ED76C /* SubnetRoutes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E428400640CDD85EE6DEED7E /* SubnetRoutes.swift */; };
+		D9F527956BD0EFD8E21C615C /* FileDropService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0599FEFE7A72AF2465374FD5 /* FileDropService.swift */; };
 		DCC32482F0EFB9182AE419AF /* CastReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A9894E398BA1C95006D8A3 /* CastReceiver.swift */; };
 		E67E73C171D445673D559589 /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
 		E9FBD46E90777EBAFE9E1D3F /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
@@ -117,8 +120,10 @@
 
 /* Begin PBXFileReference section */
 		044E0028DE229A1C103E4E31 /* AccountPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountPage.swift; sourceTree = "<group>"; };
+		0599FEFE7A72AF2465374FD5 /* FileDropService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileDropService.swift; sourceTree = "<group>"; };
 		05B18389E61765B68DB7CF7D /* DesignComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignComponents.swift; sourceTree = "<group>"; };
 		0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/MacOS/LatticeCore.xcframework; sourceTree = "<group>"; };
+		0B0D1C6C764D61216E93CEEF /* FileDropView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileDropView.swift; sourceTree = "<group>"; };
 		0B144916D9450C4F743FDA7B /* LatticeCastKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LatticeCastKit; path = "../../lattice-cast/swift/LatticeCastKit"; sourceTree = SOURCE_ROOT; };
 		0B6632B8E3AF0967CD62378C /* ChatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatWindow.swift; sourceTree = "<group>"; };
 		0D3ADCDD9E845475BD2A27E5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -207,6 +212,7 @@
 				9965F1FD49D963D1DF072DEC /* AIChatView.swift */,
 				960BD20764F178AA8EE601C2 /* ExitNodeView.swift */,
 				E3E5909331047D47021B484E /* FavoritesStore.swift */,
+				0B0D1C6C764D61216E93CEEF /* FileDropView.swift */,
 				0D3ADCDD9E845475BD2A27E5 /* Info.plist */,
 				A2B465D56E6931B309FAEF61 /* JoinView.swift */,
 				A087BE65958F460FCF0CC468 /* LatticeApp.swift */,
@@ -246,6 +252,7 @@
 			children = (
 				B9F9F4FD01889A24A4794C44 /* ChatViewModel.swift */,
 				05B18389E61765B68DB7CF7D /* DesignComponents.swift */,
+				0599FEFE7A72AF2465374FD5 /* FileDropService.swift */,
 				3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */,
 				8D60E634E669109A674D97AC /* KeychainStore.swift */,
 				D4F83921F212A6B53C281796 /* LatticeAPI.swift */,
@@ -491,6 +498,8 @@
 				7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */,
 				868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */,
 				FAE77EC15F11A48CBAF6B894 /* FavoritesStore.swift in Sources */,
+				D9F527956BD0EFD8E21C615C /* FileDropService.swift in Sources */,
+				2FAF2ED5F61F6AFC76807D8D /* FileDropView.swift in Sources */,
 				FCF81D8DC792F9C1BC8000EF /* JoinPayload.swift in Sources */,
 				76F9EAF841E4D1149CEBAC0C /* JoinView.swift in Sources */,
 				00140F5ED99BBE357CC1F951 /* KeychainStore.swift in Sources */,
@@ -522,6 +531,7 @@
 				3949790EF906AFA4A4AF9A91 /* ChatWindow.swift in Sources */,
 				70634B99C412A1430F456CB2 /* ContentView.swift in Sources */,
 				B78ADF07D928BBC23F1C2C5A /* DesignComponents.swift in Sources */,
+				1CD7F64715CC77020F5143E7 /* FileDropService.swift in Sources */,
 				E67E73C171D445673D559589 /* JoinPayload.swift in Sources */,
 				C01C46866068658B9D68BC86 /* KeychainStore.swift in Sources */,
 				5A6CBB67B97087769CC247F2 /* LatticeAPI.swift in Sources */,

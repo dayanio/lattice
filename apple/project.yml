@@ -45,6 +45,9 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
         NSCameraUsageDescription: "Lattice 需要使用摄像头扫描入网二维码"
+        NSLocalNetworkUsageDescription: "Lattice 需要访问本地网络以与网内设备互传文件和通信"
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
     settings:
       base:

@@ -36,6 +36,11 @@ final class UIState: ObservableObject {
 struct LatticeMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
+    init() {
+        // Mac 作为传文件的常驻接收方：收到的文件落在 ~/Documents/LatticeDrop。
+        FileDropService.shared.startListening()
+    }
+
     var body: some Scene {
         MenuBarExtra {
             MenuBarPanel()
