@@ -54,6 +54,8 @@ targets:
           NSAllowsArbitraryLoads: true
         NSCameraUsageDescription: "Lattice 需要使用摄像头扫描入网二维码"
         NSLocalNetworkUsageDescription: "Lattice 需要访问本地网络以与网内设备互传文件和通信"
+        NSMicrophoneUsageDescription: "语音输入需要使用麦克风"
+        NSSpeechRecognitionUsageDescription: "语音转文字在本机完成，音频不会上传"
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
