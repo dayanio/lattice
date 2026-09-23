@@ -212,6 +212,8 @@ struct ContentView: View {
     private var rightPane: some View {
         if let detail = detailPeer {
             peerDetail(detail, wide: true)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity)
         } else if let page = subPage {
             if page == .ai {
                 AIChatPane()
@@ -222,6 +224,8 @@ struct ContentView: View {
             }
         } else {
             overviewPane
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity)
         }
     }
 
@@ -498,10 +502,6 @@ struct ContentView: View {
                     subPage = .ai
                 }
             },
-            PanelNavItem(id: "embedded", icon: "cpu", title: "引擎", isActive: subPage == .embeddedEngine) {
-                detailPeer = nil
-                subPage = .embeddedEngine
-            },
         ]
     }
 
@@ -541,8 +541,6 @@ struct ContentView: View {
             )
         case .ai:
             AIChatPane()
-        case .embeddedEngine:
-            EmbeddedEnginePage(onBack: { subPage = nil })
         case .account:
             AccountNetworkPage(onBack: { subPage = nil })
         }
