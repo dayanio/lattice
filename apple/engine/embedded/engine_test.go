@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,6 +50,26 @@ func testWorkspaceSlug() string {
 	return "mac-demo"
 }
 
+// peerIP is the overlay address of the mesh peer the Dial/Listen tests talk
+// to (default: the mac-demo container node at 10.96.0.2).
+func peerIP() string {
+	if v := os.Getenv("LATTICE_EMBED_PEER_IP"); v != "" {
+		return v
+	}
+	return "10.96.0.2"
+}
+
+// peerExecCmd runs a command on the mesh peer host. Default assumes the peer
+// runs as local container "mac-node-a"; override for remote peers, e.g.
+// LATTICE_EMBED_PEER_EXEC="ssh root@<host> docker exec lattice-cloud-node".
+func peerExecCmd(args ...string) *exec.Cmd {
+	prefix := os.Getenv("LATTICE_EMBED_PEER_EXEC")
+	if prefix == "" {
+		prefix = "docker exec mac-node-a"
+	}
+	return exec.Command("sh", "-c", prefix+" "+strings.Join(args, " "))
+}
+
 // requireIntegration skips the test unless LATTICE_EMBED_INTEGRATION=1 is
 // set, so `go test ./...` stays green on machines without the local
 // mac-demo control plane + docker containers running.
@@ -59,12 +80,21 @@ func requireIntegration(t *testing.T) {
 	}
 }
 
-// adminToken logs into the local control plane as admin/123456 (the
-// standing dev credentials for the mac-demo workspace) and returns a
-// bearer token plus the mac-demo workspace ID.
+// adminToken logs into the control plane as admin (the standing dev
+// credentials are admin/123456; override with LATTICE_EMBED_TEST_USER /
+// LATTICE_EMBED_TEST_PASS for control planes with rotated credentials) and
+// returns a bearer token plus the target workspace ID.
 func adminToken(t *testing.T) (bearer, workspaceID string) {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"username": "admin", "password": "123456"})
+	user := os.Getenv("LATTICE_EMBED_TEST_USER")
+	if user == "" {
+		user = "admin"
+	}
+	pass := os.Getenv("LATTICE_EMBED_TEST_PASS")
+	if pass == "" {
+		pass = "123456"
+	}
+	body, _ := json.Marshal(map[string]string{"username": user, "password": pass})
 	resp, err := http.Post(testControlPlane()+"/api/v1/users/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("login: %v", err)
@@ -324,7 +354,7 @@ func TestEmbeddedEngine_Listen_ReachableFromContainer(t *testing.T) {
 		io.Copy(conn, conn)
 	}()
 
-	out, err := exec.Command("docker", "exec", "mac-node-a", "nc", "-zv", "-w", "3", e.OverlayAddress(), "9500").CombinedOutput()
+	out, err := peerExecCmd("nc", "-zv", "-w", "3", e.OverlayAddress(), "9500").CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker exec nc -zv: %v (%s)", err, out)
 	}
@@ -343,7 +373,7 @@ func TestEmbeddedEngine_Dial_ReachesContainer(t *testing.T) {
 	defer cancel()
 
 	// mac-node-a listens on 10.96.0.2:9501 for the duration of the nc call.
-	listenCmd := exec.Command("docker", "exec", "mac-node-a", "nc", "-l", "-p", "9501")
+	listenCmd := peerExecCmd("nc", "-l", "-p", "9501")
 	if err := listenCmd.Start(); err != nil {
 		t.Fatalf("start docker exec nc -l: %v", err)
 	}
@@ -352,7 +382,7 @@ func TestEmbeddedEngine_Dial_ReachesContainer(t *testing.T) {
 
 	ctx, dialCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer dialCancel()
-	conn, err := e.Dial(ctx, "tcp", "10.96.0.2:9501")
+	conn, err := e.Dial(ctx, "tcp", peerIP()+":9501")
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
