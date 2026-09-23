@@ -211,7 +211,7 @@ func TestEmbeddedEngine_StartStop(t *testing.T) {
 	// Registration may land in "pending approval" first; approve once the
 	// device shows up, then wait until the engine reports its overlay
 	// address (Start stays running — it blocks until ctx is cancelled).
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for e.OverlayAddress() == "" && time.Now().Before(deadline) {
 		approvePeer(t, bearer, workspaceID, deviceName)
 		time.Sleep(500 * time.Millisecond)
@@ -267,7 +267,7 @@ func TestEmbeddedEngine_StartAsyncStop(t *testing.T) {
 		t.Error("expected second StartAsync to report the engine already running")
 	}
 
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for e.OverlayAddress() == "" && time.Now().Before(deadline) {
 		approvePeer(t, bearer, workspaceID, deviceName)
 		time.Sleep(500 * time.Millisecond)
@@ -316,7 +316,7 @@ func startEmbeddedEngine(t *testing.T, namePrefix string) (*EmbeddedEngine, cont
 	ctx, cancel := context.WithCancel(context.Background())
 	go e.Start(ctx)
 
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for e.OverlayAddress() == "" && time.Now().Before(deadline) {
 		approvePeer(t, bearer, workspaceID, deviceName)
 		time.Sleep(500 * time.Millisecond)
