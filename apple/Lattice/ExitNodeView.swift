@@ -24,10 +24,20 @@ struct ExitNodeView: View {
     @State private var selfName: String = UserDefaults.standard.string(forKey: "lattice.nodeName") ?? ""
     @State private var isLoading = true
     @State private var errorText = ""
+    @ObservedObject private var auth = AuthSession.shared
+    @State private var showingLogin = false
 
     var body: some View {
         List {
-            if isLoading {
+            if !auth.isLoggedIn {
+                Section {
+                    Button { showingLogin = true } label: {
+                        Label("登录管理后台", systemImage: "person.crop.circle.badge.plus")
+                    }
+                    Text("出口节点选择需要管理后台登录后使用。")
+                        .font(.caption).foregroundColor(.secondary)
+                }
+            } else if isLoading {
                 HStack {
                     Spacer()
                     ProgressView()
@@ -70,6 +80,9 @@ struct ExitNodeView: View {
         }
         .navigationTitle("出口节点")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingLogin, onDismiss: { Task { await load() } }) {
+            LoginView(onFinished: { showingLogin = false })
+        }
         .task { await load() }
     }
 
@@ -80,6 +93,7 @@ struct ExitNodeView: View {
     }
 
     private func load() async {
+        guard auth.isLoggedIn else { isLoading = false; return }
         isLoading = true
         errorText = ""
         do {

@@ -21,6 +21,8 @@ struct ShareView: View {
     @State private var isLoading = false
     @State private var errorText = ""
     @State private var showingNewSheet = false
+    @ObservedObject private var auth = AuthSession.shared
+    @State private var showingLogin = false
 
     /// 发布网关地址：控制面主机 + 固定网关端口（v1 约定 :8090）。
     private var gatewayBase: String {
@@ -31,7 +33,15 @@ struct ShareView: View {
 
     var body: some View {
         Group {
-            if isLoading && publishes.isEmpty {
+            if !auth.isLoggedIn {
+                ContentUnavailableView {
+                    Label("需要登录", systemImage: "person.crop.circle.badge.plus")
+                } description: {
+                    Text("共享发布需要管理后台登录后使用。")
+                } actions: {
+                    Button("登录管理后台") { showingLogin = true }
+                }
+            } else if isLoading && publishes.isEmpty {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if publishes.isEmpty {
                 ContentUnavailableView(
@@ -46,7 +56,12 @@ struct ShareView: View {
         .navigationTitle("共享发布")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            Button { showingNewSheet = true } label: { Image(systemName: "plus") }
+            if auth.isLoggedIn {
+                Button { showingNewSheet = true } label: { Image(systemName: "plus") }
+            }
+        }
+        .sheet(isPresented: $showingLogin, onDismiss: { Task { await load() } }) {
+            LoginView(onFinished: { showingLogin = false })
         }
         .sheet(isPresented: $showingNewSheet) {
             NewPublishSheet(onDone: { Task { await load() } })
@@ -105,6 +120,7 @@ struct ShareView: View {
     }
 
     private func load() async {
+        guard auth.isLoggedIn else { isLoading = false; return }
         isLoading = true
         errorText = ""
         defer { isLoading = false }
