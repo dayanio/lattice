@@ -433,6 +433,16 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		// netmap apply stays the authority that widens OR narrows.
 		if existing := p.peerManager.GetPeer(peer.AppID); existing != nil && existing.AllowedIPs != "" {
 			peer.AllowedIPs = mergeAllowedIPs(existing.AllowedIPs, peer.AllowedIPs)
+			p.log.Info("onPeerReceived merge", "remoteId", peer.AppID,
+				"existing", existing.AllowedIPs, "merged", peer.AllowedIPs)
+		} else {
+			p.log.Info("onPeerReceived no-merge", "remoteId", peer.AppID,
+				"existingAllowedIPs", func() string {
+					if existing != nil {
+						return existing.AllowedIPs
+					}
+					return "<missing>"
+				}(), "incoming", peer.AllowedIPs)
 		}
 		p.peerManager.AddPeer(peer.AppID, &peer)
 		remotePeer = &peer
