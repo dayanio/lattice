@@ -6,6 +6,24 @@ Versions follow `MAJOR.MINOR.PATCH`. During the 0.x phase (Public Beta), minor v
 
 ---
 
+## v0.3.0 (2026-09-23)
+
+### Apple Embedded SDK (M0–M3)
+- lattice-shim tsnet-style `Server` — user-space Dial/Listen over a gVisor netstack, no kernel TUN device
+- `apple/engine/embedded` — NE-free embedded engine: real enrollment (Start/StartAsync/Stop), overlay Dial/Listen, persisted device identity, gomobile-bindable wrappers (`EmbeddedConn`/`EmbeddedListener`)
+- EmbeddedKit Swift Package + xcframework build script (iOS + macOS slices)
+- Integration tests against a live control plane; multi-round stability verified
+
+### Clients
+- iOS: subnet-route (CIDR) editor, share publishing, realtime peer metrics (RTT chart, rates, counters), LatticeDNS row
+- macOS: window sizing polish, peer detail action rows inline
+- Embedded engine UI withheld from this release (SDK shipped for embedders)
+
+### Docs
+- gVisor embedded networking design: security model, approval flow, egress/ingress, protocol roadmap, platform matrix, Tailscale positioning
+
+---
+
 ## Unreleased (v0.2.0)
 
 ### Agent Sandbox
