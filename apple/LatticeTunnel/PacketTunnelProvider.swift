@@ -87,12 +87,34 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         pendingStart = completionHandler
+        // 出口 DNS 上游：此刻系统 DNS 尚未被隧道接管，/etc/resolv.conf 还是
+        // 物理解析器。显式交给引擎——否则引擎懒解析时隧道 DNS 已生效，上游
+        // 变成 10.96.0.1 自环，表现为"隧道通但一切域名都不解析"。
+        engine?.setUpstreamDNS(Self.physicalDNSServers().joined(separator: ","))
         do {
             try engine?.start()
         } catch {
             pendingStart = nil
             completionHandler(error)
         }
+    }
+
+    /// 出口模式下非 lattice 域名的上游解析器：startTunnel 时（隧道 DNS 设置
+    /// 应用前）从 /etc/resolv.conf 抓物理解析器，跳过隧道自身的 10.96.0.1。
+    /// 抓不到时退回公共 DNS——空列表会让引擎走 resolv.conf 懒解析而自环。
+    private static func physicalDNSServers() -> [String] {
+        guard let data = FileManager.default.contents(atPath: "/etc/resolv.conf"),
+              let text = String(data: data, encoding: .utf8) else {
+            return ["223.5.5.5", "119.29.29.29"]
+        }
+        var out: [String] = []
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.hasPrefix("nameserver "), out.count < 3 else { continue }
+            let ns = trimmed.dropFirst("nameserver ".count).trimmingCharacters(in: .whitespaces)
+            if !ns.isEmpty, ns != "10.96.0.1" { out.append(ns) }
+        }
+        return out.isEmpty ? ["223.5.5.5", "119.29.29.29"] : out
     }
 
     override func stopTunnel(

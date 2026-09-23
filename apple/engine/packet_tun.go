@@ -22,6 +22,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -214,7 +215,6 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 // lattice query answered locally; (nil, false) means "forward to WireGuard
 // unchanged" (non-DNS, non-lattice, or malformed — fail-open).
 func (t *packetTUN) interceptDNS(packet []byte) ([]byte, bool) {
-	fmt.Println("LATTICE-DBG-V2-ENTRY len", len(packet))
 	if len(packet) < 20 || packet[0]>>4 != 4 {
 		return nil, false
 	}
@@ -344,11 +344,27 @@ func swapUDPReply(packet []byte, ihl int, srcIP, dstIP net.IP, srcPort, dstPort 
 	return resp
 }
 
-// forwardDNSAsync 把非 lattice 的 DNS 查询异步转发给本机上游解析器
-// （系统 DNS → Clash 接管），应答按原查询五元组对调送回查询方。
+// forwardDNSAsync 把非 lattice 的 DNS 查询异步转发给本机上游解析器。
+// 出口模式下查询 socket 绑定到隧道接口（IP_BOUND_IF）：DNS 在出口侧解析，
+// 不经本机路由表——本机 DNS 环境再糟（Clash TUN、飞行模式、错误的
+// resolv.conf）也不影响，且不会与隧道路由相互打架。
 func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP net.IP, srcPort, dstPort uint16, servers []string) {
 	go func() {
 		client := &dns.Client{Net: "udp", Timeout: 3 * time.Second}
+		if idx := tunnelIfaceIndex(); idx != 0 {
+			client.Dialer = &net.Dialer{
+				Timeout: 3 * time.Second,
+				Control: func(_, _ string, c syscall.RawConn) error {
+					var cerr error
+					if err := c.Control(func(fd uintptr) {
+						cerr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_BOUND_IF, idx)
+					}); err != nil {
+						return err
+					}
+					return cerr
+				},
+			}
+		}
 		var resp *dns.Msg
 		for _, server := range servers {
 			r, _, err := client.Exchange(query.Copy(), server+":53")
@@ -380,6 +396,31 @@ func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP 
 		default:
 		}
 	}()
+}
+
+// tunnelIfaceIndex 找到携带 overlay 地址（10.96.0.0/24）的 utun 接口索引，
+// 供上游 DNS socket 做 IP_BOUND_IF 绑定；找不到返回 0（不绑定）。
+func tunnelIfaceIndex() int {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return 0
+	}
+	for _, ifc := range ifaces {
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok {
+				continue
+			}
+			if b := ipn.IP.To4(); b != nil && b[0] == 10 && b[1] == 96 {
+				return ifc.Index
+			}
+		}
+	}
+	return 0
 }
 
 // Dropped reports packets discarded due to queue backpressure.

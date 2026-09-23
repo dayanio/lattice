@@ -106,12 +106,13 @@ type Engine struct {
 	tun      *packetTUN
 	privKey  wgtypes.Key
 
-	mu       sync.Mutex
-	node     *latticeagent.Node // set once the node exists; read by Peers
-	running  bool
-	cancel   context.CancelFunc
-	done     chan struct{}
-	stopOnce sync.Once
+	mu                 sync.Mutex
+	node               *latticeagent.Node // set once the node exists; read by Peers
+	running            bool
+	cancel             context.CancelFunc
+	done               chan struct{}
+	stopOnce           sync.Once
+	pendingUpstreamDNS []string // applied to the TUN on creation (see SetUpstreamDNS)
 }
 
 // NewEngine validates the config and returns an engine bound to delegate.
@@ -203,7 +204,31 @@ func (e *Engine) getTUN() *packetTUN {
 func (e *Engine) setTUN(t *packetTUN) {
 	e.mu.Lock()
 	e.tun = t
+	pending := e.pendingUpstreamDNS
 	e.mu.Unlock()
+	if t != nil && len(pending) > 0 {
+		t.SetUpstreamDNS(pending)
+	}
+}
+
+// SetUpstreamDNS pins the resolvers used for non-lattice queries (exit-node
+// DNS takeover). Call before Start: once the tunnel's DNS settings are applied
+// the system resolver list points back at the tunnel's own 10.96.0.1, and the
+// /etc/resolv.conf fallback would self-loop. Safe to call after Start too —
+// it retargets the running TUN. servers is comma-separated (gomobile binds
+// no []string); empty input is ignored, keeping the current resolvers.
+func (e *Engine) SetUpstreamDNS(servers string) {
+	if servers == "" {
+		return
+	}
+	list := strings.Split(servers, ",")
+	e.mu.Lock()
+	e.pendingUpstreamDNS = list
+	t := e.tun
+	e.mu.Unlock()
+	if t != nil {
+		t.SetUpstreamDNS(list)
+	}
 }
 
 // run is the blocking engine loop: enroll, bring up the node, pump packets,
