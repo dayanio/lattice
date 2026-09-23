@@ -147,6 +147,10 @@ type Peer struct {
 	Tier                string            `json:"tier,omitempty"`           // account tier from registration: community or pro
 	ApprovalStatus      string            `json:"approvalStatus,omitempty"` // pending / approved / revoked (ADR-0003)
 	Labels              map[string]string `json:"labels,omitempty"`
+	// AdvertisedRoutes is this peer's own route advertisement (exit-node /
+	// subnet-gateway role). The server fills it on every netmap entry so the
+	// owning agent can install the corresponding forwarding rules.
+	AdvertisedRoutes []string `json:"advertisedRoutes,omitempty"`
 }
 
 // Network is the network information, contains all peers/policies in the network
