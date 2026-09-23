@@ -202,6 +202,8 @@ func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message
 
 func (h *MessageHandler) applyRemotePeers(ctx context.Context, msg *infra.Message) error {
 	for _, peer := range msg.ComputedPeers {
+		h.logger.Info("applyRemotePeers store", "peer", peer.Name,
+			"allowedIPs", peer.AllowedIPs, "version", msg.ConfigVersion)
 		// add peer to peers cached and probe start
 		if err := h.deviceManager.AddPeer(peer); err != nil {
 			return err
