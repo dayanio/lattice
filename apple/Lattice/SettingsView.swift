@@ -88,6 +88,7 @@ struct SettingsView: View {
                     if tunnel.isConfigured {
                         NavigationLink("退出节点") { ExitNodeView() }
                         NavigationLink("广播子网路由") { SubnetRoutesView() }
+                        NavigationLink("投屏接收") { CastReceiverPage() }
                         LabeledContent("本机节点", value: UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "—")
                         LabeledContent("LatticeDNS") {
                             Text(dnsName)

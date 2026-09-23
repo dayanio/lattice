@@ -23,6 +23,8 @@ settings:
 packages:
   LatticeCastKit:
     path: ../../lattice-cast/swift/LatticeCastKit
+  PlayerKit:
+    path: ../../PlayerKit
 
 targets:
   Lattice:
@@ -34,6 +36,12 @@ targets:
       - path: Shared
     dependencies:
       - target: LatticeTunnel
+      - package: LatticeCastKit
+        product: LatticeCastKit
+      - package: PlayerKit
+        product: PlayerKit
+      - package: PlayerKit
+        product: PlayerKitNative
       - framework: Frameworks/iOS/LatticeCore.xcframework
         # The iOS slice is a STATIC library (gomobile) — the engine is linked
         # into LatticeTunnel at build time, so embedding the framework in the

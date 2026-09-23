@@ -11,6 +11,7 @@
 		026547D910763D195877A6EC /* AccountPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 044E0028DE229A1C103E4E31 /* AccountPage.swift */; };
 		02AAD2A81C61D9265999E855 /* PeerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293355084BBA1A64A7029EB5 /* PeerDetailView.swift */; };
 		02B40AB16CC9B1E14459EC72 /* ShareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 794AEC5AF8A1150A34BF3FC2 /* ShareView.swift */; };
+		07D3D9810BE1A443176BD37D /* PlayerKitNative in Frameworks */ = {isa = PBXBuildFile; productRef = 78998FCD3502CC7AA78EE3B1 /* PlayerKitNative */; };
 		0F0BF5749BD804E55AEBC6E5 /* QRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D651343557480E291D4C242C /* QRScanner.swift */; };
 		18620C4034B99B2DE9C87829 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		1CD7F64715CC77020F5143E7 /* FileDropService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0599FEFE7A72AF2465374FD5 /* FileDropService.swift */; };
@@ -49,6 +50,7 @@
 		A8FEB6A60B7D5B4254818DCA /* NetworkPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2FE4A65E58BC0B49C7D2810 /* NetworkPages.swift */; };
 		B3C7A14C0465C3DF7DDEF3E2 /* TunnelCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C02EA36CFB3E23CF62AA772 /* TunnelCore.swift */; };
 		B78ADF07D928BBC23F1C2C5A /* DesignComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05B18389E61765B68DB7CF7D /* DesignComponents.swift */; };
+		BE09D05C199FC5D1A7405800 /* CastReceiverPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82CF41CCEA03694635D4885B /* CastReceiverPage.swift */; };
 		C01C46866068658B9D68BC86 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D60E634E669109A674D97AC /* KeychainStore.swift */; };
 		C389EB4080C7F9FD556938E8 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */; };
 		C57A26F25C649ED6C6B71FF5 /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F838CD20F6150A9C5E1F3402 /* OverviewView.swift */; };
@@ -60,6 +62,8 @@
 		DCC32482F0EFB9182AE419AF /* CastReceiver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A9894E398BA1C95006D8A3 /* CastReceiver.swift */; };
 		E67E73C171D445673D559589 /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
 		E9FBD46E90777EBAFE9E1D3F /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */; };
+		ED6834EB24B72115ABF4D313 /* LatticeCastKit in Frameworks */ = {isa = PBXBuildFile; productRef = 440BD16478784DC80E96F186 /* LatticeCastKit */; };
+		F3595F1A62C4975C6E336E08 /* PlayerKit in Frameworks */ = {isa = PBXBuildFile; productRef = 88C4F4D7E0D8C303115E4863 /* PlayerKit */; };
 		F51064384E99E2A556DF23E5 /* LatticeCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 2F554B0DCF9E6408D40F876E /* LatticeCore.xcframework */; };
 		FAE77EC15F11A48CBAF6B894 /* FavoritesStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E5909331047D47021B484E /* FavoritesStore.swift */; };
 		FCF81D8DC792F9C1BC8000EF /* JoinPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */; };
@@ -141,9 +145,11 @@
 		3F43CAB1731C237E34D7EE9F /* JoinPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JoinPayload.swift; sourceTree = "<group>"; };
 		47DACD8B5C4EBFE6CA33C972 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		4BFD692EC35DC8A9C346CF14 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		58B867FE0CE9ACC9306DBDB4 /* PlayerKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = PlayerKit; path = ../../PlayerKit; sourceTree = SOURCE_ROOT; };
 		61FC588F72E35AC057E58CEE /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
 		794AEC5AF8A1150A34BF3FC2 /* ShareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareView.swift; sourceTree = "<group>"; };
 		8287DD726BF401E4637ECBC7 /* Lattice.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Lattice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		82CF41CCEA03694635D4885B /* CastReceiverPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CastReceiverPage.swift; sourceTree = "<group>"; };
 		8547FD5E834594667D509110 /* PanelComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelComponents.swift; sourceTree = "<group>"; };
 		8D60E634E669109A674D97AC /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		960BD20764F178AA8EE601C2 /* ExitNodeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitNodeView.swift; sourceTree = "<group>"; };
@@ -199,6 +205,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				ED6834EB24B72115ABF4D313 /* LatticeCastKit in Frameworks */,
+				F3595F1A62C4975C6E336E08 /* PlayerKit in Frameworks */,
+				07D3D9810BE1A443176BD37D /* PlayerKitNative in Frameworks */,
 				7B013D63F49DB80AF2D745ED /* LatticeCore.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -210,6 +219,7 @@
 			isa = PBXGroup;
 			children = (
 				9965F1FD49D963D1DF072DEC /* AIChatView.swift */,
+				82CF41CCEA03694635D4885B /* CastReceiverPage.swift */,
 				960BD20764F178AA8EE601C2 /* ExitNodeView.swift */,
 				E3E5909331047D47021B484E /* FavoritesStore.swift */,
 				0B0D1C6C764D61216E93CEEF /* FileDropView.swift */,
@@ -287,6 +297,7 @@
 			isa = PBXGroup;
 			children = (
 				0B144916D9450C4F743FDA7B /* LatticeCastKit */,
+				58B867FE0CE9ACC9306DBDB4 /* PlayerKit */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -342,6 +353,9 @@
 			);
 			name = Lattice;
 			packageProductDependencies = (
+				440BD16478784DC80E96F186 /* LatticeCastKit */,
+				88C4F4D7E0D8C303115E4863 /* PlayerKit */,
+				78998FCD3502CC7AA78EE3B1 /* PlayerKitNative */,
 			);
 			productName = Lattice;
 			productReference = 8287DD726BF401E4637ECBC7 /* Lattice.app */;
@@ -444,6 +458,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				8F6A1A7BF331F7FCFC6E2C5C /* XCLocalSwiftPackageReference "../../lattice-cast/swift/LatticeCastKit" */,
+				821801403123C2AADF493D3B /* XCLocalSwiftPackageReference "../../PlayerKit" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 520522B6FA5A5FF534431C47 /* Products */;
@@ -494,6 +509,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				36F33F96DAFAEE5DC29A051D /* AIChatView.swift in Sources */,
+				BE09D05C199FC5D1A7405800 /* CastReceiverPage.swift in Sources */,
 				CDFBA982655A11C4D8D14262 /* ChatViewModel.swift in Sources */,
 				7C915FE50B4A033CC852AFA0 /* DesignComponents.swift in Sources */,
 				868AE17942ABC08E37BAA2A0 /* ExitNodeView.swift in Sources */,
@@ -920,6 +936,10 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
+		821801403123C2AADF493D3B /* XCLocalSwiftPackageReference "../../PlayerKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../PlayerKit;
+		};
 		8F6A1A7BF331F7FCFC6E2C5C /* XCLocalSwiftPackageReference "../../lattice-cast/swift/LatticeCastKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = "../../lattice-cast/swift/LatticeCastKit";
@@ -927,6 +947,18 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		440BD16478784DC80E96F186 /* LatticeCastKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = LatticeCastKit;
+		};
+		78998FCD3502CC7AA78EE3B1 /* PlayerKitNative */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PlayerKitNative;
+		};
+		88C4F4D7E0D8C303115E4863 /* PlayerKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = PlayerKit;
+		};
 		959A2B123CBDC7EDCDE77B00 /* LatticeCastKit */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = LatticeCastKit;
