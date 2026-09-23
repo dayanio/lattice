@@ -245,11 +245,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice
         settings.dnsSettings = dns
 
-        // IPv6 接管（IPv4-only 出口）：v6 默认路由进隧道由引擎丢弃（v6 黑洞），
-        // 迫使系统回退 IPv4 经出口，防止 v6 直连绕过出口。
-        let ipv6 = NEIPv6Settings(addresses: ["fd00:0:0:10:96::1"], networkPrefixLengths: [64])
-        ipv6.includedRoutes = [NEIPv6Route(destinationAddress: "::", networkPrefixLength: 0)]
-        settings.ipv6Settings = ipv6
+        // IPv6 接管暂不启用：v6 黑洞的前提是 IPv4 0/0 已经把流量接管进隧道
+        // 走出口（否则黑洞只是单纯掐断 v6，没有出口兜底）。上面的 IPv4 0/0
+        // 捕获因出口数据面尚未达到生产稳定性而推迟，这里必须同步推迟，
+        // 否则无论是否选择出口节点，每次连接都会无条件丢弃设备的 v6 流量。
 
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
         // Route the overlay range into the tunnel always. No default route
