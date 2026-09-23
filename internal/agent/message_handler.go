@@ -17,6 +17,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -169,6 +170,18 @@ func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message
 		if err = h.deviceManager.AddPeer(msg.Current); err != nil {
 			h.logger.Error("failed to register local peer", err)
 			return err
+		}
+
+		// Exit-node gateway (phase-2 data plane): a node that advertises
+		// routes opts into forwarding mesh traffic out of its WAN. Idempotent
+		// provisioning; Linux v1 (see exit-node dataplane design doc).
+		if len(msg.Current.AdvertisedRoutes) > 0 {
+			meshCIDR := provision.MeshCIDRFromAddr(*msg.Current.Address)
+			if meshCIDR == "" {
+				h.logger.Warn("exit-node gateway: cannot derive mesh CIDR", "addr", *msg.Current.Address)
+			} else if err := provision.EnsureExitGateway(infra.ExecCommand, h.deviceManager.GetDeviceName(), meshCIDR, runtime.GOOS); err != nil {
+				h.logger.Warn("exit-node gateway provisioning failed", "err", err)
+			}
 		}
 	}
 

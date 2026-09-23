@@ -68,7 +68,7 @@ struct ExitNodeView: View {
                 }
             }
         }
-        .navigationTitle("退出节点")
+        .navigationTitle("出口节点")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
     }

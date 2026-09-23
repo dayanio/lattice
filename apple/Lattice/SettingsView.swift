@@ -86,7 +86,7 @@ struct SettingsView: View {
 
                 Section("网络") {
                     if tunnel.isConfigured {
-                        NavigationLink("退出节点") { ExitNodeView() }
+                        NavigationLink("出口节点") { ExitNodeView() }
                         NavigationLink("广播子网路由") { SubnetRoutesView() }
                         NavigationLink("投屏接收") { CastReceiverPage() }
                         LabeledContent("本机节点", value: UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "—")

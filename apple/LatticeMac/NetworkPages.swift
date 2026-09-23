@@ -55,7 +55,7 @@ struct NetworkSettingsView: View {
             PageHeader(title: PanelPage.networkSettings.title, onBack: onBack)
 
             settingsRow(
-                title: "使用退出节点",
+                title: "使用出口节点",
                 desc: exitNodeDesc,
                 trailing: { Text("›").font(.body).foregroundColor(.secondary) }
             )
@@ -128,7 +128,7 @@ struct NetworkSettingsView: View {
 
     private var exitNodePicker: some View {
         VStack(spacing: 0) {
-            PageHeader(title: "选择退出节点", onBack: { showingPicker = false })
+            PageHeader(title: "选择出口节点", onBack: { showingPicker = false })
             ScrollView {
                 VStack(spacing: 0) {
                     pickerRow(title: "无（关闭）", selected: currentExitName == nil) {

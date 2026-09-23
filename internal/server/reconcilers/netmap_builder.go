@@ -248,15 +248,16 @@ func dbToInfraPeer(p *models.Peer) *infra.Peer {
 	ip := new(string)
 	*ip = p.Address
 	peer := &infra.Peer{
-		Name:           p.Name,
-		AppID:          p.AppID,
-		Address:        ip,
-		Endpoint:       p.Endpoint,
-		Hostname:       p.Hostname,
-		Platform:       p.Platform,
-		NetworkId:      p.WorkspaceID,
-		PublicKey:      p.PublicKey,
-		ApprovalStatus: p.ApprovalStatus,
+		Name:             p.Name,
+		AppID:            p.AppID,
+		Address:          ip,
+		Endpoint:         p.Endpoint,
+		Hostname:         p.Hostname,
+		Platform:         p.Platform,
+		NetworkId:        p.WorkspaceID,
+		PublicKey:        p.PublicKey,
+		ApprovalStatus:   p.ApprovalStatus,
+		AdvertisedRoutes: parseAdvertisedRoutes(p.AdvertisedRoutes),
 	}
 	if p.Labels != "" {
 		_ = json.Unmarshal([]byte(p.Labels), &peer.Labels)
