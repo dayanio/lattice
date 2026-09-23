@@ -39,12 +39,16 @@ targets:
         # into LatticeTunnel at build time, so embedding the framework in the
         # app only leaves an ar-archive that installd refuses to parse.
         embed: false
+    info:
+      path: Lattice/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        NSCameraUsageDescription: "Lattice 需要使用摄像头扫描入网二维码"
+        UILaunchScreen: {}
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.lattice.ios
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_NSCameraUsageDescription: "Lattice 需要使用摄像头扫描入网二维码"
         CODE_SIGN_ENTITLEMENTS: entitlements/Lattice.entitlements
         SWIFT_EMIT_LOC_STRINGS: YES
         CODE_SIGN_STYLE: Automatic
@@ -104,6 +108,8 @@ targets:
     info:
       path: LatticeTunnel/Info.plist
       properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PacketTunnelProvider"
@@ -126,6 +132,8 @@ targets:
     info:
       path: LatticeTunnelMac/Info.plist
       properties:
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).PacketTunnelProvider"
