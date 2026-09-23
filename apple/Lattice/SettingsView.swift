@@ -51,6 +51,13 @@ struct SettingsView: View {
         return "\(key.prefix(8))…\(key.suffix(8))"
     }
 
+    /// 本机节点的 mesh 域名：引擎内置 DNS 以 <节点名>.lattice 应答，可代替 IP 互访。
+    private var dnsName: String {
+        let name = UserDefaults.standard.string(forKey: "lattice.nodeName") ?? ""
+        guard !name.isEmpty else { return "—" }
+        return "\(DeviceName.normalized(name)).lattice"
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -82,6 +89,11 @@ struct SettingsView: View {
                         NavigationLink("退出节点") { ExitNodeView() }
                         NavigationLink("广播子网路由") { SubnetRoutesView() }
                         LabeledContent("本机节点", value: UserDefaults.standard.string(forKey: "lattice.nodeName") ?? "—")
+                        LabeledContent("LatticeDNS") {
+                            Text(dnsName)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
                     } else {
                         Button { showingJoin = true } label: {
                             Label("加入网络", systemImage: "qrcode.viewfinder")
