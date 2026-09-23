@@ -27,7 +27,10 @@ struct NetworkSettingsView: View {
 
     @State private var candidates: [PeerNode] = []
     @State private var selectedProviders: Set<String> = []
-    @State private var selfName: String = UserDefaults.standard.string(forKey: "lattice.nodeName") ?? (Host.current().localizedName ?? "")
+    // API 调用必须用归一化后的注册名（与 netmap/控制面一致），原始电脑名
+    // （含空格）在服务端按名字找不到节点。
+    @State private var selfName: String = DeviceName.normalized(
+        UserDefaults.standard.string(forKey: "lattice.nodeName") ?? (Host.current().localizedName ?? ""))
     @State private var isLoading = true
     @State private var errorText = ""
     @State private var showingPicker = false
