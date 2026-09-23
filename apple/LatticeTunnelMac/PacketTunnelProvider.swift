@@ -259,14 +259,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         var excluded: [NEIPv4Route] = []
 
         for cidr in extraRoutes {
+            // 0/0 全量捕获暂不启用：出口数据面（中继保活/转发验证）尚未
+            // 达到生产稳定性，全量接管会在数据面抖动时切断整机网络。
+            // 网段级出口（具体 CIDR 的 /1 拆分）在数据面验证后再启用。
+            if cidr == "0.0.0.0/0" { continue }
             guard let route = Self.ipv4Route(fromCIDR: cidr) else { continue }
-            if cidr == "0.0.0.0/0" {
-                // 出口模式的 0/0 用 /1 拆分：裸 0.0.0.0/0 在 macOS 上会输给
-                // 物理网卡的默认路由（服务优先级），拆成两条 /1 确定性接管。
-                included.append(NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "128.0.0.0"))
-                included.append(NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "128.0.0.0"))
-                continue
-            }
             included.append(route)
         }
 
