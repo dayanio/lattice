@@ -140,6 +140,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice
         settings.dnsSettings = dns
 
+        // IPv6 接管（IPv4-only 出口）：v6 默认路由进隧道由引擎丢弃（v6 黑洞），
+        // 迫使系统回退 IPv4 经出口，防止 v6 直连绕过出口。
+        let ipv6 = NEIPv6Settings(addresses: ["fd00:lattice:exit::1"], networkPrefixLengths: [64])
+        ipv6.includedRoutes = [NEIPv6Route(destinationAddress: "::", networkPrefixLength: 0)]
+        settings.ipv6Settings = ipv6
+
         let ipv4 = NEIPv4Settings(addresses: [overlayIP], subnetMasks: ["255.255.255.255"])
         var included = [NEIPv4Route(destinationAddress: "10.96.0.0", subnetMask: "255.255.255.0")]
         var excluded: [NEIPv4Route] = []
