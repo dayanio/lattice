@@ -185,6 +185,69 @@ func approvePeer(t *testing.T, bearer, workspaceID, name string) {
 	defer resp.Body.Close()
 }
 
+// selectRoute 给消费端设备选择某个 provider 为出口（route-selection API）。
+func selectRoute(t *testing.T, bearer, workspaceID, consumer, provider string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]interface{}{"provider": provider, "selected": true})
+	req, _ := http.NewRequest(http.MethodPost, testControlPlane()+"/api/v1/peers/"+consumer+"/route-selection", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	req.Header.Set("X-Workspace-Id", workspaceID)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("select route: %v", err)
+	}
+	defer resp.Body.Close()
+}
+
+// TestEmbeddedEngine_ExitRoutePropagation（探针）：给测试设备选择
+// cloud-node-1 为出口，验证服务端 netmap 把 0.0.0.0/0 传播进引擎的
+// peer 管理器（出口数据面的信令链路验收，设计文档 §五）。
+func TestEmbeddedEngine_ExitRoutePropagation(t *testing.T) {
+	requireIntegration(t)
+
+	bearer, workspaceID := adminToken(t)
+	deviceName := fmt.Sprintf("embed-exitroute-%d", time.Now().UnixNano())
+	token := mintEnrollmentToken(t, bearer, workspaceID, deviceName)
+	configJSON, _ := json.Marshal(Config{ServerURL: testControlPlane(), Token: token, Name: deviceName})
+	e, err := New(string(configJSON))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = e.Start(ctx) }()
+
+	selectRoute(t, bearer, workspaceID, deviceName, "cloud-node-1")
+
+	deadline := time.Now().Add(45 * time.Second)
+	found := false
+	for time.Now().Before(deadline) {
+		approvePeer(t, bearer, workspaceID, deviceName)
+		node := e.node
+		if node == nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		for _, peer := range node.GetPeerManager().GetAll() {
+			if peer.Name == "cloud-node-1" && strings.Contains(peer.AllowedIPs, "0.0.0.0/0") {
+				found = true
+				t.Logf("cloud-node-1 AllowedIPs = %s", peer.AllowedIPs)
+				break
+			}
+		}
+		if found {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if !found {
+		t.Fatal("0.0.0.0/0 never propagated into the engine's peer manager")
+	}
+	cancel()
+}
+
 func TestEmbeddedEngine_StartStop(t *testing.T) {
 	requireIntegration(t)
 
