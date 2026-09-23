@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -376,16 +377,16 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		getRemotePeer:  getRemotePeer,
 	})
 
-	// onPeerKnown: called once on first SYN/ACK — RegisterPeer + ApplyRoute
-	// via the configurator, not direct provisioner calls.
+	// onPeerKnown: RegisterPeer runs on every call so a widened AllowedIPs
+	// (e.g. this peer was just selected as an exit-node route provider,
+	// after the connection was already up) reaches WireGuard — the
+	// configurator itself is idempotent per (publicKey, allowedIPs), so a
+	// repeat call with an unchanged value is a cheap no-op. SetEndpoint and
+	// ApplyRoute stay gated to the first SYN/ACK: those don't depend on
+	// AllowedIPs and re-running them on every peer update would fight a
+	// probe that has since moved the endpoint (ICE upgrade, relay fallback).
 	onPeerKnown := func(peer infra.Peer) {
-		if peerKnownDone.Load() {
-			return
-		}
 		if peer.Address == nil {
-			return
-		}
-		if !peerKnownDone.CompareAndSwap(false, true) {
 			return
 		}
 		allowedIPs := peer.AllowedIPs
@@ -394,7 +395,11 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		}
 		if err := configurator.RegisterPeer(remoteId.PublicKey.String(), allowedIPs); err != nil {
 			p.log.Warn("onPeerKnown: RegisterPeer failed", "remoteId", remoteId.AppID, "err", err)
-			peerKnownDone.Store(false)
+			return
+		}
+		p.log.Info("peer known, pre-configured WG entry", "remoteId", remoteId.AppID, "allowedIPs", allowedIPs)
+
+		if !peerKnownDone.CompareAndSwap(false, true) {
 			return
 		}
 		// Static endpoint from the registry: when the operator pins a peer's
@@ -415,11 +420,20 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		if err := configurator.ApplyRoute(*peer.Address, iface); err != nil {
 			p.log.Warn("onPeerKnown: ApplyRoute failed", "remoteId", remoteId.AppID, "err", err)
 		}
-		p.log.Info("peer known, pre-configured WG entry", "remoteId", remoteId.AppID, "allowedIPs", allowedIPs)
 	}
 
 	onPeerReceived := func(peer infra.Peer) {
 		mu.Lock()
+		// The signaling self-description carries at most the remote's own
+		// /32, while the stored entry is seeded from this node's netmap,
+		// whose AllowedIPs are server-computed per consumer (exit-node
+		// 0.0.0.0/0, subnet routes). Overwriting would narrow a widened
+		// entry seconds after connect and the version-guarded netmap
+		// refresh would never restore it; merge instead. The next full
+		// netmap apply stays the authority that widens OR narrows.
+		if existing := p.peerManager.GetPeer(peer.AppID); existing != nil && existing.AllowedIPs != "" {
+			peer.AllowedIPs = mergeAllowedIPs(existing.AllowedIPs, peer.AllowedIPs)
+		}
 		p.peerManager.AddPeer(peer.AppID, &peer)
 		remotePeer = &peer
 		mu.Unlock()
@@ -644,4 +658,35 @@ func (p *ProbeFactory) PeerRTTs() map[string]int64 {
 		out[appID] = probe.RTT().Milliseconds()
 	}
 	return out
+}
+
+// mergeAllowedIPs returns the deduplicated union of two comma-separated
+// AllowedIPs lists, existing entries first. Used when a signaling
+// self-description (which only ever lists the remote's own /32) meets a
+// peer-manager entry that the netmap widened per consumer: the union
+// preserves server-computed routes without letting a stale /32 linger
+// once the next netmap apply narrows the entry wholesale.
+func mergeAllowedIPs(existing, incoming string) string {
+	existing = strings.TrimSpace(existing)
+	incoming = strings.TrimSpace(incoming)
+	if existing == "" {
+		return incoming
+	}
+	if incoming == "" {
+		return existing
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(existing+","+incoming, ",") {
+		cidr := strings.TrimSpace(part)
+		if cidr == "" {
+			continue
+		}
+		if _, dup := seen[cidr]; dup {
+			continue
+		}
+		seen[cidr] = struct{}{}
+		out = append(out, cidr)
+	}
+	return strings.Join(out, ",")
 }

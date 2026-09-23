@@ -150,10 +150,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         var excluded: [NEIPv4Route] = []
 
         for cidr in extraRoutes {
-            // 0/0 全量捕获暂不启用：出口数据面（中继保活/转发验证）尚未
-            // 达到生产稳定性，全量接管会在数据面抖动时切断整机网络。
-            // 网段级出口（具体 CIDR 的 /1 拆分）在数据面验证后再启用。
-            if cidr == "0.0.0.0/0" { continue }
+            // 0.0.0.0/0 用 /1 拆分进 includedRoutes（WireGuard 同款）：
+            // 比物理 default 更具体必胜，且由 NE 托管——隧道关闭时系统
+            // 原子恢复原路由表，不会残留半套路由把设备网络搞挂。
+            if cidr == "0.0.0.0/0" {
+                included.append(NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "128.0.0.0"))
+                included.append(NEIPv4Route(destinationAddress: "128.0.0.0", subnetMask: "128.0.0.0"))
+                continue
+            }
             guard let route = Self.ipv4Route(fromCIDR: cidr) else { continue }
             included.append(route)
         }
