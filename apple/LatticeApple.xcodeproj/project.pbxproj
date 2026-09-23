@@ -119,6 +119,7 @@
 		0781F0ADE50D85AA22927CF6 /* LatticeCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = LatticeCore.xcframework; path = Frameworks/MacOS/LatticeCore.xcframework; sourceTree = "<group>"; };
 		0B144916D9450C4F743FDA7B /* LatticeCastKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = LatticeCastKit; path = "../../lattice-cast/swift/LatticeCastKit"; sourceTree = SOURCE_ROOT; };
 		0B6632B8E3AF0967CD62378C /* ChatWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatWindow.swift; sourceTree = "<group>"; };
+		0D3ADCDD9E845475BD2A27E5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0E825FF21A8E0CC2D39A63C2 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		14A9894E398BA1C95006D8A3 /* CastReceiver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CastReceiver.swift; sourceTree = "<group>"; };
 		165E8316190B31DE582046CA /* CastSink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CastSink.swift; sourceTree = "<group>"; };
@@ -202,6 +203,7 @@
 			children = (
 				960BD20764F178AA8EE601C2 /* ExitNodeView.swift */,
 				E3E5909331047D47021B484E /* FavoritesStore.swift */,
+				0D3ADCDD9E845475BD2A27E5 /* Info.plist */,
 				A2B465D56E6931B309FAEF61 /* JoinView.swift */,
 				A087BE65958F460FCF0CC468 /* LatticeApp.swift */,
 				47DACD8B5C4EBFE6CA33C972 /* LoginView.swift */,
@@ -646,9 +648,7 @@
 					"$(inherited)",
 					"\"Frameworks/iOS\"",
 				);
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Lattice 需要使用摄像头扫描入网二维码";
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_FILE = Lattice/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -690,9 +690,7 @@
 					"$(inherited)",
 					"\"Frameworks/iOS\"",
 				);
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSCameraUsageDescription = "Lattice 需要使用摄像头扫描入网二维码";
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_FILE = Lattice/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
