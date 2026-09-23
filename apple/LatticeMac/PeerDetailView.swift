@@ -96,10 +96,14 @@ struct PeerDetailView: View {
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 16)
                         .padding(.top, 14)
+
+                    // Part of the scroll content, not a pinned footer: this
+                    // is a multi-row action list, not a single button, so it
+                    // should sit right under its "操作" label instead of
+                    // floating at the window's bottom edge on tall windows.
+                    actionRows
                 }
             }
-
-            actionRows
         }
     }
 

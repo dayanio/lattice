@@ -46,11 +46,15 @@ struct LatticeMacApp: App {
 
         Window("Lattice", id: "main") {
             ContentView()
-                .frame(minWidth: 680, minHeight: 480)
+                // Capped, not just minned: this is a compact utility panel
+                // (320pt fixed sidebar, capped-width detail pane), not a
+                // dashboard — letting it stretch across a 27" display just
+                // leaves the right pane floating in dead space.
+                .frame(minWidth: 680, maxWidth: 1100, minHeight: 480, maxHeight: 780)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 760, height: 640)
-        .windowResizability(.contentMinSize)
+        .windowResizability(.contentSize)
     }
 }
 

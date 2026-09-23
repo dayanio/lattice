@@ -212,6 +212,8 @@ struct ContentView: View {
     private var rightPane: some View {
         if let detail = detailPeer {
             peerDetail(detail, wide: true)
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity)
         } else if let page = subPage {
             if page == .ai {
                 AIChatPane()
@@ -222,6 +224,8 @@ struct ContentView: View {
             }
         } else {
             overviewPane
+                .frame(maxWidth: 560, alignment: .leading)
+                .frame(maxWidth: .infinity)
         }
     }
 

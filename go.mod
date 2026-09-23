@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/VictoriaMetrics/metrics v1.42.0
-	github.com/alatticeio/lattice-shim v0.0.0-20260519010257-a3ebe3dbc782
+	github.com/alatticeio/lattice-shim v0.0.0-20260922113931-3d1c0f17c3c6
 	github.com/cilium/ebpf v0.21.0
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/gin-gonic/gin v1.11.0
