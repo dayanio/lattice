@@ -150,7 +150,7 @@ func TestLatticeDNS_NonLatticeForwardedToUpstream(t *testing.T) {
 	}
 
 	select {
-	case resp := <-pt.inbound:
+	case resp := <-pt.outbound:
 		m := new(dns.Msg)
 		if err := m.Unpack(resp[28:]); err != nil {
 			t.Fatalf("unpack: %v", err)
@@ -162,8 +162,8 @@ func TestLatticeDNS_NonLatticeForwardedToUpstream(t *testing.T) {
 		t.Fatal("no SERVFAIL reply from the upstream forwarder")
 	}
 	select {
-	case <-pt.outbound:
-		t.Fatal("non-lattice query must not be answered locally")
+	case <-pt.inbound:
+		t.Fatal("forwarded upstream reply must not be re-injected into WireGuard")
 	default:
 	}
 }
@@ -171,6 +171,7 @@ func TestLatticeDNS_NonLatticeForwardedToUpstream(t *testing.T) {
 func TestLatticeDNS_AAAAEmptyAnswer(t *testing.T) {
 	pt := newPacketTUN("lattice", 1280)
 	defer pt.Close() //nolint:errcheck
+	pt.SetPeerSource(func() []*infra.Peer { return nil })
 	pt.SetDNSResolver(func(string) (string, bool) { return "", false })
 
 	// 构造 AAAA 查询（IPv4-only 出口：AAAA 一律空应答，客户端回退 A/IPv4）。
@@ -199,7 +200,7 @@ func TestLatticeDNS_AAAAEmptyAnswer(t *testing.T) {
 	}
 
 	select {
-	case resp := <-pt.inbound:
+	case resp := <-pt.outbound:
 		rm := new(dns.Msg)
 		if err := rm.Unpack(resp[28:]); err != nil {
 			t.Fatalf("unpack: %v", err)
