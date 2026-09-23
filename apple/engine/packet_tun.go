@@ -375,7 +375,7 @@ func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP 
 		}
 		reply := swapUDPReply(packet, int(packet[0]&0x0f)*4, srcIP, dstIP, srcPort, dstPort, payload)
 		select {
-		case t.inbound <- reply: // 送回 WG 加密 → 查询方
+		case t.outbound <- reply: // 本地合成应答，直接回手机，不经 WG 加密
 		case <-t.closedCh:
 		default:
 		}

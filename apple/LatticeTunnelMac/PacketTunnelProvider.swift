@@ -374,6 +374,8 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
     /// Logged only in outline — this fires every couple of seconds.
     func onPeerStates(_ statesJSON: String!) {
         latestPeerStates = statesJSON ?? "{}"
+        // peer 状态变化（会话建立/失效）会改变 /1 路由的健康前提，重新评估。
+        applyExitRoutesIfNeeded(latestExtraRoutes)
     }
 
     /// Extra CIDRs to route into the tunnel changed — reapply network
