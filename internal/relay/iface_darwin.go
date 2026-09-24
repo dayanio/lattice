@@ -21,43 +21,49 @@ import (
 	"syscall"
 )
 
-// BindToPhysicalIfc pins a TCP socket to the first physical uplink
-// (IP_BOUND_IF); no-op when no uplink is found. See agent/infra for the
-// rationale: inside the macOS NE provider, sockets otherwise route into the
-// provider's own tunnel.
+// BindInterfaceName, when set, pins the relay TCP socket to that interface
+// (IP_BOUND_IF) — same rationale as agent/infra: inside the macOS NE provider
+// the relay socket would otherwise route into the provider's own tunnel.
+var BindInterfaceName string
+
+// BindToPhysicalIfc pins a TCP socket to BindInterfaceName when set, else to
+// the first physical uplink found; no-op when neither resolves.
 func BindToPhysicalIfc(conn *net.TCPConn) {
-	ifaces, err := net.Interfaces()
+	name := BindInterfaceName
+	if name == "" {
+		ifaces, err := net.Interfaces()
+		if err != nil {
+			return
+		}
+		for _, ifc := range ifaces {
+			if ifc.Flags&net.FlagUp == 0 || len(ifc.Name) < 4 || ifc.Name[:4] == "utun" {
+				continue
+			}
+			addrs, err := ifc.Addrs()
+			if err != nil {
+				continue
+			}
+			for _, a := range addrs {
+				if ipn, ok := a.(*net.IPNet); ok {
+					if b := ipn.IP.To4(); b != nil && b[0] != 127 && !(b[0] == 169 && b[1] == 254) && !(b[0] == 10 && b[1] == 96) {
+						name = ifc.Name
+					}
+				}
+			}
+		}
+	}
+	if name == "" {
+		return
+	}
+	ifc, err := net.InterfaceByName(name)
 	if err != nil {
 		return
 	}
-	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 {
-			continue
-		}
-		if len(ifc.Name) >= 4 && ifc.Name[:4] == "utun" {
-			continue
-		}
-		addrs, err := ifc.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			ipn, ok := a.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			b := ipn.IP.To4()
-			if b == nil || b[0] == 169 && b[1] == 254 || b[0] == 127 || b[0] == 10 && b[1] == 96 {
-				continue
-			}
-			ri, err := conn.SyscallConn()
-			if err != nil {
-				return
-			}
-			_ = ri.Control(func(fd uintptr) {
-				_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_BOUND_IF, ifc.Index)
-			})
-			return
-		}
+	ri, err := conn.SyscallConn()
+	if err != nil {
+		return
 	}
+	_ = ri.Control(func(fd uintptr) {
+		_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_BOUND_IF, ifc.Index)
+	})
 }

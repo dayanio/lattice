@@ -100,6 +100,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // ADR-0007 的升级重试是 break-before-make：直连在本机网络环境可用前，
         // 每次重试只会拆掉正常工作的中继会话制造断网窗口，先关掉。
         config.disableUpgrade = true
+        // macOS NE 无自动自豁免：provider 自己的 WG/ICE UDP 与中继 TCP 会被
+        // 截进本隧道。此刻隧道路由尚未生效，route get 拿到的就是物理出口
+        // 网卡，交给引擎做 IP_BOUND_IF 绑定。
+        let bindIface = Self.physicalInterface(for: URL(string: serverURL)?.host ?? "")
+        config.bindInterface = bindIface
+        TunnelLog.write("bind interface: \(bindIface)")
 
         do {
             engine = try LatticeEngineEngine(config.jsonString, delegate: self)
@@ -248,6 +254,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         return out.isEmpty ? ["223.5.5.5", "119.29.29.29"] : out
     }
 
+    /// 隧道设置生效前查询到服务器地址的出口网卡（macOS 的物理 uplink）。
+    private static func physicalInterface(for host: String) -> String {
+        guard !host.isEmpty else { return "en0" }
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/route")
+        p.arguments = ["-n", "get", host]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do { try p.run() } catch { return "en0" }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard let out = String(data: data, encoding: .utf8) else { return "en0" }
+        for line in out.components(separatedBy: "\n") where line.contains("interface:") {
+            let ifc = line.components(separatedBy: ":").last?.trimmingCharacters(in: .whitespaces) ?? ""
+            if ifc.hasPrefix("en") { return ifc }
+        }
+        return "en0"
+    }
+
     private func enableIPForwarding() {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/sbin/sysctl")
@@ -353,6 +379,7 @@ private struct EngineConfig: Encodable {
     let name: String
     let mtu: Int
     var disableUpgrade: Bool = false
+    var bindInterface: String = ""
 
     var jsonString: String {
         if let data = try? JSONEncoder().encode(self),
