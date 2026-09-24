@@ -368,9 +368,14 @@ final class LatticeAPI {
         guard let http = response as? HTTPURLResponse else {
             throw LatticeAPIError.server("无响应")
         }
-        // Management tokens expire (7d TTL); silently re-login once from the
+        // The control plane reports auth failures as HTTP 200 with
+        // {"code":401,...} in the body, not as an HTTP 401 — so check both, or an
+        // expired token is never noticed and the caller decodes an error body.
+        let bodyCode = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["code"] as? Int
+        let unauthorized = http.statusCode == 401 || (http.statusCode == 200 && bodyCode == 401)
+        // Management tokens expire; silently re-login once from the
         // Keychain-stored credentials and retry instead of failing the call.
-        if http.statusCode == 401, allowRelogin {
+        if unauthorized, allowRelogin {
             if await relogin() {
                 return try await request(method: method, path: path, body: body, allowRelogin: false)
             }
@@ -382,6 +387,11 @@ final class LatticeAPI {
         }
         guard http.statusCode == 200 else {
             throw LatticeAPIError.server(Self.serverMessage(from: data, fallback: "HTTP \(http.statusCode)"))
+        }
+        if unauthorized {
+            // Still unauthorized after the re-login attempt: say so instead of
+            // handing the caller an error body to mis-decode.
+            throw LatticeAPIError.server(Self.serverMessage(from: data, fallback: "未登录或登录已过期"))
         }
         return data
     }

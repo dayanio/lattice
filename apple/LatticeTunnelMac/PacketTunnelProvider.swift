@@ -111,7 +111,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // wireguard-apple 同款数据面：socketpair 一端交给 Go 引擎（egress 帧），
         // 一端留在 Swift 侧批量收发。数据面零桥调用（每批一次 syscall）。
         var sockPair: [Int32] = [-1, -1]
-        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockPair) == 0 else {
+        guard socketpair(AF_UNIX, SOCK_DGRAM, 0, &sockPair) == 0 else {
             completionHandler(NSError(domain: "io.lattice.tunnel", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "socketpair failed"]))
             return
@@ -189,8 +189,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// socketpair，这里阻塞读、攒批 writePackets。wireguard-apple 同款。
     private func startDeliveryLoop() {
         let fd = tunnelFD
+        TunnelLog.write("delivery loop start fd=\(fd)")
         guard fd >= 0 else { return }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            TunnelLog.write("delivery loop running")
             func readFully(_ buf: inout [UInt8]) -> Bool {
                 let want = buf.count
                 var got = 0
@@ -205,21 +207,33 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             var batch: [Data] = []
             var protos: [NSNumber] = []
+            var pkt = [UInt8](repeating: 0, count: 4096)
             while true {
-                var lenBuf = [UInt8](repeating: 0, count: 4)
-                guard readFully(&lenBuf) else { return }
-                let n = Int(lenBuf[0]) | (Int(lenBuf[1]) << 8) | (Int(lenBuf[2]) << 16) | (Int(lenBuf[3]) << 24)
-                guard n > 0, n <= 65535 else { continue }
-                var pkt = [UInt8](repeating: 0, count: n)
-                guard readFully(&pkt) else { return }
-                batch.append(Data(pkt))
-                protos.append(NSNumber(value: AF_INET))
-                if batch.count >= 64 {
-                    guard let self else { return }
-                    self.packetFlow.writePackets(batch, withProtocols: protos)
-                    batch.removeAll(keepingCapacity: true)
-                    protos.removeAll(keepingCapacity: true)
+                // 数据报 socketpair：一次 recv = 一个完整包，天然保边界。
+                let n = pkt.withUnsafeMutableBytes { ptr -> Int in
+                    Darwin.recv(fd, ptr.baseAddress, ptr.count, 0)
                 }
+                guard n > 0 else {
+                    TunnelLog.write("delivery loop recv failed n=\(n)")
+                    return
+                }
+                batch.append(Data(pkt[0..<n]))
+                protos.append(NSNumber(value: AF_INET))
+                // 攒批只为摊薄 writePackets 的桥开销：把 socket 里已到达的包非阻塞
+                // 取空（最多 64 个）后立刻交付，队列一空就 flush。绝不能等凑满 64：
+                // 低流量下单个回包（SYN-ACK、ping 应答）会一直卡在 batch 里。
+                while batch.count < 64 {
+                    let m = pkt.withUnsafeMutableBytes { ptr -> Int in
+                        Darwin.recv(fd, ptr.baseAddress, ptr.count, MSG_DONTWAIT)
+                    }
+                    if m <= 0 { break }
+                    batch.append(Data(pkt[0..<m]))
+                    protos.append(NSNumber(value: AF_INET))
+                }
+                guard let self else { return }
+                self.packetFlow.writePackets(batch, withProtocols: protos)
+                batch.removeAll(keepingCapacity: true)
+                protos.removeAll(keepingCapacity: true)
             }
         }
     }
@@ -236,11 +250,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // LatticeDNS: 只有 *.lattice 的 DNS 查询进隧道（由引擎内置应答器解析），
         // 其余域名的解析走系统默认 DNS。
-        let dns = NEDNSSettings(servers: ["10.96.0.1"])
-        if extraRoutes.contains("0.0.0.0/0") {
-            // 出口模式：全部 DNS 经隧道由出口侧解析；同时本机作为提供方
-            // 需要系统级 IP 转发（把网内流量转出公网，root 下可设）。
-            dns.matchDomains = nil
+        let isExit = extraRoutes.contains("0.0.0.0/0")
+        // 出口模式：系统 DNS 直接设成公共解析器，DNS 查询就是发往 8.8.8.8 的
+        // 普通 UDP 53 包，被全局路由收进隧道由出口侧解析，引擎不拦截、不合成应答。
+        // 代价：出口模式期间 *.lattice 短名不可解析（overlay IP 直连不受影响）。
+        let dns = NEDNSSettings(servers: isExit ? ["8.8.8.8", "1.1.1.1"] : ["10.96.0.1"])
+        if isExit {
+            // 出口模式：同时本机作为提供方需要系统级 IP 转发（把网内流量转出公网，
+            // root 下可设）。matchDomains 必须是 [""]：nil 不会让它成为默认解析器
+            // （scutil --dns 仍是物理 DNS 114.114.114.114）。
+            dns.matchDomains = [""]
             enableIPForwarding()
         }
         dns.searchDomains = ["lattice"] // 短名 node-a 自动补全为 node-a.lattice

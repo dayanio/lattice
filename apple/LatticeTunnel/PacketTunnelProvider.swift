@@ -86,7 +86,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         // wireguard-apple 同款数据面：socketpair 一端交给 Go 引擎。
         var sockPair: [Int32] = [-1, -1]
-        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockPair) == 0 else {
+        guard socketpair(AF_UNIX, SOCK_DGRAM, 0, &sockPair) == 0 else {
             completionHandler(NSError(domain: "io.lattice.tunnel", code: 3,
                 userInfo: [NSLocalizedDescriptionKey: "socketpair failed"]))
             return
@@ -183,21 +183,30 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             var batch: [Data] = []
             var protos: [NSNumber] = []
+            var pkt = [UInt8](repeating: 0, count: 4096)
             while true {
-                var lenBuf = [UInt8](repeating: 0, count: 4)
-                guard readFully(&lenBuf) else { return }
-                let n = Int(lenBuf[0]) | (Int(lenBuf[1]) << 8) | (Int(lenBuf[2]) << 16) | (Int(lenBuf[3]) << 24)
-                guard n > 0, n <= 65535 else { continue }
-                var pkt = [UInt8](repeating: 0, count: n)
-                guard readFully(&pkt) else { return }
-                batch.append(Data(pkt))
-                protos.append(NSNumber(value: AF_INET))
-                if batch.count >= 64 {
-                    guard let self else { return }
-                    self.packetFlow.writePackets(batch, withProtocols: protos)
-                    batch.removeAll(keepingCapacity: true)
-                    protos.removeAll(keepingCapacity: true)
+                // 数据报 socketpair：一次 recv = 一个完整包，天然保边界。
+                let n = pkt.withUnsafeMutableBytes { ptr -> Int in
+                    Darwin.recv(fd, ptr.baseAddress, ptr.count, 0)
                 }
+                guard n > 0 else { return }
+                batch.append(Data(pkt[0..<n]))
+                protos.append(NSNumber(value: AF_INET))
+                // 攒批只为摊薄 writePackets 的桥开销：把 socket 里已到达的包非阻塞
+                // 取空（最多 64 个）后立刻交付，队列一空就 flush。绝不能等凑满 64：
+                // 低流量下单个回包（SYN-ACK、ping 应答）会一直卡在 batch 里。
+                while batch.count < 64 {
+                    let m = pkt.withUnsafeMutableBytes { ptr -> Int in
+                        Darwin.recv(fd, ptr.baseAddress, ptr.count, MSG_DONTWAIT)
+                    }
+                    if m <= 0 { break }
+                    batch.append(Data(pkt[0..<m]))
+                    protos.append(NSNumber(value: AF_INET))
+                }
+                guard let self else { return }
+                self.packetFlow.writePackets(batch, withProtocols: protos)
+                batch.removeAll(keepingCapacity: true)
+                protos.removeAll(keepingCapacity: true)
             }
         }
     }
@@ -209,11 +218,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // LatticeDNS: 只有 *.lattice 的 DNS 查询进隧道（由引擎内置应答器解析），
         // 其余域名的解析走系统默认 DNS。10.96.0.1 是 overlay 内的保留未分配
         // 地址，发往它的 DNS 包经 TUN 进入引擎即被 LatticeDNS 拦截应答。
-        let dns = NEDNSSettings(servers: ["10.96.0.1"])
-        if extraRoutes.contains("0.0.0.0/0") {
-            // 出口模式（UI 已选择出口节点）：全部 DNS 经隧道由出口侧解析，
-            // 否则 google.com 等域名会被本机 DNS 污染，出口代理形同虚设。
-            dns.matchDomains = nil
+        let isExit = extraRoutes.contains("0.0.0.0/0")
+        // 出口模式：系统 DNS 直接设成公共解析器，DNS 查询就是发往 8.8.8.8 的
+        // 普通 UDP 53 包，被全局路由（0/1、128/1）收进隧道，由出口侧解析——
+        // 和其他流量走同一条路，引擎不拦截、不合成应答（WireGuard 客户端同款）。
+        // 否则 google.com 等域名会被本机运营商 DNS 污染，出口代理形同虚设。
+        // 代价：出口模式期间 *.lattice 短名不可解析（overlay IP 直连不受影响）。
+        let dns = NEDNSSettings(servers: isExit ? ["8.8.8.8", "1.1.1.1"] : ["10.96.0.1"])
+        if isExit {
+            // matchDomains 必须是 [""]：nil 不会让它成为默认解析器，域名照旧走运营商 DNS。
+            dns.matchDomains = [""]
         } else {
             dns.matchDomains = ["lattice"]
         }

@@ -237,3 +237,38 @@ func TestLatticeDNS_UnknownNameReturnsNXDOMAIN(t *testing.T) {
 		t.Fatalf("rcode = %d, want NXDOMAIN", m.Rcode)
 	}
 }
+
+// The forwarder's own upstream queries are bound to the tunnel, so they come
+// back through the TUN addressed to the real resolver. Only queries sent to the
+// tunnel's DNS address (10.96.0.1) are ours to answer; anything else must travel
+// on as ordinary traffic. Intercepting by port alone re-forwarded every
+// upstream query forever and flooded the tunnel with thousands of packets a
+// second, which killed the extension seconds after a global route came up.
+func TestLatticeDNS_QueryToOtherResolverIsNotIntercepted(t *testing.T) {
+	pt, r := newTestTUN(t)
+	pt.SetPeerSource(func() []*infra.Peer { return nil })
+	pt.SetDNSResolver(func(string) (string, bool) { return "", false })
+	pt.SetUpstreamDNS([]string{"127.0.0.2"})
+
+	pkt := buildDNSQuery(t, "example.com", "10.96.0.8", "8.8.8.8", 54321)
+	if err := pt.WriteInbound(pkt); err != nil {
+		t.Fatalf("WriteInbound: %v", err)
+	}
+
+	select {
+	case got := <-pt.inbound:
+		if string(got) != string(pkt) {
+			t.Fatal("packet to another resolver must reach WireGuard unchanged")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("packet to another resolver was swallowed instead of passed through")
+	}
+
+	// And nothing may have been answered locally or forwarded.
+	if err := r.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	if reply, err := readFramed(r); err == nil {
+		t.Fatalf("unexpected local reply (%d bytes) to a query addressed to another resolver", len(reply))
+	}
+}
