@@ -222,7 +222,7 @@ extension View {
 // MARK: - Connection hero (Tailscale-style)
 
 /// Hero 连接状态，从 NetworkExtension 解耦，便于预览与复用。
-enum ConnectionState { case disconnected, connecting, connected }
+enum ConnectionState { case disconnected, connecting, disconnecting, connected }
 
 /// 大号椭圆连接开关：未连接灰 / 连接中呼吸光环 / 已连接实心绿 + 实时计时。
 struct ConnectionHero: View {
@@ -271,7 +271,7 @@ struct ConnectionHero: View {
             .padding(.horizontal, 20)
 
             if !errorText.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: errorIsNotice ? "info.circle" : "exclamationmark.triangle.fill")
                         .font(.caption)
                     Text(errorText)
@@ -279,9 +279,14 @@ struct ConnectionHero: View {
                         .multilineTextAlignment(.leading)
                 }
                 .foregroundColor(errorIsNotice ? .orange : LatticePalette.blocked)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill((errorIsNotice ? Color.orange : LatticePalette.blocked).opacity(0.12))
+                )
+                .padding(.horizontal, 14)
             }
         }
         .padding(.vertical, 14)
@@ -305,27 +310,27 @@ struct ConnectionHero: View {
                 if isOn {
                     Circle()
                         .stroke(Color.white.opacity(0.55), lineWidth: 2)
-                        .frame(width: 62, height: 62)
+                        .frame(width: 64, height: 64)
                         .scaleEffect(pulse ? 1.18 : 1.0)
                         .opacity(pulse ? 0 : 0.9)
                     Circle().fill(Color.white)
                 } else {
-                    Circle().fill(LatticePalette.accent)
+                    Circle().fill(state == .disconnecting ? Color.secondary.opacity(0.6) : LatticePalette.accent)
                 }
                 Group {
-                    if state == .connecting {
+                    if state == .connecting || state == .disconnecting {
                         ProgressView().tint(isOn ? LatticePalette.online : .white)
                     } else {
                         Image(systemName: "power")
-                            .font(.system(size: 24, weight: .semibold))
+                            .font(.system(size: 25, weight: .semibold))
                             .foregroundColor(isOn ? LatticePalette.online : .white)
                     }
                 }
             }
-            .frame(width: 56, height: 56)
+            .frame(width: 58, height: 58)
         }
         .buttonStyle(.plain)
-        .disabled(state == .connecting)
+        .disabled(state == .connecting || state == .disconnecting)
         .accessibilityLabel(isOn ? "断开连接" : "连接")
         .onAppear {
             guard isOn else { return }
@@ -347,6 +352,7 @@ struct ConnectionHero: View {
         switch state {
         case .connected: return "已连接"
         case .connecting: return "连接中…"
+        case .disconnecting: return "断开中…"
         case .disconnected: return "未连接"
         }
     }
@@ -359,12 +365,14 @@ struct ConnectionHero: View {
     private var subtitle: some View {
         if isOn {
             TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(timerText(at: context.date))
+                Text("已保护 · " + timerText(at: context.date))
                     .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundColor(.white.opacity(0.9))
             }
         } else if state == .connecting {
             Text("正在建立隧道").font(.caption).foregroundColor(.secondary)
+        } else if state == .disconnecting {
+            Text("正在断开隧道").font(.caption).foregroundColor(.secondary)
         } else {
             Text("一键连入 mesh 网络").font(.caption).foregroundColor(.secondary)
         }

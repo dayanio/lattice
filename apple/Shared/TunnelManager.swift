@@ -101,7 +101,8 @@ final class TunnelManager: ObservableObject {
     var connectionState: ConnectionState {
         switch status {
         case .connected: return .connected
-        case .connecting, .disconnecting, .reasserting: return .connecting
+        case .connecting, .reasserting: return .connecting
+        case .disconnecting: return .disconnecting
         default: return .disconnected
         }
     }
