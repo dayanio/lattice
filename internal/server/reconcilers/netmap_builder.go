@@ -74,6 +74,11 @@ type NetmapBuilder struct {
 	// record from here rather than from the registration response. The token
 	// must not appear on any other peer's entry.
 	selfRelayURL string
+	// providerLive, when set, reports whether a route provider (by agent app
+	// id) is currently online. A selected provider that is not live has its
+	// advertised routes withheld from consumers: nobody would forward for
+	// them, and a dead default route blackholes the consumer's whole network.
+	providerLive func(appID string) bool
 }
 
 // NewNetmapBuilder returns a builder over the standalone stores.
@@ -93,6 +98,10 @@ func (b *NetmapBuilder) SetRelayURL(url string) { b.relayURL = url }
 // SetSelfRelayURL sets the relay address (with its auth token) placed on the
 // netmap's Current peer only, never on the entries describing other peers.
 func (b *NetmapBuilder) SetSelfRelayURL(url string) { b.selfRelayURL = url }
+
+// SetProviderLiveness installs the online check that gates route expansion.
+// Unset (nil), every selected provider's routes are expanded as before.
+func (b *NetmapBuilder) SetProviderLiveness(live func(appID string) bool) { b.providerLive = live }
 
 // BuildForAppID resolves the peer by its agent instance id, verifies the
 // registration token, and builds the peer's netmap message.
@@ -162,7 +171,7 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 		if b.relayURL != "" {
 			p.RelayURL = b.relayURL
 		}
-		if _, ok := selected[row.ID]; ok {
+		if _, ok := selected[row.ID]; ok && (b.providerLive == nil || b.providerLive(row.AppID)) {
 			if extra := parseAdvertisedRoutes(row.AdvertisedRoutes); len(extra) > 0 {
 				p.AllowedIPs = strings.Join(append([]string{p.AllowedIPs}, extra...), ",")
 			}
