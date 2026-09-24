@@ -17,11 +17,12 @@ package engine
 import (
 	"bytes"
 	"io"
+	"os"
 	"testing"
 )
 
 func TestPacketTUN_DeviceContract(t *testing.T) {
-	pt := newPacketTUN("lattice", 1280)
+	pt := newPacketTUN("lattice", 1280, 0)
 	defer pt.Close() //nolint:errcheck
 
 	if name, err := pt.Name(); err != nil || name != "lattice" {
@@ -45,7 +46,13 @@ func TestPacketTUN_DeviceContract(t *testing.T) {
 }
 
 func TestPacketTUN_SwiftToWGToSwift(t *testing.T) {
-	pt := newPacketTUN("lattice", 1280)
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer r.Close() //nolint:errcheck
+	defer w.Close() //nolint:errcheck
+	pt := newPacketTUN("lattice", 1280, int(w.Fd()))
 	defer pt.Close() //nolint:errcheck
 
 	// Swift → Go: NE flow packet enters via WriteInbound, WG reads via Read.
@@ -68,23 +75,24 @@ func TestPacketTUN_SwiftToWGToSwift(t *testing.T) {
 		t.Fatal("Read returned corrupted packet")
 	}
 
-	// Go → Swift: WG writes decrypted packets, Swift pops via PopOutbound.
+	// Go → Swift: WG writes decrypted packets, Swift reads framed from the
+	// egress socketpair end.
 	incoming := []byte{0x45, 0x00, 0x00, 0x34}
 	wrote, err := pt.Write([][]byte{incoming}, 0)
 	if err != nil || wrote != 1 {
 		t.Fatalf("Write = %d, %v", wrote, err)
 	}
-	got, ok := pt.PopOutbound()
-	if !ok {
-		t.Fatal("PopOutbound should return the written packet")
+	got, err := readFramed(r)
+	if err != nil {
+		t.Fatalf("readFramed: %v", err)
 	}
 	if !bytes.Equal(got, incoming) {
-		t.Fatal("PopOutbound returned corrupted packet")
+		t.Fatal("readFramed returned corrupted packet")
 	}
 }
 
 func TestPacketTUN_CloseUnblocks(t *testing.T) {
-	pt := newPacketTUN("lattice", 1280)
+	pt := newPacketTUN("lattice", 1280, 0)
 	go func() {
 		_ = pt.Close()
 	}()
@@ -92,16 +100,14 @@ func TestPacketTUN_CloseUnblocks(t *testing.T) {
 	if err == nil {
 		t.Fatal("Read after Close should fail")
 	}
-	if _, ok := pt.PopOutbound(); ok {
-		t.Fatal("PopOutbound after Close should not return packets")
-	}
 	if err := pt.WriteInbound([]byte{1}); err == nil {
 		t.Fatal("WriteInbound after Close should fail")
 	}
 }
 
 func TestPacketTUN_DropCounting(t *testing.T) {
-	pt := newPacketTUN("lattice", 1280)
+	// No egress fd: every decrypted packet must drop (never block WG).
+	pt := newPacketTUN("lattice", 1280, 0)
 	defer pt.Close() //nolint:errcheck
 
 	// Fill the outbound queue beyond capacity; excess must drop, not block.

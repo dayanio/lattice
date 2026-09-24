@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -27,6 +28,7 @@ import (
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/miekg/dns"
+	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -38,10 +40,12 @@ import (
 //	Read  ← inbound  ← Swift: IP packets the system sent into the tunnel
 //	Write → outbound → Swift: decrypted packets to hand back to the system
 type packetTUN struct {
-	name     string
-	mtu      int
-	inbound  chan []byte // Swift → WG (to be encrypted)
-	outbound chan []byte // WG → Swift (decrypted)
+	name    string
+	mtu     int
+	inbound chan []byte // Swift → WG (to be encrypted): fed by SendPacketBatch
+	fd      *os.File    // WG → Swift (decrypted): 4-byte little-endian length
+	// framed writes; the Swift side batch-reads and writePackets — the
+	// wireguard-apple socketpair pattern (no per-packet bridge crossings).
 	events   chan tun.Event
 	closedCh chan struct{}
 	mu       sync.Mutex
@@ -49,6 +53,8 @@ type packetTUN struct {
 
 	// dropped counts packets discarded because a queue was full.
 	dropped uint64
+	// fdErr remembers the first egress write failure for diagnostics.
+	fdErr error
 
 	// Custom name answers for server-pushed records — not used yet; the
 	// interceptor gates on peerSource (see WriteInbound).
@@ -109,7 +115,7 @@ func (t *packetTUN) dnsServers() []string {
 	return out
 }
 
-func newPacketTUN(name string, mtu int) *packetTUN {
+func newPacketTUN(name string, mtu int, egressFD int) *packetTUN {
 	if mtu <= 0 {
 		mtu = 1280
 	}
@@ -117,12 +123,72 @@ func newPacketTUN(name string, mtu int) *packetTUN {
 		name:     name,
 		mtu:      mtu,
 		inbound:  make(chan []byte, 512),
-		outbound: make(chan []byte, 512),
 		events:   make(chan tun.Event, 4),
 		closedCh: make(chan struct{}),
 	}
+	if egressFD > 0 {
+		f := os.NewFile(uintptr(egressFD), "ne-tun-egress")
+		// Non-blocking: when the Swift reader stalls, writes must DROP (wireguard
+		// semantics), never block the WG routines — a blocking write here froze
+		// the whole engine when the NE completion handler didn't fire.
+		if f != nil {
+			if rc, ferr := f.SyscallConn(); ferr == nil {
+				_ = rc.Control(func(fd uintptr) {
+					_ = unix.SetNonblock(int(fd), true) //nolint:errcheck
+				})
+			}
+		}
+		t.fd = f
+	}
 	t.events <- tun.EventUp
 	return t
+}
+
+// writeFramed hands one decrypted packet to the Swift side over the egress
+// file (4-byte little-endian length + packet, wireguard-apple framing).
+func (t *packetTUN) writeFramed(pkt []byte) error {
+	if t.fd == nil {
+		t.mu.Lock()
+		t.dropped++
+		t.mu.Unlock()
+		return nil
+	}
+	var hdr [4]byte
+	binary.LittleEndian.PutUint32(hdr[:], uint32(len(pkt)))
+	var err error
+	if _, err = t.fd.Write(hdr[:]); err != nil {
+		t.mu.Lock()
+		if t.fdErr == nil {
+			t.fdErr = err
+			fmt.Println("LATTICE-EGRESS-WRITE-FAIL hdr:", err)
+		}
+		t.mu.Unlock()
+		return err
+	}
+	_, err = t.fd.Write(pkt)
+	if err != nil {
+		t.mu.Lock()
+		if t.fdErr == nil {
+			t.fdErr = err
+			fmt.Println("LATTICE-EGRESS-WRITE-FAIL payload:", err)
+		}
+		t.mu.Unlock()
+	}
+	return err
+}
+
+// readFramed is the test-side inverse of writeFramed.
+func readFramed(f *os.File) ([]byte, error) {
+	var hdr [4]byte
+	if _, err := io.ReadFull(f, hdr[:]); err != nil {
+		return nil, err
+	}
+	n := binary.LittleEndian.Uint32(hdr[:])
+	pkt := make([]byte, n)
+	if _, err := io.ReadFull(f, pkt); err != nil {
+		return nil, err
+	}
+	return pkt, nil
 }
 
 // Read implements tun.Device: blocks until one packet is available from Swift.
@@ -154,12 +220,7 @@ func (t *packetTUN) Write(bufs [][]byte, offset int) (int, error) {
 		}
 		pkt := make([]byte, len(raw))
 		copy(pkt, raw)
-		copy(pkt, buf[offset:])
-		select {
-		case t.outbound <- pkt:
-		case <-t.closedCh:
-			return 0, errors.New("packet TUN closed")
-		default:
+		if err := t.writeFramed(pkt); err != nil {
 			t.mu.Lock()
 			t.dropped++
 			t.mu.Unlock()
@@ -182,11 +243,7 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 	if t.peerSource != nil {
 		if resp, handled := t.interceptDNS(packet); handled {
 			if resp != nil {
-				select {
-				case t.outbound <- resp:
-				case <-t.closedCh:
-					return errors.New("packet TUN closed")
-				default:
+				if err := t.writeFramed(resp); err != nil {
 					t.mu.Lock()
 					t.dropped++
 					t.mu.Unlock()
@@ -395,11 +452,7 @@ func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP 
 			return
 		}
 		reply := swapUDPReply(packet, int(packet[0]&0x0f)*4, srcIP, dstIP, srcPort, dstPort, payload)
-		select {
-		case t.outbound <- reply: // 本地合成应答，直接回手机，不经 WG 加密
-		case <-t.closedCh:
-		default:
-		}
+		_ = t.writeFramed(reply) // 本地合成应答，直接回手机，不经 WG 加密
 	}()
 }
 
@@ -433,18 +486,6 @@ func (t *packetTUN) Dropped() uint64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.dropped
-}
-
-// PopOutbound removes one decrypted packet for Swift delivery, blocking
-// while the queue is empty (zero CPU wakeups when idle). ok is false when
-// the TUN is closed.
-func (t *packetTUN) PopOutbound() ([]byte, bool) {
-	select {
-	case pkt := <-t.outbound:
-		return pkt, true
-	case <-t.closedCh:
-		return nil, false
-	}
 }
 
 // File implements tun.Device: no OS file descriptor backs this TUN, so the

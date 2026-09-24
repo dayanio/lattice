@@ -38,6 +38,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// applied as NEIPv4Routes once the tunnel is up. Empty until the first
     /// OnRoutesChanged call.
     private var latestExtraRoutes: [String] = []
+    private var tunnelFD: Int32 = -1
     private var currentOverlayIP = "10.96.0.1"
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
@@ -83,6 +84,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         // 每次重试只会拆掉正常工作的中继会话制造断网窗口，先关掉。
         config.disableUpgrade = true
 
+        // wireguard-apple 同款数据面：socketpair 一端交给 Go 引擎。
+        var sockPair: [Int32] = [-1, -1]
+        guard socketpair(AF_UNIX, SOCK_STREAM, 0, &sockPair) == 0 else {
+            completionHandler(NSError(domain: "io.lattice.tunnel", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "socketpair failed"]))
+            return
+        }
+        tunnelFD = sockPair[0]
+        config.tunFD = Int(sockPair[1])
+
         do {
             engine = try LatticeEngineEngine(config.jsonString, delegate: self)
         } catch {
@@ -96,6 +107,8 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         engine?.setUpstreamDNS(Self.physicalDNSServers().joined(separator: ","))
         do {
             try engine?.start()
+            startDeliveryLoop()
+            pumpPackets()
         } catch {
             pendingStart = nil
             completionHandler(error)
@@ -139,11 +152,53 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         pumping = true
         packetFlow.readPackets { [weak self] packets, _ in
             guard let self, self.pumping else { return }
-            for packet in packets {
-                try? self.engine?.sendPacket(packet)
+            var blob = Data()
+            blob.reserveCapacity(packets.reduce(0) { $0 + $1.count + 4 })
+            for pkt in packets {
+                var len = UInt32(pkt.count).littleEndian
+                withUnsafeBytes(of: &len) { blob.append(contentsOf: $0) }
+                blob.append(pkt)
             }
+            try? self.engine?.sendPacketBatch(blob)
             self.pumping = false
             self.pumpPackets()
+        }
+    }
+
+    private func startDeliveryLoop() {
+        let fd = tunnelFD
+        guard fd >= 0 else { return }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            func readFully(_ buf: inout [UInt8]) -> Bool {
+                let want = buf.count
+                var got = 0
+                while got < want {
+                    let n = buf.withUnsafeMutableBytes { ptr -> Int in
+                        Darwin.read(fd, ptr.baseAddress!.advanced(by: got), want - got)
+                    }
+                    if n <= 0 { return false }
+                    got += n
+                }
+                return true
+            }
+            var batch: [Data] = []
+            var protos: [NSNumber] = []
+            while true {
+                var lenBuf = [UInt8](repeating: 0, count: 4)
+                guard readFully(&lenBuf) else { return }
+                let n = Int(lenBuf[0]) | (Int(lenBuf[1]) << 8) | (Int(lenBuf[2]) << 16) | (Int(lenBuf[3]) << 24)
+                guard n > 0, n <= 65535 else { continue }
+                var pkt = [UInt8](repeating: 0, count: n)
+                guard readFully(&pkt) else { return }
+                batch.append(Data(pkt))
+                protos.append(NSNumber(value: AF_INET))
+                if batch.count >= 64 {
+                    guard let self else { return }
+                    self.packetFlow.writePackets(batch, withProtocols: protos)
+                    batch.removeAll(keepingCapacity: true)
+                    protos.removeAll(keepingCapacity: true)
+                }
+            }
         }
     }
 
@@ -219,6 +274,24 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
         packetFlow.writePackets([packet], withProtocols: [NSNumber(value: AF_INET)])
     }
 
+    /// 引擎批量投递：blob = 若干 [2 字节大端长度][IPv4 包]。一次桥调用把整批
+    /// 包写入 NE flow（writePackets 接受数组），桥开销摊薄 ~30 倍。
+    func deliverBatch(_ blob: Data!) throws {
+        guard let bytes = blob.map({ [UInt8]($0) }), !bytes.isEmpty else { return }
+        var pkts: [Data] = []
+        pkts.reserveCapacity(32)
+        var off = 0
+        while off + 2 <= bytes.count {
+            let n = (Int(bytes[off]) << 8) | Int(bytes[off + 1])
+            guard off + 2 + n <= bytes.count else { break }
+            pkts.append(Data(bytes[off + 2..<(off + 2 + n)]))
+            off += 2 + n
+        }
+        guard !pkts.isEmpty else { return }
+        let protocols = Array(repeating: NSNumber(value: AF_INET), count: pkts.count)
+        packetFlow.writePackets(pkts, withProtocols: protocols)
+    }
+
     func onEvent(_ event: String!) {
         NSLog("[Lattice] engine event: \(event ?? "")")
         if event == "awaiting-approval" {
@@ -260,9 +333,7 @@ extension PacketTunnelProvider: LatticeEngineEngineDelegateProtocol {
             guard let self else { return }
             self.pendingStart?(error)
             self.pendingStart = nil
-            if error == nil {
-                self.pumpPackets()
-            }
+            let _ = error
         }
     }
 
@@ -284,6 +355,7 @@ private struct EngineConfig: Encodable {
     let token: String
     let name: String
     let mtu: Int
+    var tunFD: Int = 0
     var disableUpgrade: Bool = false
 
     var jsonString: String {
