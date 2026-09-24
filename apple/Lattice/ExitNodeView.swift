@@ -21,7 +21,10 @@ import SwiftUI
 struct ExitNodeView: View {
     @State private var candidates: [PeerNode] = []
     @State private var selectedProviders: Set<String> = []
+    /// 本设备在注册表中的名字。注意不能直接用本地设备名：服务端注册时可能
+    /// 规范化过（空格→连字符），按未规范化的名字取消选择会静默失败。
     @State private var selfName: String = UserDefaults.standard.string(forKey: "lattice.nodeName") ?? ""
+    @ObservedObject private var tunnel = TunnelManager.shared
     @State private var isLoading = true
     @State private var errorText = ""
     @ObservedObject private var auth = AuthSession.shared
@@ -137,6 +140,11 @@ struct ExitNodeView: View {
         do {
             let peers = try await LatticeAPI.shared.listPeers()
             candidates = peers.filter { !$0.advertisedRoutes.isEmpty }
+            // 用 overlay 地址找到本设备在注册表里的名字（规范化后的）。
+            let overlayIP = tunnel.localOverlayIP
+            if !overlayIP.isEmpty, let own = peers.first(where: { $0.address == overlayIP }) {
+                selfName = own.name
+            }
             let selected = try await LatticeAPI.shared.listRouteSelections(selfName)
             selectedProviders = Set(selected)
         } catch {
