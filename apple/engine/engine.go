@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/alatticeio/lattice/internal/relay"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,10 @@ type engineConfig struct {
 	// DisableUpgrade stops the periodic relay→direct probe restart (ADR-0007
 	// break-before-make); set while the direct path is unusable on this device.
 	DisableUpgrade bool `json:"disableUpgrade"`
+	// BindInterface pins the engine's own WG/ICE UDP and relay TCP sockets to
+	// this physical interface (macOS NE self-capture workaround). Empty = no
+	// binding.
+	BindInterface string `json:"bindInterface"`
 }
 
 // Engine is the long-running mesh engine. Create one per tunnel session via
@@ -311,6 +316,10 @@ func (e *Engine) run(ctx context.Context) {
 
 	if e.cfg.DisableUpgrade {
 		transport.UpgradeDisabled = true
+	}
+	if e.cfg.BindInterface != "" {
+		infra.BindInterfaceName = e.cfg.BindInterface
+		relay.BindInterfaceName = e.cfg.BindInterface
 	}
 
 	node, err := latticeagent.NewNode(ctx, &latticeagent.NodeConfig{

@@ -164,6 +164,7 @@ func (c *TCPClient) Connect() error {
 	if tcp, ok := conn.(*net.TCPConn); ok {
 		_ = tcp.SetWriteBuffer(4 << 20)
 		_ = tcp.SetReadBuffer(4 << 20)
+		BindToPhysicalIfc(tcp)
 	}
 
 	req, err := http.NewRequest("GET", "/ferry/v1/upgrade", nil)
