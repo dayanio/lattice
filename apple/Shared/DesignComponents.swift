@@ -233,6 +233,8 @@ struct ConnectionHero: View {
     var errorText: String = ""
     /// The text is a notice (e.g. waiting for approval), not a failure.
     var errorIsNotice: Bool = false
+    /// Mesh 内在线节点数（不含本机）；>0 时在信息行显示角标。
+    var onlineCount: Int = 0
     let onToggle: () -> Void
 
     private var isOn: Bool { state == .connected }
@@ -260,6 +262,17 @@ struct ConnectionHero: View {
                         text: aggregateText,
                         color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
                     )
+                }
+                if onlineCount > 0 {
+                    HStack(spacing: 4) {
+                        Circle().fill(LatticePalette.online).frame(width: 5, height: 5)
+                        Text("\(onlineCount) 台在线")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.primary.opacity(0.05)))
                 }
                 if !selfAddress.isEmpty {
                     Text("本机 \(selfAddress)")

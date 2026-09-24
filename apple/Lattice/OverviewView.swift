@@ -61,6 +61,7 @@ struct OverviewView: View {
                         selfAddress: localPeer?.address ?? tunnel.localOverlayIP,
                         errorText: tunnel.lastFailure?.display ?? "",
                         errorIsNotice: tunnel.lastFailure?.isNotice ?? false,
+                        onlineCount: peers.filter { $0.online }.count,
                         onToggle: { tunnel.connectedBinding.wrappedValue.toggle() }
                     )
 
