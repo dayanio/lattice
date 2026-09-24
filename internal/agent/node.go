@@ -839,6 +839,22 @@ func (c *Node) RemoveAllPeers() {
 	c.provisioner.RemoveAllPeers()
 }
 
+// PrunePeersExcept removes peers that are no longer part of the current
+// netmap: manager entry, WireGuard peer and the per-peer probe all go
+// together, so departed/re-enrolled devices stop being probed forever.
+func (c *Node) PrunePeersExcept(keep map[string]struct{}) {
+	for _, p := range c.GetPeerManager().GetAll() {
+		if _, ok := keep[p.AppID]; ok {
+			continue
+		}
+		c.logger.Info("pruning stale peer (absent from current netmap)", "peer", p.AppID)
+		if err := c.RemovePeer(p); err != nil {
+			c.logger.Warn("prune: remove peer failed", "peer", p.AppID, "err", err)
+		}
+		c.manager.peerManager.RemovePeer(p.AppID)
+	}
+}
+
 func (c *Node) GetDeviceName() string {
 	return c.Name
 }

@@ -174,6 +174,11 @@ func (c *TCPClient) Connect() error {
 	}
 	req.Header.Set("Upgrade", "relay")
 	req.Header.Set("Connection", "Upgrade")
+	// serverURL is host:port without a scheme, so NewRequest leaves Host
+	// empty — and Go's http server rejects HTTP/1.1 without a Host header
+	// ("400 Bad Request: missing required Host header"), which made every
+	// relay upgrade fail. Echo the server address as Host.
+	req.Host = c.serverURL
 
 	if err = req.Write(conn); err != nil {
 		conn.Close() //nolint:errcheck

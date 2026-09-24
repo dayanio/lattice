@@ -201,6 +201,19 @@ func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message
 }
 
 func (h *MessageHandler) applyRemotePeers(ctx context.Context, msg *infra.Message) error {
+	// Prune peers that dropped out of the netmap (re-enrolled devices under a
+	// new name, removed peers) before re-adding the current set — stale
+	// entries otherwise linger forever, probing dead endpoints and showing
+	// up as ghost peers in the UI.
+	keep := make(map[string]struct{}, len(msg.ComputedPeers)+1)
+	if msg.Current != nil && msg.Current.AppID != "" {
+		keep[msg.Current.AppID] = struct{}{} // self is never in ComputedPeers
+	}
+	for _, peer := range msg.ComputedPeers {
+		keep[peer.AppID] = struct{}{}
+	}
+	h.deviceManager.PrunePeersExcept(keep)
+
 	for _, peer := range msg.ComputedPeers {
 		h.logger.Info("applyRemotePeers store", "peer", peer.Name,
 			"allowedIPs", peer.AllowedIPs, "version", msg.ConfigVersion)
