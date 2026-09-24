@@ -24,6 +24,7 @@ package engine
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,8 +68,8 @@ const (
 // EngineDelegate is implemented on the Swift side; gomobile generates the
 // corresponding protocol for NEPacketTunnelProvider to conform to.
 type EngineDelegate interface {
-	// DeliverPacket hands one decrypted inbound packet to the NE flow.
-	DeliverPacket(packet []byte) error
+	// Egress goes over the socketpair fd (tunFD): no per-packet bridge calls.
+
 	// OnEvent reports engine state transitions ("connecting", "connected",
 	// "disconnected", or "error: <message>").
 	OnEvent(event string)
@@ -101,6 +102,10 @@ type engineConfig struct {
 	// DisableUpgrade stops the periodic relay→direct probe restart (ADR-0007
 	// break-before-make); set while the direct path is unusable on this device.
 	DisableUpgrade bool `json:"disableUpgrade"`
+	// TunFD is the Swift-side socketpair end handed to the engine for
+	// decrypted-packet egress (4-byte LE framed; wireguard-apple pattern).
+	// 0 = no egress fd (tests).
+	TunFD int `json:"tunFD"`
 	// BindInterface pins the engine's own WG/ICE UDP and relay TCP sockets to
 	// this physical interface (macOS NE self-capture workaround). Empty = no
 	// binding.
@@ -123,6 +128,7 @@ type Engine struct {
 	done               chan struct{}
 	stopOnce           sync.Once
 	pendingUpstreamDNS []string // applied to the TUN on creation (see SetUpstreamDNS)
+	batchStats         struct{ calls, packets int }
 }
 
 // NewEngine validates the config and returns an engine bound to delegate.
@@ -170,6 +176,41 @@ func (e *Engine) Start() error {
 		defer e.emit(EventDisconnected)
 		e.run(ctx)
 	}()
+	return nil
+}
+
+// SendPacketBatch injects a burst of captured packets in ONE bridge
+// crossing: blob is a sequence of 4-byte little-endian length-prefixed IPv4
+// packets (Swift readPackets already batches; mirror that on the Go side).
+func (e *Engine) SendPacketBatch(blob []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("sendPacketBatch panicked: %v", r)
+		}
+	}()
+	packets := 0
+	off := 0
+	for off+4 <= len(blob) {
+		n := int(binary.LittleEndian.Uint32(blob[off : off+4]))
+		off += 4
+		if n <= 0 || off+n > len(blob) {
+			agentlog.GetLogger("lattice-ne").Warn("sendPacketBatch: bad frame", "n", n, "off", off, "blob", len(blob))
+			break
+		}
+		if err := e.SendPacket(blob[off : off+n]); err != nil {
+			return err
+		}
+		packets++
+		off += n
+	}
+	e.mu.Lock()
+	e.batchStats.packets += packets
+	e.batchStats.calls++
+	total, calls := e.batchStats.packets, e.batchStats.calls
+	e.mu.Unlock()
+	if calls%50 == 1 {
+		agentlog.GetLogger("lattice-ne").Info("sendPacketBatch", "calls", calls, "packets", total)
+	}
 	return nil
 }
 
@@ -288,7 +329,7 @@ func (e *Engine) run(ctx context.Context) {
 		}
 	}
 
-	t := newPacketTUN("lattice", e.cfg.MTU)
+	t := newPacketTUN("lattice", e.cfg.MTU, e.cfg.TunFD)
 	e.setTUN(t)
 
 	// Diagnostic: dup2 fds 1+2 into a sandbox-writable file — slog captures
@@ -364,35 +405,6 @@ func (e *Engine) run(ctx context.Context) {
 	go e.pollPeerStates(ctx, node)
 	go e.pollRoutes(ctx, node)
 
-	// Deliver decrypted packets to the Swift side. PopOutbound blocks on
-	// the channel, so this goroutine sleeps at the OS level when idle —
-	// a polling variant here wakes the CPU ~1000x/s and NE kills the
-	// process for exceeding the CPU-wake limit within minutes.
-	// DeliverPacket crosses into Swift synchronously; that call has been
-	// observed to wedge (flow re-scoped mid-write), which would otherwise
-	// stall the whole decrypt pipeline forever — outbound pinned at capacity,
-	// every return packet dropped, liveness still green. Bound each call and
-	// keep draining: a wedged call leaks one goroutine instead of the tunnel.
-	go func() {
-		for {
-			pkt, ok := t.PopOutbound()
-			if !ok {
-				return
-			}
-			done := make(chan error, 1)
-			go func() { done <- e.delegate.DeliverPacket(pkt) }()
-			select {
-			case err := <-done:
-				if err != nil {
-					e.emitError(fmt.Errorf("deliver packet to NE flow: %w", err))
-					return
-				}
-			case <-time.After(3 * time.Second):
-				e.emitError(fmt.Errorf("deliver packet to NE flow: timed out, dropping packet"))
-			}
-		}
-	}()
-
 	if blob, err := json.Marshal(computeExtraRoutes(node.GetPeerManager().GetAll())); err == nil {
 		e.emitRoutesChanged(string(blob))
 	}
@@ -413,8 +425,7 @@ func (e *Engine) run(ctx context.Context) {
 				if tun == nil {
 					continue
 				}
-				log.Info("tun stats", "inbound", len(tun.inbound), "outbound",
-					len(tun.outbound), "dropped", tun.Dropped())
+				log.Info("tun stats", "inbound", len(tun.inbound), "dropped", tun.Dropped())
 			}
 		}
 	}()
