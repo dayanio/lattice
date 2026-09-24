@@ -48,33 +48,71 @@ struct ExitNodeView: View {
                     Button {
                         Task { await selectExitNode(nil) }
                     } label: {
-                        HStack {
-                            Text("无（关闭）")
+                        HStack(spacing: 12) {
+                            ZStack {
+                                Circle()
+                                    .fill(selectedExitNode == nil ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "wifi.slash")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(selectedExitNode == nil ? .accentColor : .secondary)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("直连（不走出口）").font(.body)
+                                Text("流量从本机网络直接出站").font(.caption).foregroundColor(.secondary)
+                            }
                             Spacer()
                             if selectedExitNode == nil {
-                                Image(systemName: "checkmark").foregroundColor(.accentColor)
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.accentColor)
                             }
                         }
+                        .padding(.vertical, 2)
                     }
-                    .foregroundColor(.primary)
+                } header: {
+                    Text("出站方式")
+                }
 
+                Section {
                     ForEach(candidates.filter { $0.advertisedRoutes.contains("0.0.0.0/0") }) { peer in
                         Button {
                             Task { await selectExitNode(peer.name) }
                         } label: {
-                            HStack {
-                                Text(peer.shownName)
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    Circle()
+                                        .fill(selectedExitNode == peer.name ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.06))
+                                        .frame(width: 36, height: 36)
+                                    Image(systemName: "server.rack")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundColor(selectedExitNode == peer.name ? .accentColor : .secondary)
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(peer.shownName).font(.body)
+                                    Text("全部流量经此节点出站")
+                                        .font(.caption).foregroundColor(.secondary)
+                                }
                                 Spacer()
                                 if selectedExitNode == peer.name {
-                                    Image(systemName: "checkmark").foregroundColor(.accentColor)
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundColor(.accentColor)
                                 }
                             }
+                            .padding(.vertical, 2)
                         }
-                        .foregroundColor(.primary)
                     }
+                } header: {
+                    Text("出口节点")
+                } footer: {
+                    Text("选择后，本机所有流量将经该节点出站。关闭则恢复直连。")
                 }
+
                 if !errorText.isEmpty {
-                    Text(errorText).font(.caption).foregroundColor(.red)
+                    Section {
+                        Label(errorText, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
                 }
             }
         }

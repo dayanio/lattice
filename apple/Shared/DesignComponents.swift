@@ -265,21 +265,22 @@ struct ConnectionHero: View {
                 }
                 if onlineCount > 0 {
                     HStack(spacing: 4) {
-                        Circle().fill(LatticePalette.online).frame(width: 5, height: 5)
+                        Circle().fill(isOn ? Color.white : LatticePalette.online).frame(width: 5, height: 5)
                         Text("\(onlineCount) 台在线")
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(isOn ? .white.opacity(0.9) : .secondary)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.primary.opacity(0.05)))
+                    .background(Capsule().fill((isOn ? Color.white : Color.primary).opacity(0.12)))
                 }
+                Spacer(minLength: 8)
+                // 本机 IP 钉在行尾：徽标出现/消失不会挪动它的位置。
                 if !selfAddress.isEmpty {
                     Text("本机 \(selfAddress)")
                         .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(isOn ? .white.opacity(0.9) : .primary)
                 }
-                Spacer()
             }
             .padding(.horizontal, 20)
 
