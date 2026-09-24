@@ -80,6 +80,12 @@ func NewNatsService(ctx context.Context, name, role, url string) (*NatsSignalSer
 	// 1. Use more robust connection configuration
 	opts := []natsgo.Option{
 		natsgo.Name(clientName),
+		// nats.go's default connect timeout is 2s (DefaultTimeout in nats.go);
+		// too tight for a distant/loaded signaling server where the initial
+		// INFO banner + CONNECT/PONG round trip alone can take several
+		// seconds, causing spurious "i/o timeout" connect failures under
+		// normal latency rather than an actual outage.
+		natsgo.Timeout(10 * time.Second),
 		natsgo.MaxReconnects(-1), // Unlimited reconnects to prevent network fluctuations from permanently killing the service
 		natsgo.ReconnectWait(2 * time.Second),
 		// The default 2-minute ping interval leaves a connection that died with

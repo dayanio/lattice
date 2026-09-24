@@ -96,7 +96,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         let name = (pc["name"] as? String) ?? (Host.current().localizedName ?? "lattice-mac")
         TunnelLog.write("startTunnel: server=\(serverURL) token=\(token.count) chars name=\(name)")
-        let config = EngineConfig(serverURL: serverURL, token: token, name: name, mtu: 1280)
+        var config = EngineConfig(serverURL: serverURL, token: token, name: name, mtu: 1280)
+        // ADR-0007 的升级重试是 break-before-make：直连在本机网络环境可用前，
+        // 每次重试只会拆掉正常工作的中继会话制造断网窗口，先关掉。
+        config.disableUpgrade = true
 
         do {
             engine = try LatticeEngineEngine(config.jsonString, delegate: self)
@@ -349,6 +352,7 @@ private struct EngineConfig: Encodable {
     let token: String
     let name: String
     let mtu: Int
+    var disableUpgrade: Bool = false
 
     var jsonString: String {
         if let data = try? JSONEncoder().encode(self),
