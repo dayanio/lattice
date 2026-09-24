@@ -377,6 +377,14 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 	if client == nil && st != nil {
 		// Standalone mode: build netmaps from the DB peer registry.
 		svc.netmapBuilder = reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+		if presence != nil {
+			// Withhold a selected exit node's routes while it is offline, so a
+			// dead provider does not blackhole its consumers' networks.
+			svc.netmapBuilder.SetProviderLiveness(func(appID string) bool {
+				status, _ := presence.GetStatus(appID)
+				return status == "online"
+			})
+		}
 		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
 			svc.netmapBuilder.SetRelayURL(advertise)
 			svc.relayURL = relayURLWithToken(advertise, agentconfig.Conf.RelayAuthToken)
