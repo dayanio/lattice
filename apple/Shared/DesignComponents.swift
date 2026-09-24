@@ -257,12 +257,8 @@ struct ConnectionHero: View {
 
             // 信息行：质量与本机地址，两种状态都常显（此前连接态会消失）。
             HStack(spacing: 8) {
-                if !aggregateText.isEmpty {
-                    QualityPill(
-                        text: aggregateText,
-                        color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
-                    )
-                }
+                // 在线数角标固定在最左：连接后出现的质量徽标排在它右侧，
+                // 避免角标随着状态变化横向漂移。
                 if onlineCount > 0 {
                     HStack(spacing: 4) {
                         Circle().fill(isOn ? Color.white : LatticePalette.online).frame(width: 5, height: 5)
@@ -273,6 +269,12 @@ struct ConnectionHero: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(Capsule().fill((isOn ? Color.white : Color.primary).opacity(0.12)))
+                }
+                if !aggregateText.isEmpty {
+                    QualityPill(
+                        text: aggregateText,
+                        color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
+                    )
                 }
                 Spacer(minLength: 8)
                 // 本机 IP 钉在行尾：徽标出现/消失不会挪动它的位置。
