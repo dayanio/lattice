@@ -171,6 +171,7 @@ function designSidebar() {
         { text: 'ICE Connection', link: '/design/ice-connection' },
         { text: 'ICE + WireGuard Mux', link: '/design/ice-wireguard-mux' },
         { text: 'WRRP / QUIC', link: '/design/wrrp-quic' },
+        { text: 'Exit Node: Routing & DNS', link: '/design/exit-node-routing-and-dns' },
       ],
     },
     {
