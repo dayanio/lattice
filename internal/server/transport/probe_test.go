@@ -22,6 +22,7 @@ import (
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
 // mockTransport implements infra.Transport for testing.
@@ -153,6 +154,47 @@ func TestStateMachine_TransitionFromCreated(t *testing.T) {
 	sm2 := NewStateMachine(StateICEReady)
 	if err := sm2.Transition(StateProbing); err == nil {
 		t.Error("ICEReady -> Probing should fail")
+	}
+}
+
+func TestProbe_SyncAllowedIPs_PushesToConfigurator(t *testing.T) {
+	mock := &mockProvisioner{}
+	remote := infra.NewPeerIdentity("cloud-node-1", wgtypes.Key{1})
+	p := &Probe{
+		remoteId:     remote,
+		configurator: NewWGConfigurator(mock, mock),
+	}
+
+	if err := p.SyncAllowedIPs("10.96.0.2/32,0.0.0.0/0"); err != nil {
+		t.Fatalf("SyncAllowedIPs: %v", err)
+	}
+	if len(mock.registerCalls) != 1 {
+		t.Fatalf("expected 1 register call, got %d", len(mock.registerCalls))
+	}
+	if got := mock.registerCalls[0].publicKey; got != remote.PublicKey.String() {
+		t.Errorf("publicKey = %q, want %q", got, remote.PublicKey.String())
+	}
+	if got := mock.registerCalls[0].allowedIPs; got != "10.96.0.2/32,0.0.0.0/0" {
+		t.Errorf("allowedIPs = %q, want widened value", got)
+	}
+
+	// A later, per-consumer route-selection change must reach WireGuard too,
+	// independent of whether signaling has fired since — this is the whole
+	// point of SyncAllowedIPs existing outside the signaling path.
+	if err := p.SyncAllowedIPs("10.96.0.2/32"); err != nil {
+		t.Fatalf("SyncAllowedIPs (deselect): %v", err)
+	}
+	if len(mock.registerCalls) != 2 {
+		t.Fatalf("expected 2 register calls after AllowedIPs changed again, got %d", len(mock.registerCalls))
+	}
+
+	// Empty AllowedIPs (peer not yet known) must not clobber WireGuard with
+	// an empty allow-list.
+	if err := p.SyncAllowedIPs(""); err != nil {
+		t.Fatalf("SyncAllowedIPs (empty): %v", err)
+	}
+	if len(mock.registerCalls) != 2 {
+		t.Errorf("empty AllowedIPs must be a no-op, got %d calls", len(mock.registerCalls))
 	}
 }
 

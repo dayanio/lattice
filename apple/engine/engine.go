@@ -39,6 +39,7 @@ import (
 	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	agentlog "github.com/alatticeio/lattice/internal/agent/log"
+	"github.com/alatticeio/lattice/internal/server/transport"
 
 	// Required at build time by gomobile bind (bind glue lives here).
 	_ "golang.org/x/mobile/bind"
@@ -95,6 +96,10 @@ type engineConfig struct {
 	Token     string `json:"token"`
 	Name      string `json:"name"`
 	MTU       int    `json:"mtu"`
+
+	// DisableUpgrade stops the periodic relay→direct probe restart (ADR-0007
+	// break-before-make); set while the direct path is unusable on this device.
+	DisableUpgrade bool `json:"disableUpgrade"`
 }
 
 // Engine is the long-running mesh engine. Create one per tunnel session via
@@ -304,6 +309,10 @@ func (e *Engine) run(ctx context.Context) {
 	}
 	agentlog.SetLevel("debug")
 
+	if e.cfg.DisableUpgrade {
+		transport.UpgradeDisabled = true
+	}
+
 	node, err := latticeagent.NewNode(ctx, &latticeagent.NodeConfig{
 		Logger:             agentlog.GetLogger("lattice-ne"),
 		Port:               0,
@@ -350,14 +359,27 @@ func (e *Engine) run(ctx context.Context) {
 	// the channel, so this goroutine sleeps at the OS level when idle —
 	// a polling variant here wakes the CPU ~1000x/s and NE kills the
 	// process for exceeding the CPU-wake limit within minutes.
+	// DeliverPacket crosses into Swift synchronously; that call has been
+	// observed to wedge (flow re-scoped mid-write), which would otherwise
+	// stall the whole decrypt pipeline forever — outbound pinned at capacity,
+	// every return packet dropped, liveness still green. Bound each call and
+	// keep draining: a wedged call leaks one goroutine instead of the tunnel.
 	go func() {
 		for {
 			pkt, ok := t.PopOutbound()
 			if !ok {
 				return
 			}
-			if err := e.delegate.DeliverPacket(pkt); err != nil {
-				return
+			done := make(chan error, 1)
+			go func() { done <- e.delegate.DeliverPacket(pkt) }()
+			select {
+			case err := <-done:
+				if err != nil {
+					e.emitError(fmt.Errorf("deliver packet to NE flow: %w", err))
+					return
+				}
+			case <-time.After(3 * time.Second):
+				e.emitError(fmt.Errorf("deliver packet to NE flow: timed out, dropping packet"))
 			}
 		}
 	}()
@@ -365,6 +387,28 @@ func (e *Engine) run(ctx context.Context) {
 	if blob, err := json.Marshal(computeExtraRoutes(node.GetPeerManager().GetAll())); err == nil {
 		e.emitRoutesChanged(string(blob))
 	}
+	// Queue-depth telemetry: makes silent starvation (NE flow stalls, inbound
+	// drops under relay congestion) visible in lattice-ne.log.
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		log := agentlog.GetLogger("lattice-ne")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				e.mu.Lock()
+				tun := e.tun
+				e.mu.Unlock()
+				if tun == nil {
+					continue
+				}
+				log.Info("tun stats", "inbound", len(tun.inbound), "outbound",
+					len(tun.outbound), "dropped", tun.Dropped())
+			}
+		}
+	}()
 
 	e.emit(EventConnected)
 	e.emitTunnelUp(localIP)

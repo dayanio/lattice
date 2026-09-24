@@ -172,5 +172,17 @@ func (c *Client) AddPeer(p *infra.Peer) error {
 	if err != nil {
 		return err
 	}
+
+	// AllowedIPs here is server-computed per consumer (e.g. widened to
+	// 0.0.0.0/0 once this node selects p as an exit-node route provider).
+	// It must be pushed directly — the probe's signaling-driven path only
+	// ever learns the remote's self-description, which has no way to know
+	// about this node's own route selection. Applying it on every
+	// ApplyFullConfig call (not just the first) is what makes a route
+	// selection toggled after the peer is already connected take effect.
+	if err := probe.SyncAllowedIPs(p.AllowedIPs); err != nil {
+		c.logger.Warn("failed to sync AllowedIPs", "peer", p.AppID, "err", err)
+	}
+
 	return probe.Start(context.Background(), peerIdentity)
 }

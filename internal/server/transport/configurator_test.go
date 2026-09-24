@@ -52,6 +52,24 @@ func TestWgConfigurator_RegisterPeer_Idempotent(t *testing.T) {
 	}
 }
 
+func TestWgConfigurator_RegisterPeer_ReappliesOnAllowedIPsChange(t *testing.T) {
+	mock := &mockProvisioner{}
+	cfg := NewWGConfigurator(mock, mock)
+
+	cfg.RegisterPeer("pk1", "10.0.0.1/32")
+	// Same peer, wider AllowedIPs (e.g. it was just selected as an exit-node
+	// provider): must be re-applied to WireGuard, not swallowed by the
+	// "already registered" idempotency check.
+	cfg.RegisterPeer("pk1", "10.0.0.1/32,0.0.0.0/0")
+
+	if len(mock.registerCalls) != 2 {
+		t.Fatalf("expected 2 register calls (initial + AllowedIPs change), got %d", len(mock.registerCalls))
+	}
+	if got := mock.registerCalls[1].allowedIPs; got != "10.0.0.1/32,0.0.0.0/0" {
+		t.Errorf("expected widened AllowedIPs applied, got %q", got)
+	}
+}
+
 func TestWgConfigurator_SetEndpoint(t *testing.T) {
 	mock := &mockProvisioner{}
 	cfg := NewWGConfigurator(mock, mock)

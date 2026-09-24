@@ -276,6 +276,22 @@ func (p *Probe) OnConnectionStateChange(state ice.ConnectionState) {
 	p.log.Debug("Setting new connection status", "state", state)
 }
 
+// SyncAllowedIPs re-applies this peer's WireGuard AllowedIPs from a locally
+// computed value — e.g. the server-side netmap widened it to 0.0.0.0/0 after
+// this node selected the peer as an exit-node route provider. This is
+// independent of P2P signaling: the signaling handshake only ever carries
+// the remote peer's self-description, which has no notion of "who selected
+// me as their exit route" (that's a consumer-side, per-viewer decision), so
+// it can never carry this value. The configurator is idempotent per
+// (publicKey, allowedIPs), so calling this with an unchanged value is a
+// cheap no-op — safe to call on every netmap application.
+func (p *Probe) SyncAllowedIPs(allowedIPs string) error {
+	if allowedIPs == "" || p.configurator == nil {
+		return nil
+	}
+	return p.configurator.RegisterPeer(p.remoteId.PublicKey.String(), allowedIPs)
+}
+
 func (p *Probe) Start(ctx context.Context, remoteId infra.PeerIdentity) error {
 	if !p.running.CompareAndSwap(false, true) {
 		p.log.Warn("Probe already started")
