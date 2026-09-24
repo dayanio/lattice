@@ -29,6 +29,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/alatticeio/lattice/internal/relay"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,9 @@ import (
 // DefaultMTU is the tunnel MTU used when the config omits one. 1280 keeps
 // WireGuard's overhead inside the smallest link MTU (Apple NE default).
 const DefaultMTU = 1280
+
+// maxNELogBytes is the size past which lattice-ne.log is truncated at start.
+const maxNELogBytes = 5 << 20
 
 // Engine events reported to the Swift side via EngineDelegate.OnEvent.
 const (
@@ -330,6 +334,7 @@ func (e *Engine) run(ctx context.Context) {
 	}
 
 	t := newPacketTUN("lattice", e.cfg.MTU, e.cfg.TunFD)
+	t.SetLocalIP(net.ParseIP(localIP))
 	e.setTUN(t)
 
 	// Diagnostic: dup2 fds 1+2 into a sandbox-writable file — slog captures
@@ -345,10 +350,15 @@ func (e *Engine) run(ctx context.Context) {
 	if home != "" {
 		cacheDir := filepath.Join(home, "Library", "Caches")
 		_ = os.MkdirAll(cacheDir, 0755)
-		if f, ferr := os.OpenFile(
-			filepath.Join(cacheDir, "lattice-ne.log"),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644,
-		); ferr == nil {
+		logPath := filepath.Join(cacheDir, "lattice-ne.log")
+		// Append across restarts so a crash's log survives, but start over once
+		// the file is large: at debug level it reached 190 MB, which made the
+		// log impossible to pull off a device and ate the extension's storage.
+		flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+		if st, serr := os.Stat(logPath); serr == nil && st.Size() > maxNELogBytes {
+			flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+		}
+		if f, ferr := os.OpenFile(logPath, flags, 0644); ferr == nil {
 			_ = unix.Dup2(int(f.Fd()), 1)
 			_ = unix.Dup2(int(f.Fd()), 2)
 		}

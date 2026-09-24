@@ -18,11 +18,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -62,10 +62,13 @@ type packetTUN struct {
 	// Upstream resolvers for non-lattice queries (exit-node DNS takeover):
 	// system resolvers, parsed once from /etc/resolv.conf. Empty until the
 	// first lookup succeeds; a built-in CN fallback list is used then.
-	upstreamDNS   []string
-	upstreamDNSed bool
+	upstreamDNS []string
 	// peerSource 提供当前组网设备表（名字 → overlay 地址）。
 	peerSource func() []*infra.Peer
+	// localIP 本节点的 overlay 地址；Write 方向只投递 dst=本机 的包。
+	// 目的地址非本机的包（内核 ICMP 错误风暴/环路包）若照常投递会经
+	// 路由表再进隧道，形成自放大循环直到管道被挤死。
+	localIP atomic.Value // net.IP
 }
 
 // SetDNSResolver wires the *.lattice name resolver (LatticeDNS).
@@ -90,6 +93,27 @@ func (t *packetTUN) peerAddresses() []*infra.Peer {
 // resolvers from /etc/resolv.conf are used with a CN public fallback.
 func (t *packetTUN) SetUpstreamDNS(servers []string) {
 	t.upstreamDNS = servers
+}
+
+// SetLocalIP records this node's overlay address for the egress filter.
+func (t *packetTUN) SetLocalIP(ip net.IP) {
+	t.localIP.Store(ip)
+}
+
+// isLocalDst reports whether the decrypted packet is addressed into the
+// mesh overlay (this node or any mesh peer). Packets addressed OUTSIDE the
+// overlay arriving on this path are loop artifacts (kernel ICMP error storms)
+// and must be dropped — delivering them feeds the self-amplifying loop.
+func (t *packetTUN) isLocalDst(pkt []byte) bool {
+	ip, _ := t.localIP.Load().(net.IP)
+	if ip == nil || len(pkt) < 20 {
+		return true // unknown local IP: fail open (deliver)
+	}
+	dst := net.IP(pkt[16:20]).To4()
+	if dst == nil {
+		return true
+	}
+	return dst[0] == 10 && dst[1] == 96
 }
 
 // dnsServers lazily resolves the upstream list once; the result is cached.
@@ -144,8 +168,10 @@ func newPacketTUN(name string, mtu int, egressFD int) *packetTUN {
 	return t
 }
 
-// writeFramed hands one decrypted packet to the Swift side over the egress
-// file (4-byte little-endian length + packet, wireguard-apple framing).
+// writeFramed hands one decrypted packet to the Swift side as ONE datagram
+// on a SOCK_DGRAM socketpair (message-preserving: no framing, no partial
+// writes — a stream socketpair desynced when a non-blocking write dropped
+// half a frame and Swift blocked forever on a bogus length).
 func (t *packetTUN) writeFramed(pkt []byte) error {
 	if t.fd == nil {
 		t.mu.Lock()
@@ -153,42 +179,25 @@ func (t *packetTUN) writeFramed(pkt []byte) error {
 		t.mu.Unlock()
 		return nil
 	}
-	var hdr [4]byte
-	binary.LittleEndian.PutUint32(hdr[:], uint32(len(pkt)))
-	var err error
-	if _, err = t.fd.Write(hdr[:]); err != nil {
+	if _, err := t.fd.Write(pkt); err != nil {
 		t.mu.Lock()
+		t.dropped++
 		if t.fdErr == nil {
 			t.fdErr = err
-			fmt.Println("LATTICE-EGRESS-WRITE-FAIL hdr:", err)
-		}
-		t.mu.Unlock()
-		return err
-	}
-	_, err = t.fd.Write(pkt)
-	if err != nil {
-		t.mu.Lock()
-		if t.fdErr == nil {
-			t.fdErr = err
-			fmt.Println("LATTICE-EGRESS-WRITE-FAIL payload:", err)
 		}
 		t.mu.Unlock()
 	}
-	return err
+	return nil
 }
 
-// readFramed is the test-side inverse of writeFramed.
+// readFramed is the test-side inverse of writeFramed (datagram read).
 func readFramed(f *os.File) ([]byte, error) {
-	var hdr [4]byte
-	if _, err := io.ReadFull(f, hdr[:]); err != nil {
+	pkt := make([]byte, 65535)
+	n, err := f.Read(pkt)
+	if err != nil {
 		return nil, err
 	}
-	n := binary.LittleEndian.Uint32(hdr[:])
-	pkt := make([]byte, n)
-	if _, err := io.ReadFull(f, pkt); err != nil {
-		return nil, err
-	}
-	return pkt, nil
+	return pkt[:n], nil
 }
 
 // Read implements tun.Device: blocks until one packet is available from Swift.
@@ -213,6 +222,14 @@ func (t *packetTUN) Write(bufs [][]byte, offset int) (int, error) {
 		// 客户端的 Happy Eyeballs 会快速回退 IPv4 经出口转发，避免 v6 直连
 		// 绕过出口。非出口场景下 peer 不会送来 v6（隧道本身只含 IPv4 路由）。
 		if len(raw) >= 1 && raw[0]>>4 == 6 {
+			t.mu.Lock()
+			t.dropped++
+			t.mu.Unlock()
+			continue
+		}
+		// 非 dst=本机 的包（如内核 ICMP 错误风暴）不再投递回系统，否则会被
+		// 路由表再次送进隧道，自放大挤死整条管道。
+		if !t.isLocalDst(raw) {
 			t.mu.Lock()
 			t.dropped++
 			t.mu.Unlock()
@@ -267,6 +284,10 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 	}
 }
 
+// tunnelDNSIP is the resolver address the client points the system at
+// (NEDNSSettings on the Swift side); queries to it are answered by the engine.
+var tunnelDNSIP = net.IPv4(10, 96, 0, 1)
+
 // interceptLatticeDNS answers UDP DNS queries for *.lattice names from the
 // current peer table. Returns (responsePacket, true) when the packet was a
 // lattice query answered locally; (nil, false) means "forward to WireGuard
@@ -288,6 +309,13 @@ func (t *packetTUN) interceptDNS(packet []byte) ([]byte, bool) {
 	srcPort := binary.BigEndian.Uint16(udp[0:2])
 	dstPort := binary.BigEndian.Uint16(udp[2:4])
 	if dstPort != 53 {
+		return nil, false
+	}
+	// Only queries sent to the tunnel's own DNS address are ours to answer. The
+	// forwarder's upstream queries are bound to the tunnel and come back through
+	// here addressed to the real resolver; intercepting those too re-forwards
+	// them forever (thousands of packets a second, extension dead in seconds).
+	if !dstIP.Equal(tunnelDNSIP) {
 		return nil, false
 	}
 
