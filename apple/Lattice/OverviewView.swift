@@ -106,7 +106,7 @@ struct OverviewView: View {
             .onChange(of: scenePhase) { _, newPhase in
                 if newPhase == .active { Task { await loadPeers() } }
             }
-            .sheet(item: $showingJoin) { mode in
+            .fullScreenCover(item: $showingJoin) { mode in
                 // sheet(item:) 让加入模式与呈现原子绑定：点"扫描二维码"
                 // 直接进相机、点"手动输入"直接进表单，不再出现落到
                 // 默认表单页的竞态。
@@ -115,7 +115,7 @@ struct OverviewView: View {
                     Task { await loadPeers() }
                 }, mode: mode)
             }
-            .sheet(isPresented: $showingLogin) {
+            .fullScreenCover(isPresented: $showingLogin) {
                 LoginView(onFinished: { Task { await loadPeers() } })
             }
             .alert("重命名设备", isPresented: .init(

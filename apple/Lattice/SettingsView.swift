@@ -156,10 +156,10 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("设置")
-            .sheet(isPresented: $showingLogin) {
+            .fullScreenCover(isPresented: $showingLogin) {
                 LoginView(onFinished: { showingLogin = false })
             }
-            .sheet(isPresented: $showingJoin, onDismiss: {
+            .fullScreenCover(isPresented: $showingJoin, onDismiss: {
                 pendingIdentityReset = false
             }) {
                 JoinView(onFinished: {

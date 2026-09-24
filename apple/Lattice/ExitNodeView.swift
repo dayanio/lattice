@@ -80,7 +80,7 @@ struct ExitNodeView: View {
         }
         .navigationTitle("出口节点")
         .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showingLogin, onDismiss: { Task { await load() } }) {
+        .fullScreenCover(isPresented: $showingLogin, onDismiss: { Task { await load() } }) {
             LoginView(onFinished: { showingLogin = false })
         }
         .task { await load() }

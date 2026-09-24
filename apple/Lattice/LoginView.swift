@@ -29,6 +29,13 @@ struct LoginView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Label("返回", systemImage: "chevron.left")
+                    }
+                }
                 Section("登录管理面板") {
                     Text("登录后可查看与管理设备列表。隧道连接本身不依赖登录。")
                         .font(.caption)

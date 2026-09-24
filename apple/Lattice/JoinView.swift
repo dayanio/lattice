@@ -51,6 +51,7 @@ struct JoinView: View {
     @State private var isSavingNetwork = false
     @State private var failure: JoinFailure?
     @State private var scannerError = ""
+    @Environment(\.dismiss) private var dismiss
 
     private var payload: JoinPayload? { JoinPayload(joinInput) }
     private var effectiveToken: String { payload?.token ?? "" }
@@ -74,10 +75,21 @@ struct JoinView: View {
 
     var body: some View {
         NavigationStack {
-            if useScanner {
-                scannerStep
-            } else {
-                networkStep
+            Group {
+                if useScanner {
+                    scannerStep
+                } else {
+                    networkStep
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Label("返回", systemImage: "chevron.left")
+                    }
+                }
             }
         }
     }

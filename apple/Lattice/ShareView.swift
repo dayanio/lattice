@@ -60,7 +60,7 @@ struct ShareView: View {
                 Button { showingNewSheet = true } label: { Image(systemName: "plus") }
             }
         }
-        .sheet(isPresented: $showingLogin, onDismiss: { Task { await load() } }) {
+        .fullScreenCover(isPresented: $showingLogin, onDismiss: { Task { await load() } }) {
             LoginView(onFinished: { showingLogin = false })
         }
         .sheet(isPresented: $showingNewSheet) {
