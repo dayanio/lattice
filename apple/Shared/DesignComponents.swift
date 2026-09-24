@@ -241,7 +241,6 @@ struct ConnectionHero: View {
     var body: some View {
         VStack(spacing: 14) {
             HStack(spacing: 16) {
-                powerButton
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
                         .font(.system(size: 21, weight: .bold, design: .rounded))
@@ -249,6 +248,7 @@ struct ConnectionHero: View {
                     subtitle
                 }
                 Spacer()
+                powerButton
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
