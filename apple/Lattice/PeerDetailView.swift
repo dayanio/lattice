@@ -19,6 +19,8 @@ struct PeerDetailView: View {
     @State private var prevTx: UInt64?
     @State private var rxRate: Double = 0
     @State private var txRate: Double = 0
+    @State private var txSamples: [Double] = []
+    @State private var rxSamples: [Double] = []
 
     init(peer: PeerNode, quality: String?) {
         self.peer = peer
@@ -78,6 +80,7 @@ struct PeerDetailView: View {
                         metric("↓ 速率", rateText(rxRate))
                         Spacer()
                     }
+                    rateCurve
                     rttSparkline
                     HStack(spacing: 14) {
                         metric("累计发送", totalText(currentStat?.tx))
@@ -162,6 +165,46 @@ struct PeerDetailView: View {
         return fmt.string(fromByteCount: Int64(bytes))
     }
 
+    /// 60 样本 × 2s 的收发速率曲线（橙=发送 ↑，蓝=接收 ↓），对数省略零段。
+    private var rateCurve: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 10) {
+                Label("发送", systemImage: "arrow.up").font(.caption2).foregroundColor(.orange)
+                Label("接收", systemImage: "arrow.down").font(.caption2).foregroundColor(LatticePalette.accent)
+                Spacer()
+            }
+            GeometryReader { geo in
+                ZStack {
+                    linePath(txSamples, scale: maxScale, width: geo.size.width, height: geo.size.height)
+                        .stroke(.orange, lineWidth: 1.5)
+                    linePath(rxSamples, scale: maxScale, width: geo.size.width, height: geo.size.height)
+                        .stroke(LatticePalette.accent, lineWidth: 1.5)
+                }
+            }
+            .frame(height: 44)
+        }
+    }
+
+    private var maxScale: Double {
+        let all = txSamples + rxSamples
+        return max(all.max() ?? 0, 1)
+    }
+
+    private func linePath(_ values: [Double], scale: Double, width: CGFloat, height: CGFloat) -> Path {
+        Path { p in
+            guard values.count > 1 else { return }
+            for (i, v) in values.enumerated() {
+                let x = width * CGFloat(i) / CGFloat(values.count - 1)
+                let y = height * (1 - CGFloat(min(v / scale, 1)))
+                if i == 0 {
+                    p.move(to: CGPoint(x: x, y: y))
+                } else {
+                    p.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+        }
+    }
+
     /// 60 样本 × 2s 的 RTT 走势；平线段表示该样本未测得（probing/中继）。
     private var rttSparkline: some View {
         GeometryReader { geo in
@@ -195,6 +238,10 @@ struct PeerDetailView: View {
             if let prx = prevRx, let ptx = prevTx {
                 rxRate = max(0, Double(rx &- prx) / 2)
                 txRate = max(0, Double(tx &- ptx) / 2)
+                txSamples.append(txRate)
+                rxSamples.append(rxRate)
+                if txSamples.count > 60 { txSamples.removeFirst(txSamples.count - 60) }
+                if rxSamples.count > 60 { rxSamples.removeFirst(rxSamples.count - 60) }
             }
             prevRx = rx
             prevTx = tx
