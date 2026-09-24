@@ -221,6 +221,10 @@ func versionFor(current *infra.Peer, network *infra.Network, policies []*infra.P
 	return hex.EncodeToString(sum[:8])
 }
 
+// HasAdvertisedRoutes reports whether the AdvertisedRoutes column declares at
+// least one valid route, i.e. whether the peer can act as a route provider.
+func HasAdvertisedRoutes(raw string) bool { return len(parseAdvertisedRoutes(raw)) > 0 }
+
 // parseAdvertisedRoutes decodes the AdvertisedRoutes JSON-array column.
 // Malformed or empty input yields no routes rather than an error — a peer
 // that never declared anything (or has a stale/corrupt value) should just
