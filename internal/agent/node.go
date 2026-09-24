@@ -611,7 +611,10 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		}
 		if rErr = node.messageHandler.ApplyFullConfig(rctx, remoteCfg); rErr != nil {
 			node.logger.Error("NATS reconnect: re-apply config failed", rErr)
+			return
 		}
+		node.setAppliedVersion(remoteCfg.ConfigVersion) // keep the refresh skip guard honest
+
 	})
 
 	return node, err
@@ -695,7 +698,16 @@ func (c *Node) RefreshConfig(ctx context.Context) error {
 		c.logger.Debug("netmap refresh skipped: version already applied", "version", v)
 		return nil
 	}
-	return c.messageHandler.ApplyFullConfig(ctx, remoteCfg)
+	if err := c.messageHandler.ApplyFullConfig(ctx, remoteCfg); err != nil {
+		return err
+	}
+	// Record what was applied. Without this the skip guard above compares
+	// against a stale version: after connect (V0) -> select an exit node (V1)
+	// -> switch back to direct (V0), the refresh fetched V0, saw it equal to
+	// the recorded V0 and skipped it, so the exit route stayed installed on
+	// the device after the server had withdrawn it.
+	c.setAppliedVersion(remoteCfg.ConfigVersion)
+	return nil
 }
 
 // Stop gracefully shuts down the Agent. It drains the NATS connection first
