@@ -384,6 +384,10 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 				status, _ := presence.GetStatus(appID)
 				return status == "online"
 			})
+			// Liveness is only re-evaluated when a netmap is built, so tell the
+			// consumers when a provider's state flips instead of leaving them
+			// to the next poll.
+			presence.SetOnChange(svc.onPresenceChange)
 		}
 		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
 			svc.netmapBuilder.SetRelayURL(advertise)
@@ -422,6 +426,22 @@ func (p *peerService) notifyWorkspacePeers(ctx context.Context, workspaceID, exc
 			p.logger.Warn("notifyWorkspacePeers: publish failed", "appID", r.AppID, "err", err)
 		}
 	}
+}
+
+// onPresenceChange runs when a node comes online or goes offline. Only a route
+// provider's state affects other peers' netmaps (its routes are withheld while
+// it is offline), so anything else is ignored; the provider itself is not
+// notified, its own netmap does not change.
+func (p *peerService) onPresenceChange(appID string, online bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	peer, err := p.store.Peers().GetByAppID(ctx, appID)
+	if err != nil || !reconcilers.HasAdvertisedRoutes(peer.AdvertisedRoutes) {
+		return
+	}
+	p.logger.Info("route provider presence changed, notifying workspace",
+		"peer", peer.Name, "online", online)
+	p.notifyWorkspacePeers(ctx, peer.WorkspaceID, appID)
 }
 
 // notifyK8sWorkspacePeers is the K8s-mode variant of notifyWorkspacePeers:

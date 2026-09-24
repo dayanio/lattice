@@ -15,6 +15,7 @@
 package nats
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -29,6 +30,10 @@ type NodePresenceStore struct {
 	mu       sync.RWMutex
 	m        map[string]time.Time // appId -> lastHeartbeat
 	versions map[string]string    // appId -> last reported netmap ConfigVersion
+	// online is the last state reported through onChange, so transitions fire
+	// once rather than on every heartbeat or sweep.
+	online   map[string]bool
+	onChange func(appId string, online bool)
 }
 
 // NewNodePresenceStore creates an empty NodePresenceStore.
@@ -36,25 +41,83 @@ func NewNodePresenceStore() *NodePresenceStore {
 	return &NodePresenceStore{
 		m:        make(map[string]time.Time),
 		versions: make(map[string]string),
+		online:   make(map[string]bool),
 	}
 }
 
-// Update records a heartbeat for the given appId at the current time.
-func (s *NodePresenceStore) Update(appId string) {
+// SetOnChange registers a callback fired when a node comes online (first
+// heartbeat, or one after an offline period) or goes offline (detected by
+// Run/sweep). It is called outside the store's lock; a nil fn disables it.
+func (s *NodePresenceStore) SetOnChange(fn func(appId string, online bool)) {
 	s.mu.Lock()
-	s.m[appId] = time.Now()
+	s.onChange = fn
 	s.mu.Unlock()
 }
 
-// UpdateWithVersion records a heartbeat and the ConfigVersion the node
-// reports as applied (delivery-tracking for policy convergence).
-func (s *NodePresenceStore) UpdateWithVersion(appId, version string) {
+// touch records a heartbeat and fires onChange when it is an offline→online
+// transition (including a node's first heartbeat since the server started).
+func (s *NodePresenceStore) touch(appId, version string) {
 	s.mu.Lock()
 	s.m[appId] = time.Now()
 	if version != "" {
 		s.versions[appId] = version
 	}
+	came := !s.online[appId]
+	s.online[appId] = true
+	fn := s.onChange
 	s.mu.Unlock()
+
+	if came && fn != nil {
+		fn(appId, true)
+	}
+}
+
+// Run sweeps for nodes whose heartbeats stopped until ctx is cancelled, so
+// offline transitions are reported even though no event marks them.
+func (s *NodePresenceStore) Run(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.sweepAt(now)
+		}
+	}
+}
+
+// sweepAt reports every node that was online but has not heartbeated within
+// offlineThreshold as of now. Each node is reported once until it returns.
+func (s *NodePresenceStore) sweepAt(now time.Time) {
+	var went []string
+	s.mu.Lock()
+	for appId, up := range s.online {
+		if up && now.Sub(s.m[appId]) >= offlineThreshold {
+			s.online[appId] = false
+			went = append(went, appId)
+		}
+	}
+	fn := s.onChange
+	s.mu.Unlock()
+
+	if fn == nil {
+		return
+	}
+	for _, appId := range went {
+		fn(appId, false)
+	}
+}
+
+// Update records a heartbeat for the given appId at the current time.
+func (s *NodePresenceStore) Update(appId string) {
+	s.touch(appId, "")
+}
+
+// UpdateWithVersion records a heartbeat and the ConfigVersion the node
+// reports as applied (delivery-tracking for policy convergence).
+func (s *NodePresenceStore) UpdateWithVersion(appId, version string) {
+	s.touch(appId, version)
 }
 
 // GetVersion returns the last netmap ConfigVersion the node reported applied.
