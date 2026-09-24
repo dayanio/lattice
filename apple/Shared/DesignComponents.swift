@@ -236,88 +236,138 @@ struct ConnectionHero: View {
     let onToggle: () -> Void
 
     private var isOn: Bool { state == .connected }
+    @State private var pulse = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            if isOn {
-                connectedContent
-            } else {
-                compactOfflineContent
-                // 质量与本机地址信息行（固定高度，避免跳动）。
-                HStack(spacing: 8) {
-                    if !aggregateText.isEmpty {
-                        QualityPill(
-                            text: aggregateText,
-                            color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
-                        )
-                    }
-                    if !selfAddress.isEmpty {
-                        Text("本机 \(selfAddress)")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
+        VStack(spacing: 14) {
+            HStack(spacing: 16) {
+                powerButton
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 21, weight: .bold, design: .rounded))
+                        .foregroundColor(titleColor)
+                    subtitle
                 }
-                .frame(minHeight: 18)
-                if !errorText.isEmpty {
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+
+            // 信息行：质量与本机地址，两种状态都常显（此前连接态会消失）。
+            HStack(spacing: 8) {
+                if !aggregateText.isEmpty {
+                    QualityPill(
+                        text: aggregateText,
+                        color: aggregateText == "直连" ? LatticePalette.online : LatticePalette.relay
+                    )
+                }
+                if !selfAddress.isEmpty {
+                    Text("本机 \(selfAddress)")
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+
+            if !errorText.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: errorIsNotice ? "info.circle" : "exclamationmark.triangle.fill")
+                        .font(.caption)
                     Text(errorText)
                         .font(.caption)
-                        .foregroundColor(errorIsNotice ? .orange : LatticePalette.blocked)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
+                        .multilineTextAlignment(.leading)
                 }
+                .foregroundColor(errorIsNotice ? .orange : LatticePalette.blocked)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 4)
             }
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, isOn ? 16 : 12)
+        .padding(.vertical, 14)
         .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(cardFill)
-                .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+                .shadow(color: isOn ? LatticePalette.online.opacity(0.35) : .black.opacity(0.06),
+                        radius: isOn ? 16 : 12, y: 4)
         )
         .padding(.horizontal, 15)
+        .animation(.easeInOut(duration: 0.25), value: isOn)
     }
 
-    // MARK: 已连接
+    // MARK: 电源按钮（两种状态的显式开关；整卡不可点，防误触断网）
 
-    private var connectedContent: some View {
-        HStack(spacing: 14) {
-            HaloDot(color: .white, size: 18)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("已连接")
-                    .font(.system(size: 20, weight: .bold))
-                    .foregroundColor(.white)
-                if let since = connectedSince {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(timerText(at: context.date))
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.85))
+    private var powerButton: some View {
+        Button {
+            onToggle()
+        } label: {
+            ZStack {
+                if isOn {
+                    Circle()
+                        .stroke(Color.white.opacity(0.55), lineWidth: 2)
+                        .frame(width: 62, height: 62)
+                        .scaleEffect(pulse ? 1.18 : 1.0)
+                        .opacity(pulse ? 0 : 0.9)
+                    Circle().fill(Color.white)
+                } else {
+                    Circle().fill(LatticePalette.accent)
+                }
+                Group {
+                    if state == .connecting {
+                        ProgressView().tint(isOn ? LatticePalette.online : .white)
+                    } else {
+                        Image(systemName: "power")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundColor(isOn ? LatticePalette.online : .white)
                     }
                 }
             }
-            Spacer()
-            // 断开走显式开关：深色小胶囊承载，整卡不再可点——
-            // 之前整卡都是断开热区，一个误触就断网。
-            HStack(spacing: 6) {
-                Text("已连接")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.9))
-                Toggle("断开连接", isOn: disconnectBinding)
-                    .labelsHidden()
-                    .tint(.white.opacity(0.35))
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(.black.opacity(0.22)))
+            .frame(width: 56, height: 56)
         }
-        .padding(.horizontal, 20)
-        .frame(minHeight: 76)
+        .buttonStyle(.plain)
+        .disabled(state == .connecting)
+        .accessibilityLabel(isOn ? "断开连接" : "连接")
+        .onAppear {
+            guard isOn else { return }
+            withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                pulse = true
+            }
+        }
+        .onChange(of: isOn) { on in
+            pulse = false
+            if on {
+                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+                    pulse = true
+                }
+            }
+        }
     }
 
-    /// 开关语义：连接态恒为 on；拨到 off 即断开。断开后切到未连接形态。
-    private var disconnectBinding: Binding<Bool> {
-        Binding(get: { true }, set: { newValue in
-            if !newValue { onToggle() }
-        })
+    private var title: String {
+        switch state {
+        case .connected: return "已连接"
+        case .connecting: return "连接中…"
+        case .disconnected: return "未连接"
+        }
+    }
+
+    private var titleColor: Color {
+        isOn ? .white : .primary
+    }
+
+    @ViewBuilder
+    private var subtitle: some View {
+        if isOn {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(timerText(at: context.date))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.9))
+            }
+        } else if state == .connecting {
+            Text("正在建立隧道").font(.caption).foregroundColor(.secondary)
+        } else {
+            Text("一键连入 mesh 网络").font(.caption).foregroundColor(.secondary)
+        }
     }
 
     private var cardFill: AnyShapeStyle {
@@ -325,40 +375,6 @@ struct ConnectionHero: View {
             colors: [LatticePalette.online, LatticePalette.online.opacity(0.72)],
             startPoint: .topLeading, endPoint: .bottomTrailing
         )) : AnyShapeStyle(.regularMaterial)
-    }
-
-    // MARK: 未连接 / 连接中（紧凑行，替代原 200x96 大椭圆）
-
-    private var compactOfflineContent: some View {
-        HStack(spacing: 12) {
-            if state == .connecting {
-                ProgressView()
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("连接中…").font(.system(.headline, design: .rounded))
-                    Text("正在建立隧道").font(.caption).foregroundColor(.secondary)
-                }
-            } else {
-                HaloDot(color: LatticePalette.neutral, size: 14)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("未连接").font(.system(.headline, design: .rounded))
-                    Text("一键连入 mesh 网络").font(.caption).foregroundColor(.secondary)
-                }
-            }
-            Spacer()
-            if state == .disconnected {
-                Button {
-                    onToggle()
-                } label: {
-                    Text("连接")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 8)
-                        .background(Capsule().fill(LatticePalette.accent))
-                        .foregroundColor(.white)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
     }
 
     // MARK: 计时
