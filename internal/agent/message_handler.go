@@ -179,8 +179,8 @@ func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message
 			meshCIDR := provision.MeshCIDRFromAddr(*msg.Current.Address)
 			if meshCIDR == "" {
 				h.logger.Warn("exit-node gateway: cannot derive mesh CIDR", "addr", *msg.Current.Address)
-			} else if err := provision.EnsureExitGateway(infra.ExecCommand, h.deviceManager.GetDeviceName(), meshCIDR, runtime.GOOS); err != nil {
-				h.logger.Warn("exit-node gateway provisioning failed", "err", err)
+			} else if gwErr := provision.EnsureExitGateway(infra.ExecCommand, h.deviceManager.GetDeviceName(), meshCIDR, runtime.GOOS); gwErr != nil {
+				h.logger.Warn("exit-node gateway provisioning failed", "err", gwErr)
 			}
 		}
 	}

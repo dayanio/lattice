@@ -193,9 +193,8 @@ func listenNet(network string, port int) (*net.UDPConn, int, error) {
 	if BindInterfaceName != "" {
 		if udp, ok := conn.(*net.UDPConn); ok {
 			if ifc, ferr := net.InterfaceByName(BindInterfaceName); ferr == nil {
-				if berr := BindUDPToInterface(udp, ifc.Index); berr == nil {
-					// bound; leave errors silent — routing still works unbound
-				}
+				// Best effort: routing still works unbound, so a failure is not fatal.
+				_ = BindUDPToInterface(udp, ifc.Index)
 			}
 		}
 	}

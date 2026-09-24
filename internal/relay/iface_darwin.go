@@ -45,7 +45,7 @@ func BindToPhysicalIfc(conn *net.TCPConn) {
 			}
 			for _, a := range addrs {
 				if ipn, ok := a.(*net.IPNet); ok {
-					if b := ipn.IP.To4(); b != nil && b[0] != 127 && !(b[0] == 169 && b[1] == 254) && !(b[0] == 10 && b[1] == 96) {
+					if b := ipn.IP.To4(); b != nil && b[0] != 127 && (b[0] != 169 || b[1] != 254) && (b[0] != 10 || b[1] != 96) {
 						name = ifc.Name
 					}
 				}
