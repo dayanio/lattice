@@ -27,10 +27,6 @@ cmd/licensegen/
 node_modules/
 .lattice/
 
-# gomobile-built binaries — regenerate via apple/scripts/build_framework.sh
-apple/Frameworks/MacOS/LatticeCore.xcframework/
-apple/Frameworks/iOS/LatticeCore.xcframework/
-
 
 # logs & local demo environment
 *.log
