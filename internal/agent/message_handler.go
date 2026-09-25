@@ -23,6 +23,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
 	"github.com/alatticeio/lattice/internal/agent/provision"
+	"github.com/alatticeio/lattice/internal/overlay6"
 )
 
 type Handler interface {
@@ -82,8 +83,10 @@ func (h *MessageHandler) HandleEvent(ctx context.Context, msg *infra.Message) er
 					h.deviceManager.RemoveAllPeers()
 				}
 			} else {
-				// Case B: new address assigned, force netmask to /32 (WireGuard standard)
-				msg.Current.AllowedIPs = fmt.Sprintf("%s/32", *msg.Current.Address)
+				// Case B: new address assigned, force netmask to /32 (WireGuard standard),
+				// keeping the overlay IPv6 /128 when the netmap carried one.
+				_, dual := overlay6.HostFromAllowedIPs(msg.Current.AllowedIPs)
+				msg.Current.AllowedIPs = overlay6.HostAllowedIPs(*msg.Current.Address, dual)
 			}
 		}
 
@@ -170,6 +173,15 @@ func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message
 		if err = h.deviceManager.AddPeer(msg.Current); err != nil {
 			h.logger.Error("failed to register local peer", err)
 			return err
+		}
+
+		// Dual-stack overlay: the netmap gives this node an IPv6 /128 only when the
+		// control plane has IPv6 turned on. Best effort (Linux): a failure leaves
+		// the node IPv4-only rather than failing the whole netmap apply.
+		if v6, ok := overlay6.HostFromAllowedIPs(msg.Current.AllowedIPs); ok {
+			if v6Err := provision.ApplyOverlay6(infra.ExecCommand, h.deviceManager.GetDeviceName(), v6, runtime.GOOS); v6Err != nil {
+				h.logger.Warn("overlay ipv6 setup failed", "err", v6Err)
+			}
 		}
 
 		// Exit-node gateway (phase-2 data plane): a node that advertises

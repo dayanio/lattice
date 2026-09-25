@@ -29,6 +29,7 @@ import (
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/store"
+	"github.com/alatticeio/lattice/internal/overlay6"
 	"github.com/alatticeio/lattice/internal/server/models"
 	"github.com/go-logr/logr"
 )
@@ -79,6 +80,14 @@ type NetmapBuilder struct {
 	// advertised routes withheld from consumers: nobody would forward for
 	// them, and a dead default route blackholes the consumer's whole network.
 	providerLive func(appID string) bool
+	// ipv6Enabled turns the netmap dual-stack: every peer's AllowedIPs gains its
+	// derived overlay IPv6 /128. Off (the default) keeps the netmap byte-identical
+	// to a build without IPv6 support, which is what old clients expect.
+	ipv6Enabled bool
+	// ipv6Egress reports whether a route provider (by agent app id) has told the
+	// server it has a working IPv6 egress. Only then is "::/0" added next to the
+	// provider's "0.0.0.0/0" for the consumers that selected it.
+	ipv6Egress func(appID string) bool
 }
 
 // NewNetmapBuilder returns a builder over the standalone stores.
@@ -102,6 +111,39 @@ func (b *NetmapBuilder) SetSelfRelayURL(url string) { b.selfRelayURL = url }
 // SetProviderLiveness installs the online check that gates route expansion.
 // Unset (nil), every selected provider's routes are expanded as before.
 func (b *NetmapBuilder) SetProviderLiveness(live func(appID string) bool) { b.providerLive = live }
+
+// SetIPv6 turns the dual-stack netmap on or off. egress reports a provider's
+// reported IPv6 egress capability; nil means no provider ever has one, so
+// consumers are never handed "::/0".
+func (b *NetmapBuilder) SetIPv6(enabled bool, egress func(appID string) bool) {
+	b.ipv6Enabled = enabled
+	b.ipv6Egress = egress
+}
+
+// toInfraPeer is dbToInfraPeer plus the dual-stack host route when enabled.
+func (b *NetmapBuilder) toInfraPeer(p *models.Peer) *infra.Peer {
+	peer := dbToInfraPeer(p)
+	if b.ipv6Enabled && peer.AllowedIPs != "" {
+		peer.AllowedIPs = overlay6.HostAllowedIPs(p.Address, true)
+	}
+	return peer
+}
+
+// providerRoutes returns the routes a selected provider adds to a consumer's
+// AllowedIPs: the provider's advertised routes, plus "::/0" when it advertised
+// the IPv4 default route and has reported a working IPv6 egress.
+func (b *NetmapBuilder) providerRoutes(row *models.Peer) []string {
+	extra := parseAdvertisedRoutes(row.AdvertisedRoutes)
+	if len(extra) == 0 || !b.ipv6Enabled || b.ipv6Egress == nil || !b.ipv6Egress(row.AppID) {
+		return extra
+	}
+	for _, r := range extra {
+		if r == "0.0.0.0/0" {
+			return append(extra, "::/0")
+		}
+	}
+	return extra
+}
 
 // BuildForAppID resolves the peer by its agent instance id, verifies the
 // registration token, and builds the peer's netmap message.
@@ -140,7 +182,7 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 		return nil, err
 	}
 
-	current := dbToInfraPeer(peer)
+	current := b.toInfraPeer(peer)
 	current.PrivateKey = peer.PrivateKey // the owner gets its own key back
 	if b.selfRelayURL != "" {
 		current.RelayURL = b.selfRelayURL
@@ -167,12 +209,12 @@ func (b *NetmapBuilder) BuildForPeer(ctx context.Context, peer *models.Peer) (*i
 		if row.Address == "" {
 			continue // still enrolling; not part of the mesh yet
 		}
-		p := dbToInfraPeer(row)
+		p := b.toInfraPeer(row)
 		if b.relayURL != "" {
 			p.RelayURL = b.relayURL
 		}
 		if _, ok := selected[row.ID]; ok && (b.providerLive == nil || b.providerLive(row.AppID)) {
-			if extra := parseAdvertisedRoutes(row.AdvertisedRoutes); len(extra) > 0 {
+			if extra := b.providerRoutes(row); len(extra) > 0 {
 				p.AllowedIPs = strings.Join(append([]string{p.AllowedIPs}, extra...), ",")
 			}
 		}

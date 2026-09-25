@@ -122,6 +122,11 @@ func Start(ctx context.Context, flags *config.Config) error {
 	// Start heartbeat so the management server can track online status.
 	go c.StartHeartbeat(gCtx)
 
+	// An exit node probes for a usable IPv6 egress and reports it in the
+	// heartbeat, so the control plane hands consumers "::/0" only when the exit
+	// can actually forward IPv6. No-op off Linux and on nodes that are not exits.
+	go c.StartIPv6Probe(gCtx)
+
 	// 对外发布网关（v1 gateway mode）：订阅发布表广播并提供 HTTP ingress。
 	if flags.IngressAddr != "" {
 		if err := c.StartIngress(gCtx, flags.IngressAddr); err != nil {

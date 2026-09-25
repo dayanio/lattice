@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/config"
@@ -139,6 +140,10 @@ type Node struct {
 	GetNetworkMap func() (*infra.Message, error)
 	ctrClient     *ctrclient.Client
 	probeFactory  *transport.ProbeFactory
+
+	// ipv6Prober decides whether this node, when it is an exit node, has a
+	// usable IPv6 egress. Set once by StartIPv6Probe, read by the heartbeat.
+	ipv6Prober atomic.Pointer[provision.IPv6Prober]
 
 	manager struct {
 		keyManager  infra.KeyManager

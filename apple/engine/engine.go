@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"github.com/alatticeio/lattice/internal/relay"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,7 @@ import (
 	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	agentlog "github.com/alatticeio/lattice/internal/agent/log"
+	"github.com/alatticeio/lattice/internal/overlay6"
 	"github.com/alatticeio/lattice/internal/server/transport"
 
 	// Required at build time by gomobile bind (bind glue lives here).
@@ -322,10 +324,30 @@ func (e *Engine) splitEnabled() bool {
 }
 
 // currentRoutes builds the payload for the node's present route set and the
-// current split switch.
+// current split switch, and puts the packet path into the matching IPv6 mode.
+//
+// The mode and the payload come from the same evaluation so the OS-side routes
+// (installed from the payload) and the engine's handling never disagree for more
+// than one emission. overlay6 is only put in the payload when the Swift side
+// should install IPv6 settings, i.e. an exit node is selected and the control
+// plane has IPv6 on.
 func (e *Engine) currentRoutes(node *latticeagent.Node) (string, error) {
-	included := computeExtraRoutes(node.GetPeerManager().GetAll())
-	return routesSnapshot(included, e.splitEnabled(), split.DefaultCNSet(), maxStaticExcludes)
+	pm := node.GetPeerManager()
+	included := computeExtraRoutes(pm.GetAll())
+
+	var v6 netip.Addr
+	if lp := pm.GetPeer(agentconfig.Conf.AppId); lp != nil {
+		v6, _ = overlay6.HostFromAllowedIPs(lp.AllowedIPs)
+	}
+	mode := v6ModeFor(included, v6.IsValid())
+	if t := e.getTUN(); t != nil {
+		t.SetIPv6(mode)
+	}
+	overlay6Addr := ""
+	if mode != v6Off {
+		overlay6Addr = v6.String()
+	}
+	return routesSnapshot(included, e.splitEnabled(), split.DefaultCNSet(), maxStaticExcludes, overlay6Addr)
 }
 
 // run is the blocking engine loop: enroll, bring up the node, pump packets,
@@ -477,7 +499,9 @@ func (e *Engine) run(ctx context.Context) {
 				if tun == nil {
 					continue
 				}
-				log.Info("tun stats", "inbound", len(tun.inbound), "dropped", tun.Dropped())
+				sent, dropped6 := tun.IPv6Stats()
+				log.Info("tun stats", "inbound", len(tun.inbound), "dropped", tun.Dropped(),
+					"icmp6Sent", sent, "icmp6Dropped", dropped6)
 			}
 		}
 	}()

@@ -34,6 +34,11 @@ type NodePresenceStore struct {
 	// once rather than on every heartbeat or sweep.
 	online   map[string]bool
 	onChange func(appId string, online bool)
+	// ipv6Egress is the IPv6 egress capability each node last reported in its
+	// heartbeat. Absent means "no", which is also what an agent that predates
+	// the field implies.
+	ipv6Egress         map[string]bool
+	onIPv6EgressChange func(appId string, egress bool)
 }
 
 // NewNodePresenceStore creates an empty NodePresenceStore.
@@ -42,6 +47,8 @@ func NewNodePresenceStore() *NodePresenceStore {
 		m:        make(map[string]time.Time),
 		versions: make(map[string]string),
 		online:   make(map[string]bool),
+
+		ipv6Egress: make(map[string]bool),
 	}
 }
 
@@ -52,6 +59,41 @@ func (s *NodePresenceStore) SetOnChange(fn func(appId string, online bool)) {
 	s.mu.Lock()
 	s.onChange = fn
 	s.mu.Unlock()
+}
+
+// SetOnIPv6EgressChange registers a callback fired when a node's reported IPv6
+// egress capability flips. It is called outside the store's lock; a nil fn
+// disables it.
+func (s *NodePresenceStore) SetOnIPv6EgressChange(fn func(appId string, egress bool)) {
+	s.mu.Lock()
+	s.onIPv6EgressChange = fn
+	s.mu.Unlock()
+}
+
+// UpdateIPv6Egress records the IPv6 egress capability a node reported with its
+// heartbeat. A node's first report of "no" is not a change (that is the default),
+// and repeating the current value never fires the callback.
+func (s *NodePresenceStore) UpdateIPv6Egress(appId string, egress bool) {
+	s.mu.Lock()
+	changed := s.ipv6Egress[appId] != egress
+	if egress {
+		s.ipv6Egress[appId] = true
+	} else {
+		delete(s.ipv6Egress, appId)
+	}
+	fn := s.onIPv6EgressChange
+	s.mu.Unlock()
+
+	if changed && fn != nil {
+		fn(appId, egress)
+	}
+}
+
+// IPv6Egress reports whether the node last said it has a working IPv6 egress.
+func (s *NodePresenceStore) IPv6Egress(appId string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ipv6Egress[appId]
 }
 
 // touch records a heartbeat and fires onChange when it is an offline→online

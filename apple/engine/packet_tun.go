@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
+	"github.com/alatticeio/lattice/internal/overlay6"
 	"github.com/miekg/dns"
 	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/tun"
@@ -73,6 +75,9 @@ type packetTUN struct {
 	// 目的地址非本机的包（内核 ICMP 错误风暴/环路包）若照常投递会经
 	// 路由表再进隧道，形成自放大循环直到管道被挤死。
 	localIP atomic.Value // net.IP
+
+	// v6 is the IPv6 mode (off / tunnel / blackhole) and its counters; see ipv6.go.
+	v6 ipv6State
 }
 
 // SetDNSResolver wires the *.lattice name resolver (LatticeDNS).
@@ -109,6 +114,12 @@ func (t *packetTUN) SetLocalIP(ip net.IP) {
 // overlay arriving on this path are loop artifacts (kernel ICMP error storms)
 // and must be dropped — delivering them feeds the self-amplifying loop.
 func (t *packetTUN) isLocalDst(pkt []byte) bool {
+	// IPv6: deliver only packets addressed inside the overlay prefix, which is
+	// where return traffic from the exit (after its NAT66) lands.
+	if len(pkt) >= ipv6HeaderLen && pkt[0]>>4 == 6 {
+		dst, ok := netip.AddrFromSlice(pkt[24:40])
+		return ok && overlay6.Contains(dst)
+	}
 	ip, _ := t.localIP.Load().(net.IP)
 	if ip == nil || len(pkt) < 20 {
 		return true // unknown local IP: fail open (deliver)
@@ -156,6 +167,7 @@ func newPacketTUN(name string, mtu int, egressFD int) *packetTUN {
 
 		ifaceIndex: tunnelIfaceIndex,
 	}
+	t.v6.limiter = newRateLimiter(icmp6RatePerSecond)
 	if egressFD > 0 {
 		f := os.NewFile(uintptr(egressFD), "ne-tun-egress")
 		// Non-blocking: when the Swift reader stalls, writes must DROP (wireguard
@@ -224,10 +236,11 @@ func (t *packetTUN) Read(bufs [][]byte, sizes []int, offset int) (int, error) {
 func (t *packetTUN) Write(bufs [][]byte, offset int) (int, error) {
 	for _, buf := range bufs {
 		raw := buf[offset:]
-		// 出口模式（IPv4-only 数据面）：丢弃来自 peer 的 IPv6 包（v6 黑洞），
-		// 客户端的 Happy Eyeballs 会快速回退 IPv4 经出口转发，避免 v6 直连
-		// 绕过出口。非出口场景下 peer 不会送来 v6（隧道本身只含 IPv4 路由）。
-		if len(raw) >= 1 && raw[0]>>4 == 6 {
+		// IPv6 from a peer is only expected in tunnel mode (the exit has an IPv6
+		// egress and we asked it to route ::/0). In every other mode a peer has no
+		// business sending IPv6, so drop it: in blackhole mode the OS-side IPv6 is
+		// already answered locally with ICMPv6 unreachable (WriteInbound).
+		if len(raw) >= 1 && raw[0]>>4 == 6 && t.ipv6Mode() != v6Tunnel {
 			t.mu.Lock()
 			t.dropped++
 			t.mu.Unlock()
@@ -259,6 +272,13 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 	case <-t.closedCh:
 		return errors.New("packet TUN closed")
 	default:
+	}
+	// Blackhole mode: an exit node is selected but it has no IPv6 egress. IPv6
+	// must not leak past the exit and cannot go through it, so answer with ICMPv6
+	// "no route" and let the application fall back to IPv4 immediately.
+	if len(packet) >= 1 && packet[0]>>4 == 6 && t.ipv6Mode() == v6Blackhole {
+		t.rejectIPv6(packet)
+		return nil
 	}
 	// LatticeDNS: answer *.lattice DNS queries locally instead of tunneling,
 	// once a peer table is wired (engine.go does this right after the node

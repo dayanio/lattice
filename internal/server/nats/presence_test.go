@@ -104,3 +104,45 @@ func TestPresence_SweepKeepsFreshNodesOnline(t *testing.T) {
 		}
 	}
 }
+
+// A node's reported IPv6 egress capability is remembered, and the callback fires
+// only when it actually flips. "No" is the default, so a node's first report of
+// "no" (every heartbeat from a non-exit or an old agent) changes nothing.
+func TestPresence_IPv6EgressFiresOnlyOnChange(t *testing.T) {
+	s := NewNodePresenceStore()
+	var mu sync.Mutex
+	var got []presenceEvent
+	s.SetOnIPv6EgressChange(func(appID string, egress bool) {
+		mu.Lock()
+		got = append(got, presenceEvent{appID, egress})
+		mu.Unlock()
+	})
+
+	s.UpdateIPv6Egress("exit", false) // default: not a change
+	s.UpdateIPv6Egress("exit", true)  // gained
+	s.UpdateIPv6Egress("exit", true)  // repeat
+	s.UpdateIPv6Egress("exit", false) // lost
+	s.UpdateIPv6Egress("exit", false) // repeat
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []presenceEvent{{"exit", true}, {"exit", false}}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("callback events = %+v, want %+v", got, want)
+	}
+}
+
+func TestPresence_IPv6EgressIsPerNode(t *testing.T) {
+	s := NewNodePresenceStore()
+	s.UpdateIPv6Egress("exit-a", true)
+	if !s.IPv6Egress("exit-a") {
+		t.Fatal("exit-a should report egress")
+	}
+	if s.IPv6Egress("exit-b") || s.IPv6Egress("never-seen") {
+		t.Fatal("other nodes must default to no egress")
+	}
+	s.UpdateIPv6Egress("exit-a", false)
+	if s.IPv6Egress("exit-a") {
+		t.Fatal("egress should be gone after the node reports false")
+	}
+}

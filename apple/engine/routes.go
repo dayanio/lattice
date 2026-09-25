@@ -16,11 +16,13 @@ package engine
 
 import (
 	"encoding/json"
+	"net/netip"
 	"sort"
 	"strings"
 
 	"github.com/alatticeio/lattice/apple/engine/split"
 	"github.com/alatticeio/lattice/internal/agent/infra"
+	"github.com/alatticeio/lattice/internal/overlay6"
 )
 
 // computeExtraRoutes returns the deduped, sorted set of CIDRs across all
@@ -48,6 +50,11 @@ func computeExtraRoutes(peers []*infra.Peer) []string {
 			if cidr == peerAddr+"/32" {
 				continue
 			}
+			// A peer's overlay IPv6 host route is, like its IPv4 /32, covered by
+			// the tunnel's own address setup and needs no route of its own.
+			if isOverlay6HostRoute(cidr) {
+				continue
+			}
 			seen[cidr] = struct{}{}
 		}
 	}
@@ -59,27 +66,37 @@ func computeExtraRoutes(peers []*infra.Peer) []string {
 	return out
 }
 
+// isOverlay6HostRoute reports whether cidr is a /128 inside the overlay IPv6
+// prefix, i.e. some node's own overlay address.
+func isOverlay6HostRoute(cidr string) bool {
+	p, err := netip.ParsePrefix(cidr)
+	return err == nil && p.Addr().Is6() && p.Bits() == 128 && overlay6.Contains(p.Addr())
+}
+
 // maxStaticExcludes caps how many CN blocks are handed to the OS as excluded
 // routes. The M0 device experiment measured the full embedded set (~5,500
 // blocks) installing in under a second without disturbing the tunnel, so the
 // cap is disabled. A non-zero value would keep only the LARGEST blocks.
 const maxStaticExcludes = 0
 
-// routesPayload encodes what OnRoutesChanged carries. With nothing excluded it
-// stays the legacy bare JSON array, so an older Swift side keeps decoding it;
-// with excluded routes it is {"included":[...],"excluded":[...]}.
-func routesPayload(included, excluded []string) (string, error) {
+// routesPayload encodes what OnRoutesChanged carries. With nothing beyond the
+// included routes it stays the legacy bare JSON array, so an older Swift side
+// keeps decoding it; otherwise it is {"included":[...]} plus "excluded" (CIDRs
+// that bypass the tunnel) and "overlay6" (this node's overlay IPv6, present when
+// the Swift side should install IPv6 settings) when they apply.
+func routesPayload(included, excluded []string, overlay6Addr string) (string, error) {
 	if included == nil {
 		included = []string{}
 	}
-	if len(excluded) == 0 {
+	if len(excluded) == 0 && overlay6Addr == "" {
 		b, err := json.Marshal(included)
 		return string(b), err
 	}
 	b, err := json.Marshal(struct {
 		Included []string `json:"included"`
-		Excluded []string `json:"excluded"`
-	}{included, excluded})
+		Excluded []string `json:"excluded,omitempty"`
+		Overlay6 string   `json:"overlay6,omitempty"`
+	}{included, excluded, overlay6Addr})
 	return string(b), err
 }
 
@@ -99,6 +116,6 @@ func splitExcluded(included []string, enabled bool, set *split.CNSet, budget int
 }
 
 // routesSnapshot builds the OnRoutesChanged payload for the current state.
-func routesSnapshot(included []string, enabled bool, set *split.CNSet, budget int) (string, error) {
-	return routesPayload(included, splitExcluded(included, enabled, set, budget))
+func routesSnapshot(included []string, enabled bool, set *split.CNSet, budget int, overlay6Addr string) (string, error) {
+	return routesPayload(included, splitExcluded(included, enabled, set, budget), overlay6Addr)
 }

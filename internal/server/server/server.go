@@ -575,6 +575,9 @@ func (s *Server) Heartbeat(content []byte) ([]byte, error) {
 	var payload struct {
 		AppID         string `json:"appId"`
 		ConfigVersion string `json:"configVersion"`
+		// IPv6Egress is set by an exit node that probed a working IPv6 egress.
+		// Agents that predate the field omit it, which reads as false.
+		IPv6Egress bool `json:"ipv6Egress"`
 	}
 	if err := json.Unmarshal(content, &payload); err != nil {
 		return nil, err
@@ -585,6 +588,7 @@ func (s *Server) Heartbeat(content []byte) ([]byte, error) {
 		} else {
 			s.presence.Update(payload.AppID)
 		}
+		s.presence.UpdateIPv6Egress(payload.AppID, payload.IPv6Egress)
 	}
 	return []byte{}, nil
 }

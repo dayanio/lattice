@@ -78,18 +78,18 @@ func testSet() *split.CNSet {
 }
 
 func TestRoutesPayload_LegacyArrayWhenNothingExcluded(t *testing.T) {
-	got, err := routesPayload([]string{"192.168.1.0/24"}, nil)
+	got, err := routesPayload([]string{"192.168.1.0/24"}, nil, "")
 	if err != nil || got != `["192.168.1.0/24"]` {
 		t.Fatalf("routesPayload() = %q, %v; want the legacy JSON array", got, err)
 	}
-	got, _ = routesPayload(nil, nil)
+	got, _ = routesPayload(nil, nil, "")
 	if got != `[]` {
-		t.Fatalf("routesPayload(nil, nil) = %q, want []", got)
+		t.Fatalf("routesPayload(nil, nil, \"\") = %q, want []", got)
 	}
 }
 
 func TestRoutesPayload_ObjectWhenExcluded(t *testing.T) {
-	got, err := routesPayload([]string{"0.0.0.0/0"}, []string{"1.0.1.0/24"})
+	got, err := routesPayload([]string{"0.0.0.0/0"}, []string{"1.0.1.0/24"}, "")
 	want := `{"included":["0.0.0.0/0"],"excluded":["1.0.1.0/24"]}`
 	if err != nil || got != want {
 		t.Fatalf("routesPayload() = %q, %v; want %q", got, err, want)
@@ -101,30 +101,30 @@ func TestRoutesSnapshot_OnlyExcludesWhenEnabledAndExitSelected(t *testing.T) {
 	subnet := []string{"192.168.1.0/24"}
 
 	// switch off → legacy array, nothing excluded
-	if got, _ := routesSnapshot(exit, false, testSet(), 0); got != `["0.0.0.0/0"]` {
+	if got, _ := routesSnapshot(exit, false, testSet(), 0, ""); got != `["0.0.0.0/0"]` {
 		t.Errorf("switch off: %q", got)
 	}
 	// switch on but no exit node selected → nothing excluded
-	if got, _ := routesSnapshot(subnet, true, testSet(), 0); got != `["192.168.1.0/24"]` {
+	if got, _ := routesSnapshot(subnet, true, testSet(), 0, ""); got != `["192.168.1.0/24"]` {
 		t.Errorf("no exit node: %q", got)
 	}
 	// switch on with an exit node → object with the CN blocks
-	got, _ := routesSnapshot(exit, true, testSet(), 0)
+	got, _ := routesSnapshot(exit, true, testSet(), 0, "")
 	want := `{"included":["0.0.0.0/0"],"excluded":["1.0.1.0/24","2.0.0.0/16","114.112.0.0/12"]}`
 	if got != want {
 		t.Errorf("switch on: %q, want %q", got, want)
 	}
 	// an empty or nil set degrades to "no split" instead of failing
-	if got, _ := routesSnapshot(exit, true, split.ParseCNSet(""), 0); got != `["0.0.0.0/0"]` {
+	if got, _ := routesSnapshot(exit, true, split.ParseCNSet(""), 0, ""); got != `["0.0.0.0/0"]` {
 		t.Errorf("empty set: %q", got)
 	}
-	if got, _ := routesSnapshot(exit, true, nil, 0); got != `["0.0.0.0/0"]` {
+	if got, _ := routesSnapshot(exit, true, nil, 0, ""); got != `["0.0.0.0/0"]` {
 		t.Errorf("nil set: %q", got)
 	}
 }
 
 func TestRoutesSnapshot_HonoursTheBudget(t *testing.T) {
-	got, _ := routesSnapshot([]string{"0.0.0.0/0"}, true, testSet(), 1)
+	got, _ := routesSnapshot([]string{"0.0.0.0/0"}, true, testSet(), 1, "")
 	want := `{"included":["0.0.0.0/0"],"excluded":["114.112.0.0/12"]}`
 	if got != want {
 		t.Fatalf("budget 1: %q, want %q", got, want)
@@ -153,5 +153,52 @@ func TestSetSplitRouting_KicksOnlyOnChange(t *testing.T) {
 	}
 	if !e.splitEnabled() {
 		t.Fatal("splitEnabled() = false after SetSplitRouting(true)")
+	}
+}
+
+func TestComputeExtraRoutes_SkipsOverlayIPv6HostRoutesButKeepsDefault(t *testing.T) {
+	peers := []*infra.Peer{
+		{Name: "plain", Address: addr("10.96.0.2"), AllowedIPs: "10.96.0.2/32,fd6c:7270:6c74::a60:2/128"},
+		{Name: "exit", Address: addr("10.96.0.4"), AllowedIPs: "10.96.0.4/32,fd6c:7270:6c74::a60:4/128,0.0.0.0/0,::/0"},
+	}
+	got := computeExtraRoutes(peers)
+	want := []string{"0.0.0.0/0", "::/0"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("computeExtraRoutes() = %v, want %v (overlay /128 host routes are not extra routes)", got, want)
+	}
+}
+
+func TestComputeExtraRoutes_KeepsForeignIPv6Routes(t *testing.T) {
+	// A /128 outside the overlay prefix, and a non-host prefix inside it, are
+	// real routes somebody advertised.
+	peers := []*infra.Peer{
+		{Name: "gw", Address: addr("10.96.0.5"), AllowedIPs: "10.96.0.5/32,2001:db8::1/128,fd6c:7270:6c74::/112"},
+	}
+	got := computeExtraRoutes(peers)
+	if len(got) != 2 {
+		t.Fatalf("computeExtraRoutes() = %v, want both foreign routes kept", got)
+	}
+}
+
+func TestRoutesPayload_OverlayIPv6(t *testing.T) {
+	// Overlay address but nothing excluded: an object, not the legacy array.
+	got, err := routesPayload([]string{"0.0.0.0/0"}, nil, "fd6c:7270:6c74::a60:4")
+	want := `{"included":["0.0.0.0/0"],"overlay6":"fd6c:7270:6c74::a60:4"}`
+	if err != nil || got != want {
+		t.Fatalf("routesPayload() = %q, %v; want %q", got, err, want)
+	}
+	// Both together.
+	got, _ = routesPayload([]string{"0.0.0.0/0"}, []string{"1.0.1.0/24"}, "fd6c:7270:6c74::a60:4")
+	want = `{"included":["0.0.0.0/0"],"excluded":["1.0.1.0/24"],"overlay6":"fd6c:7270:6c74::a60:4"}`
+	if got != want {
+		t.Fatalf("routesPayload() = %q; want %q", got, want)
+	}
+}
+
+func TestRoutesSnapshot_PassesOverlay6Through(t *testing.T) {
+	got, _ := routesSnapshot([]string{"0.0.0.0/0", "::/0"}, false, testSet(), 0, "fd6c:7270:6c74::a60:4")
+	want := `{"included":["0.0.0.0/0","::/0"],"overlay6":"fd6c:7270:6c74::a60:4"}`
+	if got != want {
+		t.Fatalf("routesSnapshot() = %q; want %q", got, want)
 	}
 }

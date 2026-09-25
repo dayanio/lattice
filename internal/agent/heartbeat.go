@@ -28,6 +28,10 @@ const heartbeatTimeout = 5 * time.Second
 type heartbeatPayload struct {
 	AppID         string `json:"appId"`
 	ConfigVersion string `json:"configVersion,omitempty"`
+	// IPv6Egress is set by an exit node whose probe found a working IPv6 egress
+	// (see provision.IPv6Prober). Omitted otherwise, which older servers ignore
+	// and newer ones read as "no".
+	IPv6Egress bool `json:"ipv6Egress,omitempty"`
 }
 
 // StartHeartbeat sends a periodic heartbeat to the management server via NATS
@@ -41,7 +45,7 @@ func (c *Node) StartHeartbeat(ctx context.Context) {
 		// Marshal at send time: the applied config version changes as the
 		// netmap sync loop converges, and every heartbeat must carry the
 		// version currently applied — not the one from process start.
-		data, err := json.Marshal(heartbeatPayload{AppID: appId, ConfigVersion: c.AppliedVersion()})
+		data, err := json.Marshal(heartbeatPayload{AppID: appId, ConfigVersion: c.AppliedVersion(), IPv6Egress: c.IPv6Egress()})
 		if err != nil {
 			logger.Error("marshal heartbeat payload failed", err)
 			return

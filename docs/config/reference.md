@@ -45,6 +45,7 @@ name: "office-mac"          # 显示名（可选）
 | `standalone` | `false` | 非 K8s 部署**必须开**（CLI `--standalone`） |
 | `signaling-url` | `""` | 下发给设备的 NATS 地址；空 = `nats://localhost:4222`（仅本机可用）⚠ |
 | `relay-advertise-url` | `""` | 下发给设备的中继地址；standalone 空值兜底 `127.0.0.1:6266` ⚠ |
+| `overlay-ipv6` | `false` | 控制面 netmap 输出双栈：每个 peer 多一个由其 IPv4 推导的 IPv6 `/128`，且出口节点汇报有 IPv6 出口能力时向选用它的设备下发 `::/0`。**先把客户端升级到支持 IPv6 的版本，再打开**：旧客户端会被 netmap 里的 IPv6 CIDR 搞得起不来隧道。环境变量 `LATTICE_OVERLAY_IPV6` |
 | `stun-url` | `""` | STUN；空 = 内置多服务器列表，自建填 `host:3478` |
 | `relay-url` | `:6266` | 中继监听地址（standalone 进程内启动） |
 | `port` | `3478` | 内置 STUN 服务端口（pro 版） |
