@@ -1,7 +1,7 @@
 # 出口模式的 IPv6：能力自适应的双栈隧道
 
 **日期**：2026-09-25
-**状态**：设计已逐段确认，待书面评审（评审通过后再写实施计划）
+**状态**：一期已实现，并在 iPhone 真机上验收了 A、D、E、F、G（2026-09-25，见 §8.1）；B、C 待有带 IPv6 的出口机。验收发现并修复了一个缺陷（§5.3：IPv6 默认路由必须是两条 `/1`）
 **范围**：开源仓库的服务端（netmap、心跳/presence）、Linux agent（出口能力探测与网关）、引擎 `apple/engine`；私有仓库 `lattice-apple` 的两个 NE 扩展（`LatticeTunnel`、`LatticeTunnelMac`）。**不改 WireGuard 本身、不改 Windows/macOS/Linux agent 作为出口使用者的路径（二期）。**
 **关联文档**：
 - `docs/design/exit-node-routing-and-dns.md`（路由 / DNS / NAT 三层；其 §8 把「补 IPv6 接管」列为下一步）
@@ -116,7 +116,7 @@
 - 引擎判定：peers 的 `AllowedIPs` 里有 `::/0` → **隧道模式**（IPv6 包正常送进 WireGuard）；有 `0.0.0.0/0` 但没有 `::/0` → **黑洞模式**；没选出口 → 不接管。
 - 路由载荷增加可选字段 `overlay6`（本机 overlay IPv6，由共享函数从 IPv4 推导）。Swift 用它配置接口，**不在 Swift 里重复实现推导**。载荷格式：仍是「无附加信息时为旧的裸数组；有 `excluded` 或 `overlay6` 时为对象」。
 
-**NE 设置。** `NEIPv6Settings(addresses: [overlay6], networkPrefixLengths: [128])`，`includedRoutes = [NEIPv6Route.default()]`。MTU 保持 1280，正好是 IPv6 的最小 MTU。DNS 服务器仍是 IPv4 的 `8.8.8.8` / `1.1.1.1`，走隧道，不改。
+**NE 设置。** `NEIPv6Settings(addresses: [overlay6], networkPrefixLengths: [128])`，`includedRoutes` 是**两条 `/1`**：`::/1` 与 `8000::/1`，**不能**用单条 `::/0`（`NEIPv6Route.default()`）。真机实测：单条 `::/0` 会让 iOS 把所有全局 IPv6 目的地视为不可达——`connect()` 立刻 `EHOSTUNREACH`（No route to host），一个包都发不出去，`NWPath.supportsIPv6` 为 `false`，应用一直卡在「连接中」；引擎的黑洞逻辑一次都用不上（此时 `api64` 仍会显示 IPv4，那是 IPv6 整个不可用之后应用回退的巧合，不是黑洞在起作用）。改成两条 `/1` 后 `connect()` 成功、系统选隧道的 ULA 作源地址、`supportsIPv6` 为 `true`。这与 IPv4 默认路由拆成 `0.0.0.0/1` + `128.0.0.0/1` 是同一个原因。MTU 保持 1280，正好是 IPv6 的最小 MTU。DNS 服务器仍是 IPv4 的 `8.8.8.8` / `1.1.1.1`，走隧道，不改。
 
 **引擎数据面。**
 - **出站**（应用 → 引擎，`SendPacket`）：按版本位识别 IPv6。隧道模式直接进 WireGuard。黑洞模式在进 WireGuard 之前合成 **ICMPv6 Destination Unreachable（类型 1，代码 0）**，经 `writeFramed` 立刻回给应用。源地址用 `<前缀>::1`；回包带原包头部，总长不超过 1280。**限速**（默认每秒 100 个）；只对全局单播目的地址回应，不对链路本地、组播、以及本身就是 ICMPv6 错误的包回应。已合成的 ICMPv6 不可达数与被限速丢弃的数，写入扩展日志（沿用引擎现有的每 15 s 队列遥测），验收 A、G 据此判断。
@@ -155,7 +155,9 @@
 - 引擎：ICMPv6 构造（用独立实现的校验和函数验证伪首部校验和合法）；模式判定表；限速；对链路本地、组播、ICMPv6 错误包不回应；`Write` 与 `isLocalDst` 的 IPv6 分支；`computeExtraRoutes` 拆分与跳过 `/128`；路由载荷 `overlay6` 的编码。
 - Swift 逻辑测试：协议族选择函数；载荷解析 `overlay6`。
 
-**真机验收**（§二）：A、D、E、F、G 用现有的无 IPv6 出口即可验证；B、C 需要一台带 IPv6 出口的机器（§九）。
+**真机验收**（§二）：A、D、E、F、G 用现有的无 IPv6 出口即可验证（已完成，§8.1）；B、C 需要一台带 IPv6 出口的机器（§九）。
+
+**教训：** 验收 A 里「`api64` 显示 IPv4」这一条**不足以证明黑洞在工作**，必须同时看引擎的 `icmp6Sent` 计数增长，并用 IPv6 字面地址（如 `http://[2606:4700:4700::1111]/`）确认**立刻**失败而不是转圈。
 
 ## 八、分期
 
@@ -168,9 +170,24 @@
 | 3 | Linux agent：`wf0` 配 IPv6、能力探测、心跳汇报、`ExitGateway6Commands` | 开源 |
 | 4 | 引擎：路由拆分、模式判定、ICMPv6 黑洞、`Write` 与 `isLocalDst`、载荷加 `overlay6` | 开源 |
 | 5 | Swift：协议族选择、`NEIPv6Settings`、载荷解析（iOS + Mac 扩展） | 私有 |
-| 6 | 真机验收 | — |
+| 6 | 真机验收（已完成 A、D、E、F、G，见 §8.1） | — |
 
 步骤 1 是 2、3、4 的前提；5 依赖 4。开源仓库的 1–4 可拆成 2 到 3 个 PR；私有仓库的 5 直接合并，随后按现有流程移动 `LATTICE_ENGINE_REF`。
+
+### 8.1 一期真机验收结果（2026-09-25）
+
+iPhone 15 Pro Max，出口为无 IPv6 的香港云主机，服务端 `overlay-ipv6` 打开：
+
+| # | 场景 | 结果 |
+|---|---|---|
+| F | 服务端开关关 | 通过：行为与升级前一致（`api64` 仍显示本机 IPv6），`icmp6Sent=0` |
+| A | 出口无 IPv6，选了出口 | 通过：`api64` 显示出口 IPv4，IPv6 字面地址页面立刻失败，页面无变慢，`icmp6Sent` 持续增长（累计 448） |
+| D | 没选出口 | 通过：取消选择后 netmap 不再带 `0.0.0.0/0`，`icmp6Sent` 停止增长，`api64` 显示本机 IPv6 |
+| E | 同时开国内直连 | 通过：`wf0` 上 7369 个包国内 IP 为 0，`wf0` 上无任何 IPv6 包 |
+| G | 稳定性 | 通过：同一扩展进程、无 panic、无包风暴（限速丢弃仅 3 个，都是 MLD 组播） |
+| B、C | 出口有 IPv6 / 能力撤回 | **未验证**（没有带 IPv6 的出口机） |
+
+**未验证：** 隧道模式、出口 agent 的能力探测与 IPv6 网关规则、能力撤回与恢复的传播时间、macOS 扩展的 `/1` 改动（只保证编译与逻辑测试通过）。
 
 **后续各期**：二期——Linux / macOS / Windows agent 作为出口使用者；三期——国内 IPv6 直连（APNIC 的国内 IPv6 段作为 `NEIPv6Settings.excludedRoutes`，与 M1 对称）；四期——peer 之间互访 IPv6、`*.lattice` 解析 `AAAA`、对 peers 的 IPv6 端点做排除。
 
@@ -179,7 +196,7 @@
 | # | 风险 / 取舍 | 应对 |
 |---|---|---|
 | 1 | **已接受：开出口期间，peer 之间的 IPv6 直连路径会少一批。** 装上 `::/0` 后，引擎自己的 socket 连 peers 的 IPv6 直连候选，会遇到「扩展进程的 socket 到不了隧道路由内地址」的限制，这些候选连接失败，ICE 回退到 IPv4 或中继，不会断 | 四期对 peers 的 IPv6 端点做排除路由 |
-| 2 | **验证环境**：现有出口机没有 IPv6，B、C 无法验证 | 需要一台带 IPv6 出口的机器（给这台开通 IPv6，或另备一台）；不阻塞设计和实现，只影响双栈分支的真机验收 |
+| 2 | **验证环境**：现有出口机没有 IPv6，B、C 无法验证（其余前提已在真机上验证：系统选隧道的 ULA 作源地址、路径 `supportsIPv6=true`、IPv6 包会到达引擎，剩下的未知只在出口一侧的转发与 NAT66） | 需要一台带 IPv6 出口的机器（给这台开通 IPv6，或另备一台）；不阻塞设计和实现，只影响双栈分支的真机验收 |
 | 3 | 旧客户端遇到 IPv6 CIDR 会起不来隧道 | §5.4：服务端开关默认关，先升级客户端再开 |
 | 4 | Linux 开 IPv6 转发会丢 RA 默认路由 | §5.2：先设 `accept_ra=2` |
 | 5a | **服务端重启会清空出口能力状态**（存在内存里的 presence 中） | 出口 agent 的下一次心跳（最多 30 s）就会恢复；这段时间选了出口的设备走黑洞，IPv6 回退到 IPv4，不会泄露也不会断。可接受 |
