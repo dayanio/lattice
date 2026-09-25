@@ -388,6 +388,10 @@ func NewPeerService(client *resource.Client, st store.Store, presence *managemen
 			// consumers when a provider's state flips instead of leaving them
 			// to the next poll.
 			presence.SetOnChange(svc.onPresenceChange)
+			// Same for the IPv6 egress capability: it decides whether consumers
+			// are handed "::/0", so a flip must reach them promptly.
+			presence.SetOnIPv6EgressChange(svc.onIPv6EgressChange)
+			svc.netmapBuilder.SetIPv6(agentconfig.Conf.OverlayIPv6, presence.IPv6Egress)
 		}
 		if advertise := agentconfig.Conf.RelayAdvertiseURL; advertise != "" {
 			svc.netmapBuilder.SetRelayURL(advertise)
@@ -433,14 +437,28 @@ func (p *peerService) notifyWorkspacePeers(ctx context.Context, workspaceID, exc
 // it is offline), so anything else is ignored; the provider itself is not
 // notified, its own netmap does not change.
 func (p *peerService) onPresenceChange(appID string, online bool) {
+	p.notifyIfRouteProvider(appID, "presence", online)
+}
+
+// onIPv6EgressChange runs when a node reports that its IPv6 egress capability
+// flipped. Like presence, it only matters for a route provider: it decides
+// whether the provider's consumers are handed "::/0".
+func (p *peerService) onIPv6EgressChange(appID string, egress bool) {
+	p.notifyIfRouteProvider(appID, "ipv6 egress", egress)
+}
+
+// notifyIfRouteProvider tells the workspace to refresh its netmaps when appID is
+// a route provider whose state (what) just changed. Anyone else is ignored: no
+// other peer's netmap depends on it.
+func (p *peerService) notifyIfRouteProvider(appID, what string, value bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	peer, err := p.store.Peers().GetByAppID(ctx, appID)
 	if err != nil || !reconcilers.HasAdvertisedRoutes(peer.AdvertisedRoutes) {
 		return
 	}
-	p.logger.Info("route provider presence changed, notifying workspace",
-		"peer", peer.Name, "online", online)
+	p.logger.Info("route provider state changed, notifying workspace",
+		"peer", peer.Name, "what", what, "value", value)
 	p.notifyWorkspacePeers(ctx, peer.WorkspaceID, appID)
 }
 
