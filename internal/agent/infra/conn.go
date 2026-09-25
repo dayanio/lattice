@@ -178,11 +178,25 @@ func (b *DefaultBind) ParseEndpoint(s string) (conn.Endpoint, error) {
 	}, nil
 }
 
+// BindInterfaceName, when set, pins every WG/ICE UDP socket to that physical
+// interface (IP_BOUND_IF). Required inside the macOS NE packet-tunnel
+// provider, which routes its own sockets into its own tunnel otherwise.
+// The engine sets it from the Swift side (pre-tunnel route lookup).
+var BindInterfaceName string
+
 // listenNet will return udp and tcp conn on the same port.
 func listenNet(network string, port int) (*net.UDPConn, int, error) {
 	conn, err := listenConfig().ListenPacket(context.Background(), network, ":"+strconv.Itoa(port))
 	if err != nil {
 		return nil, 0, err
+	}
+	if BindInterfaceName != "" {
+		if udp, ok := conn.(*net.UDPConn); ok {
+			if ifc, ferr := net.InterfaceByName(BindInterfaceName); ferr == nil {
+				// Best effort: routing still works unbound, so a failure is not fatal.
+				_ = BindUDPToInterface(udp, ifc.Index)
+			}
+		}
 	}
 
 	// Retrieve port.

@@ -20,6 +20,12 @@ import "time"
 // direct connection; it doubles per failed attempt up to upgradeMaxInterval.
 var upgradeBaseInterval = 2 * time.Minute
 
+// UpgradeDisabled turns the periodic relay→direct upgrade retry off entirely.
+// The retry is break-before-make (ADR-0007): every attempt tears down a
+// working relayed session. While the direct path is unusable anyway (e.g. the
+// macOS NE self-capture problem), the retries only buy outage windows.
+var UpgradeDisabled = false
+
 const upgradeMaxInterval = 30 * time.Minute
 
 // upgradeSignalRetry is how soon a retry that found signaling down is tried
@@ -46,7 +52,7 @@ func upgradeDelay(attempts int) time.Duration {
 // (the signaling has no "upgrade only" flag), which costs a brief tunnel
 // interruption, so attempts back off exponentially.
 func (p *Probe) scheduleUpgrade() {
-	if !isInitiator(p.localId, p.remoteId) {
+	if UpgradeDisabled || !isInitiator(p.localId, p.remoteId) {
 		return
 	}
 	p.upgradeMu.Lock()

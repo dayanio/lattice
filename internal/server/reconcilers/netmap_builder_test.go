@@ -474,3 +474,83 @@ func TestNetmapBuilder_NoRelayConfiguredLeavesCurrentWithoutOne(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, msg.Current.RelayURL)
 }
+
+// An offline exit node must not be handed to consumers as a default route:
+// nobody forwards for it, so a selected-but-dead provider would blackhole the
+// consumer's whole network. The selection row stays; the route comes back the
+// moment the provider is online again.
+func TestNetmapBuilder_OfflineProviderRoutesAreWithdrawn(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "consumer1"}, WorkspaceID: "ws1", Name: "mac",
+		AppID: "mac-app", Token: "tk-mac", Address: "10.96.0.2", PublicKey: "kmac",
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "provider1"}, WorkspaceID: "ws1", Name: "exit",
+		AppID: "exit-app", Token: "tk-exit", Address: "10.96.0.4", PublicKey: "kexit",
+		AdvertisedRoutes: `["0.0.0.0/0"]`,
+	}))
+	require.NoError(t, st.RouteSelections().Create(ctx, &models.PeerRouteSelection{
+		Model: models.Model{ID: "sel1"}, WorkspaceID: "ws1",
+		ConsumerPeerID: "consumer1", ProviderPeerID: "provider1",
+	}))
+
+	online := map[string]bool{"exit-app": true}
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	builder.SetProviderLiveness(func(appID string) bool { return online[appID] })
+
+	macPeer, err := st.Peers().GetByID(ctx, "consumer1")
+	require.NoError(t, err)
+	allowedIPsFor := func(name string) string {
+		msg, err := builder.BuildForPeer(ctx, macPeer)
+		require.NoError(t, err)
+		for _, p := range msg.Network.Peers {
+			if p.Name == name {
+				return p.AllowedIPs
+			}
+		}
+		return ""
+	}
+
+	assert.Equal(t, "10.96.0.4/32,0.0.0.0/0", allowedIPsFor("exit"), "online provider: route expanded")
+
+	online["exit-app"] = false
+	assert.Equal(t, "10.96.0.4/32", allowedIPsFor("exit"), "offline provider: only its overlay /32, no default route")
+
+	online["exit-app"] = true
+	assert.Equal(t, "10.96.0.4/32,0.0.0.0/0", allowedIPsFor("exit"), "back online: route restored, selection was never lost")
+}
+
+// Without a liveness func (K8s-less unit setups, older wiring) routes are
+// expanded exactly as before.
+func TestNetmapBuilder_NoLivenessFuncKeepsExpanding(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "consumer1"}, WorkspaceID: "ws1", Name: "mac",
+		AppID: "mac-app", Token: "tk-mac", Address: "10.96.0.2", PublicKey: "kmac",
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "provider1"}, WorkspaceID: "ws1", Name: "exit",
+		AppID: "exit-app", Token: "tk-exit", Address: "10.96.0.4", PublicKey: "kexit",
+		AdvertisedRoutes: `["0.0.0.0/0"]`,
+	}))
+	require.NoError(t, st.RouteSelections().Create(ctx, &models.PeerRouteSelection{
+		Model: models.Model{ID: "sel1"}, WorkspaceID: "ws1",
+		ConsumerPeerID: "consumer1", ProviderPeerID: "provider1",
+	}))
+
+	builder := reconcilers.NewNetmapBuilder(st.Peers(), st.Policies(), st.PeerIdentities(), st.RouteSelections())
+	macPeer, err := st.Peers().GetByID(ctx, "consumer1")
+	require.NoError(t, err)
+	msg, err := builder.BuildForPeer(ctx, macPeer)
+	require.NoError(t, err)
+	for _, p := range msg.Network.Peers {
+		if p.Name == "exit" {
+			assert.Equal(t, "10.96.0.4/32,0.0.0.0/0", p.AllowedIPs)
+		}
+	}
+}

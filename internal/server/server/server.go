@@ -182,6 +182,9 @@ func NewServer(ctx context.Context, serverConfig *ServerConfig) (*Server, error)
 	}
 
 	presence := managementnats.NewNodePresenceStore()
+	// Offline is the absence of heartbeats, so nothing announces it: sweep for
+	// it, letting the peer service tell consumers when an exit node drops.
+	go presence.Run(ctx, 15*time.Second)
 
 	auditSvc := service.NewAuditService(st)
 	auditSvc.Start(ctx)

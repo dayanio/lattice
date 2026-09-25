@@ -40,6 +40,11 @@ type NodeInterface interface {
 	RemovePeer(peer *Peer) error
 
 	RemoveAllPeers()
+
+	// PrunePeersExcept removes every known peer whose AppID is not in keep
+	// (peers that dropped out of the current netmap must not linger in the
+	// manager/wg — stale entries kept probing and polluting peer states).
+	PrunePeersExcept(keep map[string]struct{})
 }
 
 // KeyManager manage the device keys

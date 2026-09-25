@@ -29,7 +29,10 @@ import (
 )
 
 const (
-	sendChanDepth   = 256
+	// 4096: the relay carries a whole machine's exit-node traffic over one
+	// TCP connection; 256 filled within a single page load's burst and
+	// frames were dropped wholesale ("send channel full").
+	sendChanDepth   = 4096
 	writerBufSize   = 128 * 1024
 	probeChanSize   = 1024
 	MaxProbePayload = 2048

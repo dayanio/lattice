@@ -25,24 +25,15 @@ import (
 
 var pfMu sync.Mutex
 
+// ApplyRoute is a no-op on macOS: the NE client's routes are delivered by
+// the engine's OnRoutesChanged → NEIPv4Settings (Swift side), which also
+// owns the /1-split default-route handling for exit nodes. Mutating the
+// host route table here races that flow, and a repeated `route add` fails
+// with "File exists", which fails the whole netmap apply and (via the
+// extension's post-start error path) tears the tunnel down.
 func (r *routeProvisioner) ApplyRoute(action, address, interfaceName string) error {
-	//example: sudo route -nv add -net 192.168.10.1 -netmask 255.255.255.0 -interface en0
-	switch action {
-	case "add":
-		//infra.ExecCommand("/bin/sh", "-c", fmt.Sprintf("ifconfig %s %s %s", interfaceName, address, address))
-		rule := fmt.Sprintf("route -nv %s -net %s -netmask 255.255.255.0 -interface %s", action, address, interfaceName)
-		if err := infra.ExecCommand("/bin/sh", "-c", rule); err != nil {
-			return err
-		}
-		r.logger.Debug("root command issued", "cmd", fmt.Sprintf("route -nv %s -net %s -netmask 255.255.255.0 -interface %s", action, address, interfaceName))
-	case "delete":
-		rule := fmt.Sprintf("route -nv %s -net %s -netmask 255.255.255.0 -interface %s", action, address, interfaceName)
-		if err := infra.ExecCommand("/bin/sh", "-c", rule); err != nil {
-			return err
-		}
-		r.logger.Debug("root command command", "cmd", fmt.Sprintf("route -nv %s -net %s -netmask 255.255.255.0 -interface %s", action, address, interfaceName))
-	}
-
+	r.logger.Debug("route apply skipped on darwin (NE settings own routes)",
+		"action", action, "cidr", address, "iface", interfaceName)
 	return nil
 }
 

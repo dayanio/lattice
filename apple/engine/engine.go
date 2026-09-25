@@ -24,9 +24,12 @@ package engine
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/alatticeio/lattice/internal/relay"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +42,7 @@ import (
 	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	agentlog "github.com/alatticeio/lattice/internal/agent/log"
+	"github.com/alatticeio/lattice/internal/server/transport"
 
 	// Required at build time by gomobile bind (bind glue lives here).
 	_ "golang.org/x/mobile/bind"
@@ -49,6 +53,9 @@ import (
 // DefaultMTU is the tunnel MTU used when the config omits one. 1280 keeps
 // WireGuard's overhead inside the smallest link MTU (Apple NE default).
 const DefaultMTU = 1280
+
+// maxNELogBytes is the size past which lattice-ne.log is truncated at start.
+const maxNELogBytes = 5 << 20
 
 // Engine events reported to the Swift side via EngineDelegate.OnEvent.
 const (
@@ -65,8 +72,8 @@ const (
 // EngineDelegate is implemented on the Swift side; gomobile generates the
 // corresponding protocol for NEPacketTunnelProvider to conform to.
 type EngineDelegate interface {
-	// DeliverPacket hands one decrypted inbound packet to the NE flow.
-	DeliverPacket(packet []byte) error
+	// Egress goes over the socketpair fd (tunFD): no per-packet bridge calls.
+
 	// OnEvent reports engine state transitions ("connecting", "connected",
 	// "disconnected", or "error: <message>").
 	OnEvent(event string)
@@ -95,6 +102,18 @@ type engineConfig struct {
 	Token     string `json:"token"`
 	Name      string `json:"name"`
 	MTU       int    `json:"mtu"`
+
+	// DisableUpgrade stops the periodic relay→direct probe restart (ADR-0007
+	// break-before-make); set while the direct path is unusable on this device.
+	DisableUpgrade bool `json:"disableUpgrade"`
+	// TunFD is the Swift-side socketpair end handed to the engine for
+	// decrypted-packet egress (4-byte LE framed; wireguard-apple pattern).
+	// 0 = no egress fd (tests).
+	TunFD int `json:"tunFD"`
+	// BindInterface pins the engine's own WG/ICE UDP and relay TCP sockets to
+	// this physical interface (macOS NE self-capture workaround). Empty = no
+	// binding.
+	BindInterface string `json:"bindInterface"`
 }
 
 // Engine is the long-running mesh engine. Create one per tunnel session via
@@ -106,12 +125,14 @@ type Engine struct {
 	tun      *packetTUN
 	privKey  wgtypes.Key
 
-	mu       sync.Mutex
-	node     *latticeagent.Node // set once the node exists; read by Peers
-	running  bool
-	cancel   context.CancelFunc
-	done     chan struct{}
-	stopOnce sync.Once
+	mu                 sync.Mutex
+	node               *latticeagent.Node // set once the node exists; read by Peers
+	running            bool
+	cancel             context.CancelFunc
+	done               chan struct{}
+	stopOnce           sync.Once
+	pendingUpstreamDNS []string // applied to the TUN on creation (see SetUpstreamDNS)
+	batchStats         struct{ calls, packets int }
 }
 
 // NewEngine validates the config and returns an engine bound to delegate.
@@ -162,6 +183,41 @@ func (e *Engine) Start() error {
 	return nil
 }
 
+// SendPacketBatch injects a burst of captured packets in ONE bridge
+// crossing: blob is a sequence of 4-byte little-endian length-prefixed IPv4
+// packets (Swift readPackets already batches; mirror that on the Go side).
+func (e *Engine) SendPacketBatch(blob []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("sendPacketBatch panicked: %v", r)
+		}
+	}()
+	packets := 0
+	off := 0
+	for off+4 <= len(blob) {
+		n := int(binary.LittleEndian.Uint32(blob[off : off+4]))
+		off += 4
+		if n <= 0 || off+n > len(blob) {
+			agentlog.GetLogger("lattice-ne").Warn("sendPacketBatch: bad frame", "n", n, "off", off, "blob", len(blob))
+			break
+		}
+		if err := e.SendPacket(blob[off : off+n]); err != nil {
+			return err
+		}
+		packets++
+		off += n
+	}
+	e.mu.Lock()
+	e.batchStats.packets += packets
+	e.batchStats.calls++
+	total, calls := e.batchStats.packets, e.batchStats.calls
+	e.mu.Unlock()
+	if calls%50 == 1 {
+		agentlog.GetLogger("lattice-ne").Info("sendPacketBatch", "calls", calls, "packets", total)
+	}
+	return nil
+}
+
 // SendPacket injects one packet from the NE flow into the tunnel.
 // Packets are dropped (counted) if the queue is full.
 func (e *Engine) SendPacket(packet []byte) error {
@@ -203,7 +259,31 @@ func (e *Engine) getTUN() *packetTUN {
 func (e *Engine) setTUN(t *packetTUN) {
 	e.mu.Lock()
 	e.tun = t
+	pending := e.pendingUpstreamDNS
 	e.mu.Unlock()
+	if t != nil && len(pending) > 0 {
+		t.SetUpstreamDNS(pending)
+	}
+}
+
+// SetUpstreamDNS pins the resolvers used for non-lattice queries (exit-node
+// DNS takeover). Call before Start: once the tunnel's DNS settings are applied
+// the system resolver list points back at the tunnel's own 10.96.0.1, and the
+// /etc/resolv.conf fallback would self-loop. Safe to call after Start too —
+// it retargets the running TUN. servers is comma-separated (gomobile binds
+// no []string); empty input is ignored, keeping the current resolvers.
+func (e *Engine) SetUpstreamDNS(servers string) {
+	if servers == "" {
+		return
+	}
+	list := strings.Split(servers, ",")
+	e.mu.Lock()
+	e.pendingUpstreamDNS = list
+	t := e.tun
+	e.mu.Unlock()
+	if t != nil {
+		t.SetUpstreamDNS(list)
+	}
 }
 
 // run is the blocking engine loop: enroll, bring up the node, pump packets,
@@ -253,7 +333,8 @@ func (e *Engine) run(ctx context.Context) {
 		}
 	}
 
-	t := newPacketTUN("lattice", e.cfg.MTU)
+	t := newPacketTUN("lattice", e.cfg.MTU, e.cfg.TunFD)
+	t.SetLocalIP(net.ParseIP(localIP))
 	e.setTUN(t)
 
 	// Diagnostic: dup2 fds 1+2 into a sandbox-writable file — slog captures
@@ -269,15 +350,28 @@ func (e *Engine) run(ctx context.Context) {
 	if home != "" {
 		cacheDir := filepath.Join(home, "Library", "Caches")
 		_ = os.MkdirAll(cacheDir, 0755)
-		if f, ferr := os.OpenFile(
-			filepath.Join(cacheDir, "lattice-ne.log"),
-			os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644,
-		); ferr == nil {
+		logPath := filepath.Join(cacheDir, "lattice-ne.log")
+		// Append across restarts so a crash's log survives, but start over once
+		// the file is large: at debug level it reached 190 MB, which made the
+		// log impossible to pull off a device and ate the extension's storage.
+		flags := os.O_CREATE | os.O_WRONLY | os.O_APPEND
+		if st, serr := os.Stat(logPath); serr == nil && st.Size() > maxNELogBytes {
+			flags = os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+		}
+		if f, ferr := os.OpenFile(logPath, flags, 0644); ferr == nil {
 			_ = unix.Dup2(int(f.Fd()), 1)
 			_ = unix.Dup2(int(f.Fd()), 2)
 		}
 	}
 	agentlog.SetLevel("debug")
+
+	if e.cfg.DisableUpgrade {
+		transport.UpgradeDisabled = true
+	}
+	if e.cfg.BindInterface != "" {
+		infra.BindInterfaceName = e.cfg.BindInterface
+		relay.BindInterfaceName = e.cfg.BindInterface
+	}
 
 	node, err := latticeagent.NewNode(ctx, &latticeagent.NodeConfig{
 		Logger:             agentlog.GetLogger("lattice-ne"),
@@ -321,25 +415,30 @@ func (e *Engine) run(ctx context.Context) {
 	go e.pollPeerStates(ctx, node)
 	go e.pollRoutes(ctx, node)
 
-	// Deliver decrypted packets to the Swift side. PopOutbound blocks on
-	// the channel, so this goroutine sleeps at the OS level when idle —
-	// a polling variant here wakes the CPU ~1000x/s and NE kills the
-	// process for exceeding the CPU-wake limit within minutes.
-	go func() {
-		for {
-			pkt, ok := t.PopOutbound()
-			if !ok {
-				return
-			}
-			if err := e.delegate.DeliverPacket(pkt); err != nil {
-				return
-			}
-		}
-	}()
-
 	if blob, err := json.Marshal(computeExtraRoutes(node.GetPeerManager().GetAll())); err == nil {
 		e.emitRoutesChanged(string(blob))
 	}
+	// Queue-depth telemetry: makes silent starvation (NE flow stalls, inbound
+	// drops under relay congestion) visible in lattice-ne.log.
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		log := agentlog.GetLogger("lattice-ne")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				e.mu.Lock()
+				tun := e.tun
+				e.mu.Unlock()
+				if tun == nil {
+					continue
+				}
+				log.Info("tun stats", "inbound", len(tun.inbound), "dropped", tun.Dropped())
+			}
+		}
+	}()
 
 	e.emit(EventConnected)
 	e.emitTunnelUp(localIP)

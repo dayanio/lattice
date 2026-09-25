@@ -159,6 +159,13 @@ func (c *TCPClient) Connect() error {
 	if err != nil {
 		return err
 	}
+	// Exit-node bulk traffic rides this single connection; the default
+	// socket buffers cap throughput at high RTT and starve sendCh.
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetWriteBuffer(4 << 20)
+		_ = tcp.SetReadBuffer(4 << 20)
+		BindToPhysicalIfc(tcp)
+	}
 
 	req, err := http.NewRequest("GET", "/ferry/v1/upgrade", nil)
 	if err != nil {
@@ -167,6 +174,11 @@ func (c *TCPClient) Connect() error {
 	}
 	req.Header.Set("Upgrade", "relay")
 	req.Header.Set("Connection", "Upgrade")
+	// serverURL is host:port without a scheme, so NewRequest leaves Host
+	// empty — and Go's http server rejects HTTP/1.1 without a Host header
+	// ("400 Bad Request: missing required Host header"), which made every
+	// relay upgrade fail. Echo the server address as Host.
+	req.Host = c.serverURL
 
 	if err = req.Write(conn); err != nil {
 		conn.Close() //nolint:errcheck

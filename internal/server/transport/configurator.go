@@ -43,7 +43,7 @@ type RouteOps interface {
 // wgConfigurator implements ConnectionConfigurator with idempotent semantics.
 type wgConfigurator struct {
 	mu       sync.Mutex
-	peers    map[string]bool // track which peers have been registered
+	peers    map[string]string // publicKey -> last-applied AllowedIPs
 	peerOps  PeerOps
 	routeOps RouteOps
 }
@@ -52,19 +52,24 @@ type wgConfigurator struct {
 // (operations become no-ops, useful for testing).
 func NewWGConfigurator(peerOps PeerOps, routeOps RouteOps) *wgConfigurator {
 	return &wgConfigurator{
-		peers:    make(map[string]bool),
+		peers:    make(map[string]string),
 		peerOps:  peerOps,
 		routeOps: routeOps,
 	}
 }
 
+// RegisterPeer is idempotent per (publicKey, allowedIPs) pair, not just per
+// publicKey: an already-connected peer whose AllowedIPs widened (e.g. it was
+// just selected as an exit-node route provider) must be re-applied to
+// WireGuard, or the route selection silently never takes effect for a peer
+// that was already up before the selection changed.
 func (c *wgConfigurator) RegisterPeer(publicKey, allowedIPs string) error {
 	c.mu.Lock()
-	if c.peers[publicKey] {
+	if existing, ok := c.peers[publicKey]; ok && existing == allowedIPs {
 		c.mu.Unlock()
-		return nil // idempotent
+		return nil // idempotent: nothing changed
 	}
-	c.peers[publicKey] = true
+	c.peers[publicKey] = allowedIPs
 	c.mu.Unlock()
 
 	if c.peerOps == nil {

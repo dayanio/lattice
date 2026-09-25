@@ -611,7 +611,10 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		}
 		if rErr = node.messageHandler.ApplyFullConfig(rctx, remoteCfg); rErr != nil {
 			node.logger.Error("NATS reconnect: re-apply config failed", rErr)
+			return
 		}
+		node.setAppliedVersion(remoteCfg.ConfigVersion) // keep the refresh skip guard honest
+
 	})
 
 	return node, err
@@ -695,7 +698,16 @@ func (c *Node) RefreshConfig(ctx context.Context) error {
 		c.logger.Debug("netmap refresh skipped: version already applied", "version", v)
 		return nil
 	}
-	return c.messageHandler.ApplyFullConfig(ctx, remoteCfg)
+	if err := c.messageHandler.ApplyFullConfig(ctx, remoteCfg); err != nil {
+		return err
+	}
+	// Record what was applied. Without this the skip guard above compares
+	// against a stale version: after connect (V0) -> select an exit node (V1)
+	// -> switch back to direct (V0), the refresh fetched V0, saw it equal to
+	// the recorded V0 and skipped it, so the exit route stayed installed on
+	// the device after the server had withdrawn it.
+	c.setAppliedVersion(remoteCfg.ConfigVersion)
+	return nil
 }
 
 // Stop gracefully shuts down the Agent. It drains the NATS connection first
@@ -825,6 +837,22 @@ func (c *Node) RemovePeer(peer *infra.Peer) error {
 
 func (c *Node) RemoveAllPeers() {
 	c.provisioner.RemoveAllPeers()
+}
+
+// PrunePeersExcept removes peers that are no longer part of the current
+// netmap: manager entry, WireGuard peer and the per-peer probe all go
+// together, so departed/re-enrolled devices stop being probed forever.
+func (c *Node) PrunePeersExcept(keep map[string]struct{}) {
+	for _, p := range c.GetPeerManager().GetAll() {
+		if _, ok := keep[p.AppID]; ok {
+			continue
+		}
+		c.logger.Info("pruning stale peer (absent from current netmap)", "peer", p.AppID)
+		if err := c.RemovePeer(p); err != nil {
+			c.logger.Warn("prune: remove peer failed", "peer", p.AppID, "err", err)
+		}
+		c.manager.peerManager.RemovePeer(p.AppID)
+	}
 }
 
 func (c *Node) GetDeviceName() string {

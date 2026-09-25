@@ -17,6 +17,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -170,6 +171,18 @@ func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message
 			h.logger.Error("failed to register local peer", err)
 			return err
 		}
+
+		// Exit-node gateway (phase-2 data plane): a node that advertises
+		// routes opts into forwarding mesh traffic out of its WAN. Idempotent
+		// provisioning; Linux v1 (see exit-node dataplane design doc).
+		if len(msg.Current.AdvertisedRoutes) > 0 {
+			meshCIDR := provision.MeshCIDRFromAddr(*msg.Current.Address)
+			if meshCIDR == "" {
+				h.logger.Warn("exit-node gateway: cannot derive mesh CIDR", "addr", *msg.Current.Address)
+			} else if gwErr := provision.EnsureExitGateway(infra.ExecCommand, h.deviceManager.GetDeviceName(), meshCIDR, runtime.GOOS); gwErr != nil {
+				h.logger.Warn("exit-node gateway provisioning failed", "err", gwErr)
+			}
+		}
 	}
 
 	// Apply remote peers
@@ -188,7 +201,22 @@ func (h *MessageHandler) applyFullConfig(ctx context.Context, msg *infra.Message
 }
 
 func (h *MessageHandler) applyRemotePeers(ctx context.Context, msg *infra.Message) error {
+	// Prune peers that dropped out of the netmap (re-enrolled devices under a
+	// new name, removed peers) before re-adding the current set — stale
+	// entries otherwise linger forever, probing dead endpoints and showing
+	// up as ghost peers in the UI.
+	keep := make(map[string]struct{}, len(msg.ComputedPeers)+1)
+	if msg.Current != nil && msg.Current.AppID != "" {
+		keep[msg.Current.AppID] = struct{}{} // self is never in ComputedPeers
+	}
 	for _, peer := range msg.ComputedPeers {
+		keep[peer.AppID] = struct{}{}
+	}
+	h.deviceManager.PrunePeersExcept(keep)
+
+	for _, peer := range msg.ComputedPeers {
+		h.logger.Info("applyRemotePeers store", "peer", peer.Name,
+			"allowedIPs", peer.AllowedIPs, "version", msg.ConfigVersion)
 		// add peer to peers cached and probe start
 		if err := h.deviceManager.AddPeer(peer); err != nil {
 			return err

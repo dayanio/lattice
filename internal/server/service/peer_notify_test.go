@@ -10,6 +10,7 @@ import (
 	"github.com/alatticeio/lattice/internal/license"
 	"github.com/alatticeio/lattice/internal/server/dto"
 	"github.com/alatticeio/lattice/internal/server/models"
+	managementnats "github.com/alatticeio/lattice/internal/server/nats"
 	"github.com/alatticeio/lattice/internal/server/service"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -121,4 +122,42 @@ func TestRegisterStandalone_NormalizesAppID(t *testing.T) {
 	// The push subject derived from the normalized ID is a legal NATS subject.
 	require.Equal(t, "lattice.signals.peers.MacBook-Pro-16.netmap",
 		infra.NetmapChangedSubject(got.AppID))
+}
+
+// A route provider (a peer that advertises routes) coming online or going
+// offline changes what its consumers' netmaps carry, so the workspace is told
+// to refresh right away instead of waiting for the next poll.
+func TestPresenceChange_RouteProviderNotifiesWorkspace(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Peer{}, &models.EnrollmentToken{}, &models.Policy{}, &models.Workspace{}, &models.UserProfile{},
+	))
+	st, err := gormstore.New(db)
+	require.NoError(t, err)
+	ctx := context.Background()
+	require.NoError(t, st.Workspaces().Create(ctx, &models.Workspace{
+		Model: models.Model{ID: "ws1"}, Namespace: "wf-ws1", DisplayName: "Home",
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "exit"}, WorkspaceID: "ws1", Name: "exit", AppID: "app-exit",
+		Address: "10.96.0.2", AdvertisedRoutes: `["0.0.0.0/0"]`,
+	}))
+	require.NoError(t, st.Peers().Create(ctx, &models.Peer{
+		Model: models.Model{ID: "mac"}, WorkspaceID: "ws1", Name: "mac", AppID: "app-mac",
+		Address: "10.96.0.3",
+	}))
+
+	fake := &notifyFakeSignal{}
+	presence := managementnats.NewNodePresenceStore()
+	service.NewPeerService(nil, st, presence, license.NewVerifier("pro"), fake)
+
+	// An ordinary peer's heartbeat changes nobody's netmap: no notification.
+	presence.Update("app-mac")
+	require.Empty(t, fake.subjects, "a non-provider coming online must not notify anyone")
+
+	// The provider coming online notifies the others, never itself.
+	presence.Update("app-exit")
+	require.Contains(t, fake.subjects, infra.NetmapChangedSubject("app-mac"))
+	require.NotContains(t, fake.subjects, infra.NetmapChangedSubject("app-exit"))
 }
