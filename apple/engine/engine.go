@@ -324,8 +324,6 @@ func (e *Engine) splitEnabled() bool {
 }
 
 // currentRoutes builds the payload for the node's present route set and the
-// current split switch.
-// currentRoutes builds the payload for the node's present route set and the
 // current split switch, and puts the packet path into the matching IPv6 mode.
 //
 // The mode and the payload come from the same evaluation so the OS-side routes
