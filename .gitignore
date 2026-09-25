@@ -11,6 +11,8 @@ cmd/management/conf/signaling-deployment.yaml
 .worktrees
 .claude
 data
+# the embedded CN IPv4 block list must be tracked despite the rule above
+!apple/engine/split/data/
 internal/web/dist/*
 !internal/web/dist/placeholder
 !internal/web/dist/.gitkeep

@@ -15,9 +15,11 @@
 package engine
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 
+	"github.com/alatticeio/lattice/apple/engine/split"
 	"github.com/alatticeio/lattice/internal/agent/infra"
 )
 
@@ -55,4 +57,48 @@ func computeExtraRoutes(peers []*infra.Peer) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// maxStaticExcludes caps how many CN blocks are handed to the OS as excluded
+// routes. The M0 device experiment measured the full embedded set (~5,500
+// blocks) installing in under a second without disturbing the tunnel, so the
+// cap is disabled. A non-zero value would keep only the LARGEST blocks.
+const maxStaticExcludes = 0
+
+// routesPayload encodes what OnRoutesChanged carries. With nothing excluded it
+// stays the legacy bare JSON array, so an older Swift side keeps decoding it;
+// with excluded routes it is {"included":[...],"excluded":[...]}.
+func routesPayload(included, excluded []string) (string, error) {
+	if included == nil {
+		included = []string{}
+	}
+	if len(excluded) == 0 {
+		b, err := json.Marshal(included)
+		return string(b), err
+	}
+	b, err := json.Marshal(struct {
+		Included []string `json:"included"`
+		Excluded []string `json:"excluded"`
+	}{included, excluded})
+	return string(b), err
+}
+
+// splitExcluded returns the CN blocks to bypass the tunnel: only when the
+// switch is on AND an exit node's default route (0.0.0.0/0) is in play. Any
+// other situation returns nil — "no exclusions" is always the safe answer.
+func splitExcluded(included []string, enabled bool, set *split.CNSet, budget int) []string {
+	if !enabled || set == nil {
+		return nil
+	}
+	for _, r := range included {
+		if r == "0.0.0.0/0" {
+			return set.Routes(budget)
+		}
+	}
+	return nil
+}
+
+// routesSnapshot builds the OnRoutesChanged payload for the current state.
+func routesSnapshot(included []string, enabled bool, set *split.CNSet, budget int) (string, error) {
+	return routesPayload(included, splitExcluded(included, enabled, set, budget))
 }
