@@ -12,15 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !darwin
+//go:build darwin
 
-package relay
+package engine
 
-import "net"
+import "syscall"
 
-// BindInterfaceName is only honoured on darwin (see iface_darwin.go); it is
-// declared here so callers such as apple/engine compile on every platform.
-var BindInterfaceName string
-
-// BindToPhysicalIfc is a no-op off darwin.
-func BindToPhysicalIfc(conn *net.TCPConn) {}
+// boundToInterface returns a net.Dialer Control that pins the socket to the
+// interface with index idx (IP_BOUND_IF), so it bypasses the routing table.
+func boundToInterface(idx int) func(network, address string, c syscall.RawConn) error {
+	return func(_, _ string, c syscall.RawConn) error {
+		var cerr error
+		if err := c.Control(func(fd uintptr) {
+			cerr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_BOUND_IF, idx)
+		}); err != nil {
+			return err
+		}
+		return cerr
+	}
+}
