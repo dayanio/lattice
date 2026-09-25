@@ -127,16 +127,15 @@ type frameWriter interface {
 	Write(p []byte) (int, error)
 }
 
-// sendFrame writes one complete frame (header + payload) to the stream.
+// sendFrame writes one complete frame (header + payload) to the stream in a
+// single Write. Two Writes would let another goroutine's frame land between
+// the header and the payload and corrupt the stream.
 func sendFrame(w frameWriter, cmd uint8, payload []byte) error {
 	h := Header{PayloadLen: uint32(len(payload)), Cmd: cmd}
-	if _, err := w.Write(h.Marshal()); err != nil {
-		return err
-	}
-	if len(payload) == 0 {
-		return nil
-	}
-	_, err := w.Write(payload)
+	frame := make([]byte, 0, HeaderSize+len(payload))
+	frame = append(frame, h.Marshal()...)
+	frame = append(frame, payload...)
+	_, err := w.Write(frame)
 	return err
 }
 

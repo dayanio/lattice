@@ -17,12 +17,20 @@ package relay
 import (
 	"bufio"
 	"net"
+	"sync"
 )
 
-// ReadWriterConn wrapper for missed data when hijack occurs, for using Read/Write fn
+// ReadWriterConn wrapper for missed data when hijack occurs, for using Read/Write fn.
+//
+// Its writer is a bufio.Writer, which is not safe for concurrent use, yet a
+// relay session's stream is written from several goroutines (the session's
+// own handler and every peer relaying to it). Write therefore holds a mutex
+// for the whole write + flush, so each Write call lands on the wire whole.
 type ReadWriterConn struct {
 	net.Conn
 	*bufio.ReadWriter
+
+	wmu sync.Mutex
 }
 
 func (c *ReadWriterConn) Read(p []byte) (int, error) {
@@ -30,6 +38,8 @@ func (c *ReadWriterConn) Read(p []byte) (int, error) {
 }
 
 func (c *ReadWriterConn) Write(p []byte) (int, error) {
+	c.wmu.Lock()
+	defer c.wmu.Unlock()
 	n, err := c.ReadWriter.Write(p)
 	if err != nil {
 		return n, err
