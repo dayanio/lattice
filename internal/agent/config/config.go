@@ -293,6 +293,14 @@ type Config struct {
 	// LATTICE_RELAY_URL.
 	RelayAdvertiseURL string `mapstructure:"relay-advertise-url"`
 	RelayQuicURL      string `mapstructure:"relay-quic-url"` // QUIC relay connection address, empty=disabled
+
+	// OverlayIPv6 makes the standalone control plane's netmap dual-stack: every
+	// peer's AllowedIPs gains its derived overlay IPv6 /128, and an exit node that
+	// reports a working IPv6 egress hands "::/0" to its consumers. Off by default:
+	// clients that predate IPv6 support break on IPv6 CIDRs in the netmap, so
+	// upgrade the clients first, then turn this on.
+	OverlayIPv6 bool `mapstructure:"overlay-ipv6"`
+
 	// RelayAuthToken is the shared secret Relay relay clients must present in
 	// their Register frame. Empty disables relay authentication (legacy
 	// open relay). Configure the same value on the relay server side
@@ -649,6 +657,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("stun-url", "") // empty: use discovered value from server, or fall back in stunURIs()
 	v.SetDefault("relay-url", ":6266")
 	v.SetDefault("relay-advertise-url", "")
+	v.SetDefault("overlay-ipv6", false)
 	v.SetDefault("relay-quic-url", "")
 	v.SetDefault("relay-auth-token", "")
 	v.SetDefault("relay-require-peer-auth", false)
