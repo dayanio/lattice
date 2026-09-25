@@ -23,7 +23,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -451,15 +450,7 @@ func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP 
 			servers = []string{"8.8.8.8", "1.1.1.1"}
 			client.Dialer = &net.Dialer{
 				Timeout: 3 * time.Second,
-				Control: func(_, _ string, c syscall.RawConn) error {
-					var cerr error
-					if err := c.Control(func(fd uintptr) {
-						cerr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_BOUND_IF, idx)
-					}); err != nil {
-						return err
-					}
-					return cerr
-				},
+				Control: boundToInterface(idx),
 			}
 		}
 		var resp *dns.Msg

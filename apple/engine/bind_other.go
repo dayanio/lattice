@@ -14,13 +14,19 @@
 
 //go:build !darwin
 
-package relay
+package engine
 
-import "net"
+import (
+	"errors"
+	"syscall"
+)
 
-// BindInterfaceName is only honoured on darwin (see iface_darwin.go); it is
-// declared here so callers such as apple/engine compile on every platform.
-var BindInterfaceName string
-
-// BindToPhysicalIfc is a no-op off darwin.
-func BindToPhysicalIfc(conn *net.TCPConn) {}
+// boundToInterface has no implementation off darwin (IP_BOUND_IF is a darwin
+// socket option). The returned Control fails the dial rather than letting an
+// unbound socket through: a query that was meant to be pinned to the tunnel
+// but goes out the default route would silently do the wrong thing.
+func boundToInterface(int) func(network, address string, c syscall.RawConn) error {
+	return func(_, _ string, _ syscall.RawConn) error {
+		return errors.New("binding a socket to an interface is only supported on darwin")
+	}
+}
