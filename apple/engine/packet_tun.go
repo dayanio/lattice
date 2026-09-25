@@ -65,6 +65,11 @@ type packetTUN struct {
 	upstreamDNS []string
 	// peerSource 提供当前组网设备表（名字 → overlay 地址）。
 	peerSource func() []*infra.Peer
+	// ifaceIndex finds the tunnel interface the upstream DNS sockets bind to
+	// (0 = none, i.e. not in exit mode). It is a field so tests can pin it
+	// instead of depending on whether the host happens to have an overlay
+	// interface up (a developer machine with Lattice connected does).
+	ifaceIndex func() int
 	// localIP 本节点的 overlay 地址；Write 方向只投递 dst=本机 的包。
 	// 目的地址非本机的包（内核 ICMP 错误风暴/环路包）若照常投递会经
 	// 路由表再进隧道，形成自放大循环直到管道被挤死。
@@ -149,6 +154,8 @@ func newPacketTUN(name string, mtu int, egressFD int) *packetTUN {
 		inbound:  make(chan []byte, 512),
 		events:   make(chan tun.Event, 4),
 		closedCh: make(chan struct{}),
+
+		ifaceIndex: tunnelIfaceIndex,
 	}
 	if egressFD > 0 {
 		f := os.NewFile(uintptr(egressFD), "ne-tun-egress")
@@ -436,7 +443,7 @@ func swapUDPReply(packet []byte, ihl int, srcIP, dstIP net.IP, srcPort, dstPort 
 func (t *packetTUN) forwardDNSAsync(query *dns.Msg, packet []byte, srcIP, dstIP net.IP, srcPort, dstPort uint16, servers []string) {
 	go func() {
 		client := &dns.Client{Net: "udp", Timeout: 3 * time.Second}
-		if idx := tunnelIfaceIndex(); idx != 0 {
+		if idx := t.ifaceIndex(); idx != 0 {
 			// Bound to the tunnel = exit mode: resolve at the exit side with
 			// anycast resolvers instead of the local network's (CN) resolver —
 			// querying 114 from the HK exit adds a CN roundtrip per lookup and

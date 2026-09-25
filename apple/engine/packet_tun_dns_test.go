@@ -60,6 +60,8 @@ func newTestTUN(t *testing.T) (*packetTUN, *os.File) {
 		t.Fatalf("pipe: %v", err)
 	}
 	pt := newPacketTUN("lattice", 1280, int(w.Fd()))
+	// Hermetic: pretend no tunnel interface exists, whatever the host has up.
+	pt.ifaceIndex = func() int { return 0 }
 	t.Cleanup(func() { r.Close(); w.Close(); _ = pt.Close() })
 	return pt, r
 }
