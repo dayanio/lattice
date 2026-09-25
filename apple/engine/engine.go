@@ -38,6 +38,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/alatticeio/lattice/apple/engine/split"
 	latticeagent "github.com/alatticeio/lattice/internal/agent"
 	agentconfig "github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -88,12 +89,14 @@ type EngineDelegate interface {
 	// direct-path echo RTT in ms (absent = unmeasured). Emitted whenever
 	// the snapshot changes while the tunnel is up.
 	OnPeerStates(statesJSON string)
-	// OnRoutesChanged reports the current set of extra CIDRs (beyond the
-	// base overlay /24) this node should route into the tunnel, as a JSON
-	// array of strings, e.g. ["192.168.1.0/24"] or ["0.0.0.0/0"] for an
-	// Exit Node. Emitted once when the tunnel comes up and again whenever
-	// the set changes (a route was selected/deselected, or a selected
-	// provider changed/cleared what it advertises).
+	// OnRoutesChanged reports the routes this node should install, as JSON.
+	// Without excluded routes it is a bare array of CIDRs to route into the
+	// tunnel beyond the base overlay /24 — e.g. ["192.168.1.0/24"], or
+	// ["0.0.0.0/0"] for an Exit Node. With "China direct" on and an exit node
+	// selected it is {"included":[...],"excluded":[...]}, where excluded lists
+	// CIDRs that must bypass the tunnel. Emitted once when the tunnel comes up
+	// and again whenever the set changes (a route was selected/deselected, a
+	// selected provider changed what it advertises, or the split switch flipped).
 	OnRoutesChanged(routesJSON string)
 }
 
@@ -114,6 +117,10 @@ type engineConfig struct {
 	// this physical interface (macOS NE self-capture workaround). Empty = no
 	// binding.
 	BindInterface string `json:"bindInterface"`
+	// SplitRouting starts the tunnel with "China direct" on: while an exit node
+	// is selected, CN IP blocks bypass the tunnel. It can be flipped at runtime
+	// with SetSplitRouting.
+	SplitRouting bool `json:"splitRouting"`
 }
 
 // Engine is the long-running mesh engine. Create one per tunnel session via
@@ -133,6 +140,8 @@ type Engine struct {
 	stopOnce           sync.Once
 	pendingUpstreamDNS []string // applied to the TUN on creation (see SetUpstreamDNS)
 	batchStats         struct{ calls, packets int }
+	splitRouting       bool          // guarded by mu
+	routesKick         chan struct{} // wakes pollRoutes to re-emit right away (buffered 1)
 }
 
 // NewEngine validates the config and returns an engine bound to delegate.
@@ -155,8 +164,10 @@ func NewEngine(configJSON string, delegate EngineDelegate) (*Engine, error) {
 		cfg.MTU = DefaultMTU
 	}
 	return &Engine{
-		cfg:      cfg,
-		delegate: delegate,
+		cfg:          cfg,
+		delegate:     delegate,
+		splitRouting: cfg.SplitRouting,
+		routesKick:   make(chan struct{}, 1),
 	}, nil
 }
 
@@ -284,6 +295,37 @@ func (e *Engine) SetUpstreamDNS(servers string) {
 	if t != nil {
 		t.SetUpstreamDNS(list)
 	}
+}
+
+// SetSplitRouting turns "China direct" on or off while the tunnel runs. A real
+// change re-emits the route snapshot immediately (OnRoutesChanged); repeating
+// the current value is a no-op, so the Swift side never re-applies network
+// settings for nothing. It does not reconnect the tunnel.
+func (e *Engine) SetSplitRouting(enabled bool) {
+	e.mu.Lock()
+	changed := e.splitRouting != enabled
+	e.splitRouting = enabled
+	e.mu.Unlock()
+	if !changed {
+		return
+	}
+	select {
+	case e.routesKick <- struct{}{}:
+	default: // a kick is already pending
+	}
+}
+
+func (e *Engine) splitEnabled() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.splitRouting
+}
+
+// currentRoutes builds the payload for the node's present route set and the
+// current split switch.
+func (e *Engine) currentRoutes(node *latticeagent.Node) (string, error) {
+	included := computeExtraRoutes(node.GetPeerManager().GetAll())
+	return routesSnapshot(included, e.splitEnabled(), split.DefaultCNSet(), maxStaticExcludes)
 }
 
 // run is the blocking engine loop: enroll, bring up the node, pump packets,
@@ -415,8 +457,8 @@ func (e *Engine) run(ctx context.Context) {
 	go e.pollPeerStates(ctx, node)
 	go e.pollRoutes(ctx, node)
 
-	if blob, err := json.Marshal(computeExtraRoutes(node.GetPeerManager().GetAll())); err == nil {
-		e.emitRoutesChanged(string(blob))
+	if blob, err := e.currentRoutes(node); err == nil {
+		e.emitRoutesChanged(blob)
 	}
 	// Queue-depth telemetry: makes silent starvation (NE flow stalls, inbound
 	// drops under relay congestion) visible in lattice-ne.log.
@@ -526,20 +568,22 @@ func (e *Engine) pollRoutes(ctx context.Context, node *latticeagent.Node) {
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	var last string
+	emit := func() {
+		blob, err := e.currentRoutes(node)
+		if err != nil || blob == last {
+			return
+		}
+		last = blob
+		e.emitRoutesChanged(blob)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			blob, err := json.Marshal(computeExtraRoutes(node.GetPeerManager().GetAll()))
-			if err != nil {
-				continue
-			}
-			if string(blob) == last {
-				continue
-			}
-			last = string(blob)
-			e.emitRoutesChanged(last)
+			emit()
+		case <-e.routesKick:
+			emit()
 		}
 	}
 }
