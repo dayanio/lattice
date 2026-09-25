@@ -82,7 +82,7 @@
 - **推导**：peer 的 IPv6 = 前缀 + 其 IPv4 作为低 32 位。例：`10.96.0.4` → `fd6c:7270:6c74::a60:4`。
 - **一个共享函数**（新包 `internal/overlay6`，服务端、agent、引擎都引用；引擎在同一个 Go module 内，可以直接引用 `internal/`）统一负责推导与「是否 IPv6 CIDR」的判断，避免各处各写一份导致漂移。
 - **netmap 输出**：每个 peer 的 `AllowedIPs` 从 `<v4>/32` 变为 `<v4>/32,<v6>/128`。出口 provider 通告了 `::/0` 时（见 §5.2），消费者除现有的 `0.0.0.0/0` 外再多得到 `::/0`。
-- **收拢硬编码**：上表所列所有 `/32` 硬编码点必须走同一个辅助函数。之前出过「信令自描述把 netmap 扩宽的 AllowedIPs 又缩回 `/32`」的 bug（`57230f68`），IPv6 会以同样的方式被悄悄抹掉。
+- **`AllowedIPs` 里的 `/32` 只有一处产生**：`netmap_builder.go` 的 `dbToInfraPeer`。上表里 agent 侧的五处（`probe_factory.go` 三处、`message_handler.go` 两处）都是「值为空时的兜底」，仍生成 IPv4 `/32`，由下一次 netmap 覆盖；`mergeAllowedIPs` 按字符串取并集，天然保留 IPv6，不会像 `57230f68` 修的那个 bug 一样把扩宽的值缩回去。**唯一会覆盖本机 `AllowedIPs` 的是 `message_handler.go` 里 `Changes.AddressChanged` 那一支**（强制写成 `<addr>/32`），要改成保留已有的 IPv6 `/128`。
 - **网关地址**：`<前缀>::1` 留作 ICMPv6 的源地址（§5.3）。它对应 IPv4 `0.0.0.1`，不在 `10/8` 内，不会与任何 peer 冲突。
 
 ### 5.2 出口 agent 与能力汇报
@@ -94,17 +94,19 @@
 **netmap 展开条件。** 给消费者加 `::/0` 当且仅当：provider 声明了 `0.0.0.0/0`，**且**在线（已有的 `providerLive`），**且** `ipv6Egress=true`。
 
 **探测**（仅在本节点是出口时进行）：
-1. 内核有到 IPv6 互联网的路由：`ip -6 route get 2606:4700:4700::1111` 成功，出接口不是 `wf0` 或回环，且本机有全局作用域的 IPv6 地址。
-2. 真的能通：对 `[2606:4700:4700::1111]:443` 或 `[2001:4860:4860::8888]:443` 任一做 TCP 连接，3 秒超时。云安全组拦出站 IPv6 的情况在这一步暴露。
+1. 本机有全局作用域的 IPv6 地址（不是 link-local，也不是 ULA）。
+2. 真的能通：对 `[2606:4700:4700::1111]:443` 或 `[2001:4860:4860::8888]:443` 任一做 TCP 连接，3 秒超时。连接成功已经蕴含「有到 IPv6 互联网的路由」，所以不再单独检查路由；云安全组拦出站 IPv6 的情况在这一步暴露。
 
 每 60 秒一次；**滞回**：连续 2 次失败才撤回，1 次成功即声明。撤回的代价是客户端切到黑洞，所以不能抖。只有 link-local 或只有 ULA 地址，一律视为「无」。
 
 **能力撤回的端到端时间**（验收 C 的「约 3 分钟」由此而来，最坏情况）：故障发生后最多 60 s 才被下一次探测发现，再连续失败 1 次又要 60 s（合计最多 120 s）；下一次心跳最多再等 30 s（心跳间隔）；服务端刷新 netmap 并推送到客户端最多再 30 s（客户端轮询间隔）。合计不超过约 3 分钟。恢复方向只需 1 次探测成功，比撤回快。
 
+**先装规则，再汇报。** 探测通过后，agent 先安装下面的转发与 NAT66 规则，**规则装成功才汇报能力**；安装失败按探测失败处理，下一次探测重试。否则消费者会把 IPv6 送进一个转发不了的出口，网页全部卡死。
+
 **数据面配置**（Linux，仅在探测通过后才装）：
-- 先给 WAN 网卡设 `net.ipv6.conf.<wan>.accept_ra=2`，**再**开 `net.ipv6.conf.all.forwarding=1`。**原因**：Linux 打开 IPv6 转发后默认不再接受路由通告（RA），依赖 SLAAC 的云主机会丢掉默认路由，IPv6 立刻断。
+- WAN 网卡取自 IPv6 默认路由的 `dev` 字段（不是固定第 5 列：无下一跳的默认路由 `default dev eth0 metric 1024` 会让列错位）。先给 WAN 网卡设 `net.ipv6.conf.<wan>.accept_ra=2`，**再**开 `net.ipv6.conf.all.forwarding=1`。**原因**：Linux 打开 IPv6 转发后默认不再接受路由通告（RA），依赖 SLAAC 的云主机会丢掉默认路由，IPv6 立刻断。
 - `ip6tables` 的 FORWARD 规则（入向 `wf0`、回程 `ESTABLISHED,RELATED`）加 `-t nat POSTROUTING -o <wan> -s <mesh /64> -j MASQUERADE`（NAT66）。
-- `wf0` 上配 `ip -6 addr replace <v6>/128`（现在 `provision_linux.go` 只配 IPv4）。
+- `wf0` 上配 `ip -6 addr replace <v6>/128`，并 `ip -6 route replace <mesh /64> dev wf0`，让回给 peer 的包能回到隧道（现在 `provision_linux.go` 只配 IPv4）。本机 overlay IPv6 取自 netmap 里本机 `AllowedIPs` 的 `/128`（服务端开关打开时才有），agent 不需要知道开关状态；配置失败只记警告，不让整个 netmap 应用失败。
 - 沿用 `ExitGatewayCommands` 的「先检查再添加」幂等风格，新增 `ExitGateway6Commands`。撤回时不拆规则（无害），只是不再通告。
 
 ### 5.3 客户端（引擎与 NE）
@@ -131,7 +133,7 @@
 | 新出口 agent + 旧服务端 | 心跳的新字段被忽略，没有 `::/0`，新客户端走黑洞 |
 | **旧客户端 + 新服务端** | **会出问题**：netmap 里多出的 IPv6 CIDR 被旧引擎当成「额外路由」发给旧 Swift，`::/0` 会被误解析成无效的 IPv4 路由，`setTunnelNetworkSettings` 失败，隧道起不来 |
 
-- **对策**：服务端配置项 `overlay.ipv6Enabled`（布尔，**默认 `false`**）；关闭时 netmap 与升级前**逐字节一致**，presence 里的 `ipv6Egress` 仍会被记录但不影响输出。上线顺序：先升级客户端，再打开开关。出问题关掉开关即可回滚。
+- **对策**：服务端配置项 `overlay-ipv6`（布尔，**默认 `false`**；环境变量 `LATTICE_OVERLAY_IPV6`，与现有的扁平配置键风格一致）；关闭时 netmap 与升级前**逐字节一致**，presence 里的 `ipv6Egress` 仍会被记录但不影响输出。上线顺序：先升级客户端，再打开开关。出问题关掉开关即可回滚。
 - 新引擎另有防御：拆分 IPv4/IPv6 CIDR，且跳过 overlay `/128`（§5.3）。
 
 ## 六、错误处理与安全
@@ -147,7 +149,7 @@
 
 **单元测试（无需设备）**
 - `overlay6`：推导（多个边界 IPv4，含 `10.96.0.4`、`10.96.0.255`）、双向一致、IPv6 CIDR 判断。
-- netmap：`AllowedIPs` 双栈输出；开关关闭时与旧输出**逐字节一致**；`::/0` 展开条件（在线 / 离线、`ipv6Egress` 真假）；所有 `/32` 硬编码点已收拢。
+- netmap：`AllowedIPs` 双栈输出；开关关闭时与旧输出**逐字节一致**；`::/0` 展开条件（在线 / 离线、`ipv6Egress` 真假）；`Changes.AddressChanged` 分支不再抹掉本机的 IPv6 `/128`。
 - presence：`ipv6Egress` 变化触发回调，重复值不触发。
 - Linux agent：`ExitGateway6Commands` 命令生成（含 `accept_ra=2` 先于转发）；探测逻辑（注入 runner 与 dialer）；滞回（注入时钟）。
 - 引擎：ICMPv6 构造（用独立实现的校验和函数验证伪首部校验和合法）；模式判定表；限速；对链路本地、组播、ICMPv6 错误包不回应；`Write` 与 `isLocalDst` 的 IPv6 分支；`computeExtraRoutes` 拆分与跳过 `/128`；路由载荷 `overlay6` 的编码。
@@ -162,7 +164,7 @@
 | 步骤 | 内容 | 仓库 |
 |---|---|---|
 | 1 | 共享包 `overlay6`：推导、IPv6 CIDR 判断，单元测试 | 开源 |
-| 2 | 服务端：netmap 双栈（开关默认关）、收拢 `/32` 硬编码、presence 记录 `ipv6Egress`、`::/0` 展开条件 | 开源 |
+| 2 | 服务端：netmap 双栈（开关默认关）、在 netmap 里产生 `AllowedIPs` 的位置加上 IPv6、presence 记录 `ipv6Egress`、`::/0` 展开条件 | 开源 |
 | 3 | Linux agent：`wf0` 配 IPv6、能力探测、心跳汇报、`ExitGateway6Commands` | 开源 |
 | 4 | 引擎：路由拆分、模式判定、ICMPv6 黑洞、`Write` 与 `isLocalDst`、载荷加 `overlay6` | 开源 |
 | 5 | Swift：协议族选择、`NEIPv6Settings`、载荷解析（iOS + Mac 扩展） | 私有 |
@@ -180,6 +182,7 @@
 | 2 | **验证环境**：现有出口机没有 IPv6，B、C 无法验证 | 需要一台带 IPv6 出口的机器（给这台开通 IPv6，或另备一台）；不阻塞设计和实现，只影响双栈分支的真机验收 |
 | 3 | 旧客户端遇到 IPv6 CIDR 会起不来隧道 | §5.4：服务端开关默认关，先升级客户端再开 |
 | 4 | Linux 开 IPv6 转发会丢 RA 默认路由 | §5.2：先设 `accept_ra=2` |
+| 5a | **服务端重启会清空出口能力状态**（存在内存里的 presence 中） | 出口 agent 的下一次心跳（最多 30 s）就会恢复；这段时间选了出口的设备走黑洞，IPv6 回退到 IPv4，不会泄露也不会断。可接受 |
 | 5 | NAT66 的 conntrack 规模 | 与 IPv4 的 MASQUERADE 同量级，沿用同样的运维方式；本期不做额外调优 |
 | 6 | 黑洞模式下，只有 IPv6 的目标（少见）无法访问 | 这是选择黑洞的代价；有 IPv6 的出口用户不受影响 |
 | 7 | 探测目标（Cloudflare、Google 的公共 IPv6 地址）在某些网络不可达导致误判为「无」 | 误判的方向是安全的（走黑洞）；探测目标可配置 |
