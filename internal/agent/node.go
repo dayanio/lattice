@@ -133,6 +133,7 @@ type Node struct {
 
 	appliedVersionMu sync.RWMutex
 	appliedVersion   string // last successfully applied netmap ConfigVersion
+	onNetmapApplied  func() // see SetOnNetmapApplied; guarded by appliedVersionMu
 	startedAt        time.Time
 
 	// GetNetworkMap is set externally after NewAgent returns and before Start
@@ -781,6 +782,22 @@ func (c *Node) close() {
 func (c *Node) setAppliedVersion(v string) {
 	c.appliedVersionMu.Lock()
 	c.appliedVersion = v
+	notify := c.onNetmapApplied
+	c.appliedVersionMu.Unlock()
+	if notify != nil {
+		notify()
+	}
+}
+
+// SetOnNetmapApplied registers f to run every time a netmap has been applied
+// (pushed notification, periodic refresh, reconnect or incremental event), from
+// the goroutine that applied it, after the peer table already reflects it.
+// Embedders that derive state from the peer table (the Apple engine's route
+// snapshot) use it to react at once instead of polling. f must not block. Pass
+// nil to clear it.
+func (c *Node) SetOnNetmapApplied(f func()) {
+	c.appliedVersionMu.Lock()
+	c.onNetmapApplied = f
 	c.appliedVersionMu.Unlock()
 }
 
