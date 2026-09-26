@@ -105,3 +105,48 @@ func TestRefreshConfig_FailedApplyIsNotRecordedAndIsRetried(t *testing.T) {
 	require.NoError(t, n.RefreshConfig(ctx))
 	assert.Equal(t, []string{"v1"}, h.applied, "the retry after a failure must apply")
 }
+
+// The hook fires once per applied netmap, after the apply succeeded, and not for
+// a refresh that was skipped or failed: the Apple engine emits its route snapshot
+// from it, so a spurious call is wasted work and a missing one is a stale route.
+func TestRefreshConfig_NotifiesOnlyWhenANetmapWasApplied(t *testing.T) {
+	h := &recordingHandler{}
+	msg := &infra.Message{ConfigVersion: "v1"}
+	n := newRefreshNode(h, &msg)
+	ctx := context.Background()
+
+	calls, appliedAtCall := 0, []int{}
+	n.SetOnNetmapApplied(func() {
+		calls++
+		appliedAtCall = append(appliedAtCall, len(h.applied))
+	})
+
+	n.setAppliedVersion("v0")
+	calls, appliedAtCall = 0, nil // recording the starting version is not an apply
+
+	require.NoError(t, n.RefreshConfig(ctx)) // v1: applied
+	require.NoError(t, n.RefreshConfig(ctx)) // v1 again: skipped
+	assert.Equal(t, 1, calls, "one applied netmap, one notification")
+	assert.Equal(t, []int{1}, appliedAtCall, "the notification comes after the handler applied it")
+
+	h.err = errors.New("boom")
+	msg = &infra.Message{ConfigVersion: "v2"}
+	require.Error(t, n.RefreshConfig(ctx))
+	assert.Equal(t, 1, calls, "a failed apply must not notify")
+
+	h.err = nil
+	require.NoError(t, n.RefreshConfig(ctx))
+	assert.Equal(t, 2, calls, "the retry that succeeds notifies")
+}
+
+// No hook registered, or the hook cleared, is fine.
+func TestSetOnNetmapApplied_NilAndClear(t *testing.T) {
+	n := &Node{}
+	assert.NotPanics(t, func() { n.setAppliedVersion("v1") })
+
+	called := false
+	n.SetOnNetmapApplied(func() { called = true })
+	n.SetOnNetmapApplied(nil)
+	n.setAppliedVersion("v2")
+	assert.False(t, called, "a cleared hook must not run")
+}
