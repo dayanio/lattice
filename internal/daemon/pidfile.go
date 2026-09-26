@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // PidFilePath returns the default pidfile path under dir.
@@ -51,12 +50,14 @@ func Read(path string) (int, error) {
 	return pid, nil
 }
 
-// IsAlive reports whether the process is running (signal 0 probe).
+// IsAlive reports whether the process is running. The probe is platform
+// specific (pidfile_unix.go, pidfile_windows.go): syscall.Kill does not exist
+// on Windows.
 func IsAlive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	return syscall.Kill(pid, 0) == nil
+	return processAlive(pid)
 }
 
 // Remove deletes the pidfile if present.
