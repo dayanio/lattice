@@ -133,7 +133,9 @@ func TestPathPing_PeerThatNeverAnswersIsNeverDeclaredDead(t *testing.T) {
 	}
 }
 
-func TestPathPing_ResponderDoesNotPing(t *testing.T) {
+// The responder pings too, to have a latency to show: without it, a device that is the
+// responder toward a peer never measured one.
+func TestPathPing_ResponderMeasuresTheRTT(t *testing.T) {
 	fastPathPing(t)
 	var restarted atomic.Int32
 	s := &scriptedPinger{reply: func(int) bool { return true }}
@@ -141,9 +143,61 @@ func TestPathPing_ResponderDoesNotPing(t *testing.T) {
 
 	p.startPathPing()
 
+	waitUntil(t, 2*time.Second, func() bool { return s.count() >= 3 }, "a responder pings the direct path")
+	if p.RTT() <= 0 {
+		t.Fatal("a responder that got answers has no RTT")
+	}
+	if n := restarted.Load(); n != 0 {
+		t.Fatalf("the responder restarted the probe %d time(s) over a healthy path", n)
+	}
+}
+
+// The responder only measures: when the path dies it drops the stale RTT but leaves the restart to
+// the initiator, and keeps pinging in case the path comes back.
+func TestPathPing_ResponderNeverRestartsAndClearsTheRTT(t *testing.T) {
+	fastPathPing(t)
+	var restarted atomic.Int32
+	s := &scriptedPinger{reply: func(n int) bool { return n <= 3 }} // alive, then the path dies
+	p := newPingProbe(t, false, s, &restarted)
+
+	p.startPathPing()
+
+	waitUntil(t, 2*time.Second, func() bool { return s.count() >= 3+pathPingMisses+2 }, "keeps pinging after the path dies")
+	waitUntil(t, 2*time.Second, func() bool { return p.RTT() == 0 }, "the RTT of a dead path is dropped")
+	if n := restarted.Load(); n != 0 {
+		t.Fatalf("a responder restarted the probe %d time(s); that is the initiator's decision", n)
+	}
+}
+
+// A path that comes back after the responder dropped the RTT is measured again.
+func TestPathPing_ResponderMeasuresAgainWhenThePathReturns(t *testing.T) {
+	fastPathPing(t)
+	var restarted atomic.Int32
+	// answered, silent for a while, answered again
+	s := &scriptedPinger{reply: func(n int) bool { return n <= 2 || n > 2+pathPingMisses+2 }}
+	p := newPingProbe(t, false, s, &restarted)
+
+	p.startPathPing()
+
+	waitUntil(t, 2*time.Second, func() bool { return s.count() > 2+pathPingMisses+2 && p.RTT() > 0 }, "the RTT is back after the path returns")
+}
+
+// An older peer never answers, whichever end asks: stop pinging it.
+func TestPathPing_ResponderGivesUpOnAPeerThatNeverAnswers(t *testing.T) {
+	fastPathPing(t)
+	var restarted atomic.Int32
+	s := &scriptedPinger{reply: func(int) bool { return false }}
+	p := newPingProbe(t, false, s, &restarted)
+
+	p.startPathPing()
+
+	waitUntil(t, 2*time.Second, func() bool { return s.count() >= pathPingGiveUp }, "gives up after pathPingGiveUp pings")
 	time.Sleep(100 * time.Millisecond)
-	if n := s.count(); n != 0 {
-		t.Fatalf("responder sent %d pings; only the initiator watches the path", n)
+	if got := s.count(); got != pathPingGiveUp {
+		t.Fatalf("kept pinging a peer that never answers: %d pings, want it to stop at %d", got, pathPingGiveUp)
+	}
+	if restarted.Load() != 0 {
+		t.Fatal("restarted a probe for a peer that never supported echo")
 	}
 }
 

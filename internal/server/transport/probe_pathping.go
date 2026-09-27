@@ -50,8 +50,16 @@ func (p *Probe) SetRTT(d time.Duration) {
 // RTT returns the latest measured direct-path RTT, 0 if none.
 func (p *Probe) RTT() time.Duration { return time.Duration(p.rttNano.Load()) }
 
-// startPathPing watches the direct path with periodic echoes while the probe is
-// ice-ready. Only the initiator pings; a reply proves both directions work.
+// startPathPing pings the direct path with periodic echoes while the probe is
+// ice-ready, and records the round-trip time. A reply proves both directions work.
+//
+// Both ends ping, but only the initiator acts on the answer: the initiator
+// watches the path (below) and restarts the probe when it dies; the responder
+// only measures. Without the responder's pings a device that is the responder
+// toward a peer (an iPhone toward the exit node, say) never had a latency for it,
+// because the RTT comes from these echoes. The responder never restarts a probe:
+// two ends deciding the same path is dead would restart it twice, and the
+// initiator's decision is the one that already exists.
 //
 // WireGuard alone cannot do this. The responder sees the initiator's keepalives
 // (livenessTracker), but the initiator receives nothing periodic, so a path that
@@ -63,9 +71,10 @@ func (p *Probe) RTT() time.Duration { return time.Duration(p.rttNano.Load()) }
 // unanswered pings and the peer keeps the older rules; treating its silence as
 // a dead path would restart a healthy connection every half minute.
 func (p *Probe) startPathPing() {
-	if p.pathPing == nil || !isInitiator(p.localId, p.remoteId) {
+	if p.pathPing == nil {
 		return
 	}
+	initiator := isInitiator(p.localId, p.remoteId)
 	p.mu.RLock()
 	t := p.currentTransport
 	p.mu.RUnlock()
@@ -103,6 +112,10 @@ func (p *Probe) startPathPing() {
 			case !armed && sent >= pathPingGiveUp:
 				p.log.Debug("peer does not answer path echoes, relying on handshake and rx checks", "remoteId", p.remoteId.AppID)
 				return
+			case armed && unanswered >= pathPingMisses && !initiator:
+				// Only measuring: the number on screen must not outlive the path, and the path may
+				// come back, so keep pinging. Restarting is the initiator's call.
+				p.SetRTT(0)
 			case armed && unanswered >= pathPingMisses:
 				p.log.Warn("direct path stopped answering, restarting probe",
 					"remoteId", p.remoteId.AppID, "addr", addr, "misses", unanswered)
