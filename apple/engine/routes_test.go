@@ -16,6 +16,7 @@ package engine
 
 import (
 	"testing"
+	"time"
 
 	"github.com/alatticeio/lattice/apple/engine/split"
 	"github.com/alatticeio/lattice/internal/agent/infra"
@@ -200,5 +201,35 @@ func TestRoutesSnapshot_PassesOverlay6Through(t *testing.T) {
 	want := `{"included":["0.0.0.0/0","::/0"],"overlay6":"fd6c:7270:6c74::a60:4"}`
 	if got != want {
 		t.Fatalf("routesSnapshot() = %q; want %q", got, want)
+	}
+}
+
+// kickRoutes must never block (it runs on the goroutine that applies a netmap)
+// and must coalesce: many kicks while pollRoutes is busy still wake it once.
+func TestKickRoutes_NeverBlocksAndCoalesces(t *testing.T) {
+	e := &Engine{routesKick: make(chan struct{}, 1)}
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 100; i++ {
+			e.kickRoutes()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("kickRoutes blocked with a kick already pending")
+	}
+
+	if got := len(e.routesKick); got != 1 {
+		t.Fatalf("pending kicks = %d, want 1", got)
+	}
+	<-e.routesKick
+	e.kickRoutes()
+	select {
+	case <-e.routesKick:
+	default:
+		t.Fatal("a kick after the previous one was consumed must be delivered")
 	}
 }

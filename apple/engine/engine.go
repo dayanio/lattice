@@ -311,9 +311,15 @@ func (e *Engine) SetSplitRouting(enabled bool) {
 	if !changed {
 		return
 	}
+	e.kickRoutes()
+}
+
+// kickRoutes wakes pollRoutes to re-emit the route snapshot right away instead
+// of at its next tick. Never blocks; a kick that is already pending covers this one.
+func (e *Engine) kickRoutes() {
 	select {
 	case e.routesKick <- struct{}{}:
-	default: // a kick is already pending
+	default:
 	}
 }
 
@@ -468,6 +474,10 @@ func (e *Engine) run(ctx context.Context) {
 	node.GetNetworkMap = func() (*infra.Message, error) {
 		return node.GetNetMap(peer.Token)
 	}
+	// Route selections (exit node, subnet routers) arrive as a netmap change. Emit
+	// the new route snapshot as soon as one is applied: waiting for pollRoutes's
+	// 15 s tick made an exit switch take up to 15 s to reach the system routes.
+	node.SetOnNetmapApplied(e.kickRoutes)
 
 	if err := node.Start(ctx); err != nil {
 		e.emitError(fmt.Errorf("start node: %w", err))
