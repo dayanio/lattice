@@ -294,11 +294,19 @@ cast-agent ──HTTP 协议 v1（不变）──▶ 渲染网关/桥（Mac 侧�
 - iOS 扩展：收令 → 写 App Group `cast/cast-pending.json` + 本地通知（带 url/title）；
   Lattice 主 App：通知点击 → 深链透传；Reflux：onOpenURL 弹窗确证。
 
-**Phase 0b 待验证的两个关键点**：
+**Phase 0b 验证结果（2026-09-28 深夜，iPhone 15 Pro Max 实测）**：
 
-1. 锁屏 ≥30 分钟期间，NATS 指令是否仍可达（整个方向押在这上面；注意 Phase 0 已观察到
-   锁屏 ~10 分钟后 overlay 数据面断过一次，NATS 走物理网络、独立于 overlay，理论更稳，须实测）。
-2. 扩展 → 通知 → 主 App → 深链 → Reflux 全链（人工点击环节 + Reflux 弹窗确证）。
+1. **锁屏可达性：通过。** 手机锁屏 34 分钟，Mac 每 2 分钟经 NATS 发布一条 cast 指令，
+   **19/19（含 1 条手动）100% 送达**，发布→接收延迟 <1 秒；全程同一个扩展进程处理
+   （未重启）；期间 **overlay 数据面处于断开状态（ping 100% 丢包），NATS 指令通道完全
+   不受影响**——指令通道与数据面解耦正是本设计的核心价值，实测成立。
+2. **接力链全通。** 扩展收令 → 写 App Group `cast-pending.json` + 本地通知（带
+   url/title）→ 用户点击 → Lattice 主 App 深链透传 → Reflux 被拉起。人工确认通过。
+3. **附带发现（重要）**：手机在蜂窝网络（源地址 10.59.39.99，非家 WiFi）下，到 NATS
+   服务器 101.36.119.12:4222 直接 i/o timeout，**引擎起不来、隧道反复重启**——管理面
+   的网络可达性是整条链（含隧道本身）的前置条件。这既加重了「引擎内截获 overlay 命令包」
+   主路的价值（设备在网即可投），也暴露一个产品级问题：4222 被墙/被墙的网络里整个
+   lattice 不可用，与 cast 无关，另行处理。
 
 **后续（转 Phase 1'）**：`lattice-cast` 定义 NATS binding（五端点语义、`player_not_running`
 的返回通道——命令式信令下改为「状态查询走 NATS 请求-响应」或渲染端状态经 App Group 暴露）、

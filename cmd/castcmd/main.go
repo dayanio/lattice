@@ -40,20 +40,26 @@ import (
 func main() {
 	natsURL := flag.String("nats", "nats://101.36.119.12:4222", "signaling NATS URL")
 	pubKey := flag.String("pubkey", "", "target device WireGuard public key (base64, as the engine's PublicKey() reports it)")
+	peerID := flag.Uint64("peerid", 0, "target device peer id (lattice.cast.<peerid>.cmd); wins over -pubkey")
 	media := flag.String("media", "", "media URL for the play command (required)")
 	title := flag.String("title", "cast spike", "media title")
 	flag.Parse()
 
-	if *pubKey == "" || *media == "" {
-		fmt.Fprintln(os.Stderr, "usage: castcmd -pubkey <base64 wg public key> -media <url> [-title t] [-nats url]")
+	if *media == "" || (*pubKey == "" && *peerID == 0) {
+		fmt.Fprintln(os.Stderr, "usage: castcmd (-pubkey <base64 wg key> | -peerid <id>) -media <url> [-title t] [-nats url]")
 		os.Exit(2)
 	}
-	key, err := wgtypes.ParseKey(*pubKey)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "castcmd: parse pubkey: %v\n", err)
-		os.Exit(2)
+	var subject string
+	if *peerID != 0 {
+		subject = fmt.Sprintf("lattice.cast.%d.cmd", *peerID)
+	} else {
+		key, err := wgtypes.ParseKey(*pubKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "castcmd: parse pubkey: %v\n", err)
+			os.Exit(2)
+		}
+		subject = fmt.Sprintf("lattice.cast.%s.cmd", infra.FromKey(key))
 	}
-	subject := fmt.Sprintf("lattice.cast.%s.cmd", infra.FromKey(key))
 
 	payload, err := json.Marshal(map[string]any{
 		"action": "play",

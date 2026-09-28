@@ -72,13 +72,26 @@
 
 ## 给用户决策的结论
 
-- **内存（②）与 App Group 机制（④）不构成障碍。**
-- **可达性（①）在当前形态下不通过**：入站连接（含手机本机回环）到不了扩展的监听 socket，且锁屏约 10 分钟后隧道数据面本身也会断。若按 §八 决策，这指向回退方案；但也存在未锤死的系统级解释（本地网络权限在带 NE 扩展的 App 上无法触发授权弹窗），值得在决定前评估：换一台未带 VPN 配置的 iOS 设备、或 iOS 版本差异复测，可以快速分辨「Lattice 特有」还是「iOS 一律如此」。
-- **深链（③）需要改设计预期**：扩展无法直接 openURL，通知点击后必须经 Lattice 主 App 转发（多一跳，体验上可接受但不是文档 §五 隐含的「扩展直接深链」）。
-- Reflux 三方 App Group：待你在 Apple Developer 后台为 `io.reflux.apple` 启用 `group.io.lattice.shared` 并重新生成描述文件后，重跑一次 Reflux 即可自动补测（探针已就位）。
+**2026-09-28 用户已拍板：不走 §八 的 A/B 回退，改走「NATS 推送信令」新方向（设计文档 §十三），
+后定稿为双传输：主 = LatticeDNS 同款引擎内截获 overlay 命令包，兜底 = NATS 推送。** Phase 0
+的四项结论在新方向下的意义：
+
+- **① 可达性不通过 → 不再是障碍**：推送传输下渲染端零监听端口，本地网络权限的入站过滤无从
+  作用。兜底 NATS 通道实测锁屏 34 分钟 **19/19 送达**（含 1 条手动；发布→接收延迟 <1 秒），
+  且期间 overlay 数据面断开（ping 100% 丢包）指令照达——指令通道与数据面解耦实测成立。主路
+  （引擎内截获 overlay 命令包）待实现，是下一步。
+- **② 内存通过**：~13MB / 50MB，非风险项。
+- **③ 通知可发（实测 notify_posted）、深链经主 App 转发全链走通（实测：通知点击 → Reflux
+  拉起）**；扩展直接 openURL 不可行已被 SDK 事实固定，接力链设计吸收了这一跳。
+- **④ App Group 机制通过**（扩展+主 App 两方跨进程读写验证；三方待 Reflux 启用门户
+  App Group `group.io.lattice.shared` 后自动补测，探针已就位，未绕过）。
+
+**新暴露的产品级问题（与 cast 无关，另行处理）**：手机在蜂窝网络下 NATS 4222 不通时，引擎
+起不来、隧道反复重启（i/o timeout 到 101.36.119.12:4222）——管理面可达性是全链前置条件。
 
 ## 附：本次 spike 的遗留物与回滚
 
-- lattice-apple 分支 `spike/cast-gateway-phase0`：spike 代码 + project.yml 把 LatticeCastKit 加回 `Lattice`/`LatticeTunnel`（§九 约定）+ Swifter 包声明（与 LatticeCastKit 同 revision 钉）。
-- reflux 仓 `dev` 分支：`CastSpikeProbe.swift` + `RefluxAppleApp.swift` 探针挂载。
-- 手机上现装的是 spike 构建（io.lattice.ios 0.4.0 build 计数已增加）；卸载重装正式版即清理。
+- lattice（`docs/cast-gateway-design`）：`feat(cast)` NATS cast 订阅 + `cmd/castcmd` 发布工具 + §十三 双传输设计。
+- lattice-apple（`spike/cast-gateway-phase0`）：spike 代码（/ping 服务、cast 命令接收/通知/深链转发、状态通道）；project.yml 恢复 LatticeCastKit + Swifter（PlayerKit 未恢复，设置页未动）。
+- reflux（`dev`）：探针 + 深链弹窗确证。
+- 手机上现装的是 spike 构建；Phase 1' 落地后按正式版重装即清理。所有 spike 代码带删除标记。
