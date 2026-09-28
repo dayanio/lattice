@@ -444,6 +444,7 @@ func (e *Engine) run(ctx context.Context) {
 		Flags:              agentconfig.Conf,
 		CustomTUN:          t,
 		CustomName:         "lattice",
+		CastCommandHandler: func(payload []byte) { e.emit("cast: " + string(payload)) },
 		CurrentPeer:        peer,
 		ProvisionerFactory: newNEProvisionerFactory(localIP, "lattice"),
 	})

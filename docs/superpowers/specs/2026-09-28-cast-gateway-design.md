@@ -246,3 +246,64 @@ cast-agent (Go, 另一台机器/Mac)
 2. 旧配对配置一键迁移是否要做（§十）。
 3. iOS Phase 0 失败后选回退 A 还是 B（§八）。
 4. Reflux macOS 的 sandbox 状态与 App Group 命名方式（§4.3，需 GLM 先查实再定）。
+
+---
+
+## 十三、NATS 推送信令（2026-09-28 Phase 0 结论后用户拍板的新方向）
+
+**背景**：Phase 0（结果见 `2026-09-28-cast-gateway-phase0-spike.md`）实测：指令通道若放在
+「监听端口」上，iOS 上不可行——隧道扩展绑定的端口入站被系统静默丢弃（overlay 与本机回环
+一致，指向本地网络隐私权限默认拒绝且无法触发授权弹窗）；Reflux App 监听则受后台挂起限制
+（§一 旧问题）。**用户 2026-09-28 拍板：指令传输改为 NATS 推送，渲染端零监听端口**（即本
+文档 §八 未列的「回退 C」，打破「cast-agent 与协议零改动」目标——协议五端点语义不变，新增
+一个传输绑定）。
+
+**架构（2026-09-28 用户定稿：双传输，主 = 引擎内截获 overlay 命令包，兜底 = NATS 推送）**：
+
+```
+cast-agent ──HTTP 协议 v1（不变）──▶ 渲染网关/桥（Mac 侧，Phase 3 的 Gateway 兼任）
+                                        │ 按可达性选择传输
+                 ┌──────────────────────┴──────────────────────┐
+                 ▼ 主路：overlay 命令包                          ▼ 兜底：NATS 推送
+   发往手机 overlay IP 的保留 UDP 端口，            lattice.cast.<peerid>.cmd
+   手机引擎用户态截获（LatticeDNS 同款，            （既有出站 NATS 会话接收，零监听；
+   不交给 OS 栈 → 无监听 socket，                    NATS 服务器不可达/桌面渲染端时用 HTTP）
+   本地网络权限无从拦截）
+                 └──────────────────────┬──────────────────────┘
+                                        ▼ 引擎 → delegate 事件 "cast: {json}" → 扩展
+                        App Group 待执行命令 + 本地通知
+                                        ▼
+                    通知点击 → Lattice 主 App → reflux://cast?url=..&title=.. → Reflux 播放
+```
+
+- 媒体流不变：仍是渲染端自行拉取 URL；两个传输只承载指令（play/pause/seek/stop/status 语义
+  与 §五 表格一致）。
+- 双通道去重与可靠性：命令带 id/ts；主路 UDP 应用层 ACK + 重试（at-least-once），兜底 NATS
+  核心语义为 fire-and-forget（离线补投需 JetStream，产品语义待定）；接收端按命令 id 去重、
+  按时间戳保序。
+- 信任模型：主路包在 WireGuard 隧道内，引擎可校验来源 peer；兜底 NATS 为匿名连接，主题级
+  授权在 Phase 1' 补。
+- macOS 渲染端（Reflux Mac / tvOS）仍走 HTTP 监听（桌面无此限制），传输绑定按平台选择。
+
+**已实现（Phase 0b spike，`spike/cast-gateway-phase0` 等）**：
+
+- 引擎：`internal/agent` NodeConfig 新增 `CastCommandHandler`，node 订阅
+  `lattice.cast.<peerid>.cmd`（`SubscribeRawPayload`），apple/engine 把载荷以 `cast: {json}`
+  经既有 `EngineDelegate.OnEvent` 抛给 Swift（gomobile 委托协议零改动）。
+- 发布端：`cmd/castcmd`（测试工具，从设备公钥推导主题，发布 {action,url,title,ts}）。
+- iOS 扩展：收令 → 写 App Group `cast/cast-pending.json` + 本地通知（带 url/title）；
+  Lattice 主 App：通知点击 → 深链透传；Reflux：onOpenURL 弹窗确证。
+
+**Phase 0b 待验证的两个关键点**：
+
+1. 锁屏 ≥30 分钟期间，NATS 指令是否仍可达（整个方向押在这上面；注意 Phase 0 已观察到
+   锁屏 ~10 分钟后 overlay 数据面断过一次，NATS 走物理网络、独立于 overlay，理论更稳，须实测）。
+2. 扩展 → 通知 → 主 App → 深链 → Reflux 全链（人工点击环节 + Reflux 弹窗确证）。
+
+**后续（转 Phase 1'）**：`lattice-cast` 定义 NATS binding（五端点语义、`player_not_running`
+的返回通道——命令式信令下改为「状态查询走 NATS 请求-响应」或渲染端状态经 App Group 暴露）、
+Mac 网关桥、Reflux/Lattice 收令与播放集成、安全（主题授权、指令来源校验）。
+
+**已知取舍**：指令路径依赖管理面可用性（管理面挂则投屏挂，即使双方同局域网）。原生演进方向
+是引擎内截获 overlay 命令包（LatticeDNS 同款模式，用户态收，不依赖任何监听 socket 也不依赖
+管理面），待 NATS 版验证价值后再立项。
