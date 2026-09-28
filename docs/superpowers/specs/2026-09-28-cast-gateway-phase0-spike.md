@@ -1,0 +1,84 @@
+# Cast 网关 Phase 0 — iOS 可行性 spike 记录
+
+**日期**：2026-09-28
+**状态**：实测完成（第 ① 项不通过；第 ④ 项三方版待门户操作，其余按实情记录）
+**对应设计**：`2026-09-28-cast-gateway-design.md`（§七 Phase 0）
+**工作区**：`lattice-apple` 分支 `spike/cast-gateway-phase0`（= master + `8ea77fc`，即文档 §九 的改动被原样带上）；`reflux` 仓 `dev` 分支追加探针
+**设备**：iPhone 15 Pro Max（winston，iOS 26.x），overlay IP `10.96.0.4`；Mac（`10.96.0.6`）经 overlay 访问；控制面/管理面在公网（101.36.119.12）
+
+## Spike 代码形态（全部带「Phase 0 结束后删除」标记）
+
+- `apple/LatticeTunnel/CastGatewaySpike.swift`：隧道扩展内的最小 Swifter 服务（`GET /ping`，绑 `:7822`，随 `startTunnel`/`stopTunnel` 起停，绑定看门狗每 10s 补位），附带测量钩子：
+  - `/ping` 响应体带 pid / uptime / `phys_footprint` / `os_proc_available_memory()` 估算的内存上限；
+  - `/ping?notify=1` 发本地通知（扩展起服务时也会主动发一条，不依赖 HTTP 可达）；
+  - `/ping?appgroup=1` 在 App Group `group.io.lattice.shared` 的 `cast/cast-sink.json` 追加事件；
+  - 每 30s 一条内存日志；每收到一次 /ping 计数（`pings`）。
+- `apple/Shared/CastSpikeAppGroup.swift`：扩展与主 App 共用的 App Group 读写探针。
+- `apple/Lattice/CastSpikeSupport.swift` + `LatticeApp.swift`：主 App 回前台跑探针（App Group 读写、回环 127.0.0.1 与 overlay 自连探测、Bonjour 本地网络授权取证）；通知点击转发 `reflux://cast`。
+- `apple/Shared/TunnelManager.swift` 增 `queryCastSpikeState()`：经 provider 通道拉取扩展状态快照（扩展日志无法远程采集，借主 App 的 `devicectl launch --console` 通道带出——这是本次 spike 的主要观测手段）。
+- `reflux`：`RefluxApple/CastSpikeProbe.swift` + `RefluxAppleApp.swift`——回前台探 `127.0.0.1:7822/ping`（`connectionProxyDictionary = [:]` 绕系统代理）+ App Group 检测；`.onOpenURL` 记录 `reflux://` 到达。
+- Lattice 设置页未做任何改动（无开关、无入口、不依赖配对状态）：spike 服务是无 UI 的、随隧道起停的。设置里的「投屏接收」入口是此前 `8ea77fc`（文档 §九）删除的，本 spike 未恢复、也未新增任何开关。
+
+## 实测结果
+
+### ① 可达性：Mac 经 overlay 访问 `10.96.0.4:7822/ping` — **不通过**
+
+**现象**（2026-09-28 18:43–19:33 反复实测）：
+
+- 扩展进程存活、监听建立：状态快照 `{"listening":true,"bind_attempts":1,"bind_error":""}`；`tunnel-boot` 事件（绑定成功后才写）出现在 cast-sink.json。
+- 隧道数据面正常时：Mac `ping 10.96.0.4` 通（RTT 7–11ms）。
+- **TCP :7822 的入站 SYN 被静默丢弃（Mac 侧与手机本机一致）**：
+  - Mac → `10.96.0.4:7822`：握手始终完不成（curl 5s 超时）；对照 `10.96.0.4:9999`（无监听端口）9ms 即被 RST；
+  - 手机本机 Lattice App → `127.0.0.1:7822`（扩展已绑定、`listening:true` 时）：`NSURLErrorDomain -1001` 4s 超时（接口 lo0），扩展 `pings:0`——回环同样到达不了监听者；
+  - 即「无监听端口正常 RST、有监听端口一律静默丢弃」，与来源（overlay/回环）无关。
+- **锁屏 10 分 41 秒监测**（18:55:24–19:06:05，每 15s 一次，33 次全部超时）：期间扩展进程未退出；但**隧道的 overlay 转发在锁屏约 10 分钟后也死亡**（窗口结束时 `ping 10.96.0.4` 100% 丢包，进程仍在），重连后恢复。这本身是比 7822 更严重的问题：锁屏状态下连隧道数据面都不可靠。
+
+**根因分析**（证据充分但未 100% 锤死）：
+
+1. 「关闭端口 RST、监听端口丢弃」指向 **iOS 本地网络（Local Network）隐私权限的默认拒绝**：未授权 App 的监听端口入站连接被静默丢弃，而内核对无监听端口的 RST 不受权限影响。
+2. Lattice（及其扩展）从未触发过本地网络授权：设置里没有「本地网络」开关；主 App 用 Bonjour 浏览探测返回 `failed(-65555: NoAuth)`，**系统连授权弹窗都不弹**（NoAuth 直接失败）——带 NetworkExtension 的 App 在 iOS 26 上拿不到这个授权入口，原因未明。
+3. 被排除的假设：端口字节序问题（若有，7822 也会 RST）；被冻结进程占端口（那种情况握手能完成，且当时无其他进程存活）；引擎特殊处理 7822（引擎源码无 7822 字样）。
+
+**复现步骤**：装本分支构建 → 手机开隧道并锁屏 → Mac `curl --noproxy '*' -m 5 http://10.96.0.4:7822/ping`（超时）→ 对照 `nc -z -G 2 10.96.0.4 9999`（秒回 refused）→ 打开 Lattice 看「连接」状态（扩展 state 快照 `listening:true`）。
+
+### ② 内存：Go 引擎 + Swifter 常驻峰值 vs 上限 — **通过（数据充分）**
+
+扩展状态快照（`handleAppMessage` 通道，pid 1312，起服务 3–84s 时点多次采样）：
+
+| 指标 | 数值 |
+|---|---|
+| phys_footprint（引擎+Swifter+隧道常驻） | **12.7–13.3 MB**（多轮会话峰值） |
+| os_proc_available_memory() | ≈ 39.5–39.7 MB |
+| 上限估算（footprint + available） | **52,428,800 B = 精确 50 MB** |
+| 峰值占比 | **≈ 24.6%–25.6%**，远低于 80% 红线 |
+
+注：这是「引擎已在转发 + Swifter 已监听」的稳态值；spike 期间未做投屏负载，Phase 1 的网关再加协议状态机也只增量几百 KB 级。内存不是风险项。
+
+### ③ 跨进程 — **拆成三小项，结果不同**
+
+1. **扩展发本地通知：API 层通过**。隧道扩展内 `UNUserNotificationCenter.current().add()` 返回成功（扩展状态 `notify_posted:1`，授权状态=authorized，主 App 已获授权）。横幅实际显示与点击行为需要人工确认（本机当时锁屏/桌面状态未记录到截图级证据）。
+2. **扩展深链打开 Reflux：直接深链不可行**。`NEProvider.openURL` 在 iPhoneOS 26.2 SDK 已被移除（`NEProvider.h` 无此方法，编译期实测）。可行链路 = 通知点击 → 落到 Lattice 主 App（`UNUserNotificationCenterDelegate`，代码已就位）→ `UIApplication.open(reflux://cast)`；`reflux://` scheme 已在 Reflux 注册（`CFBundleURLSchemes: ["reflux"]`）。该链路的「点击」环节待人工确认。
+3. **其他进程连扩展的 `127.0.0.1:<port>`：不通过**。扩展监听就绪（`listening:true`）时，Lattice 主 App 进程连 `127.0.0.1:7822` 4s 超时（`NSURLErrorDomain -1001`，接口 lo0），扩展端 `pings:0`——回环连接根本没有到达监听 socket（与 ① 同一行为：有监听的端口一律静默丢弃，不分来源）。Reflux 侧同款探针已部署，但其 NSLog 无法经 `devicectl --console` 采集（Lattice 的可以），故本项以 Lattice App 的同机制探测为准测得。
+
+### ④ App Group：三方读写同一 cast-sink.json — **两方通过；三方被门户阻塞（未绕过）**
+
+- **`io.reflux.apple` 的 App Group 未在 Apple Developer 后台启用**（其本地描述文件 2026-08-27 生成、无 `com.apple.security.application-groups`；对照 `io.lattice.ios` 的描述文件里有 `group.io.lattice.shared`）。按约定未改 Reflux 的 entitlements、未绕过；已部署到 Reflux 的探针在授权启用后无需改动即可自动完成三方验证（当前它记录的是「NO container（未授权，预期内）」）。
+- **已证的两方跨进程读写**（`/private/var/mobile/Containers/Shared/AppGroup/869842F0-.../cast/cast-sink.json`，`devicectl device copy from --domain-type appGroupDataContainer` 可随时拉取核对）：
+  - 18:41:56 lattice-app（pid 1119）两次写：events 0→1→2；
+  - 18:46:03 tunnel（pid 1132）追加 tunnel-boot；
+  - 18:47:36 / 18:48:40 lattice-app（pid 1126）读 4 条 → 写 5 → 6；
+  - 19:17–19:31 lattice-app（pid 1275/1311）多轮读写至 26 条。
+- 结论：扩展进程与主 App 进程对同一 App Group 文件的读-改-写全程一致，无丢事件。**机制本身在 iOS 上工作正常**。
+
+## 给用户决策的结论
+
+- **内存（②）与 App Group 机制（④）不构成障碍。**
+- **可达性（①）在当前形态下不通过**：入站连接（含手机本机回环）到不了扩展的监听 socket，且锁屏约 10 分钟后隧道数据面本身也会断。若按 §八 决策，这指向回退方案；但也存在未锤死的系统级解释（本地网络权限在带 NE 扩展的 App 上无法触发授权弹窗），值得在决定前评估：换一台未带 VPN 配置的 iOS 设备、或 iOS 版本差异复测，可以快速分辨「Lattice 特有」还是「iOS 一律如此」。
+- **深链（③）需要改设计预期**：扩展无法直接 openURL，通知点击后必须经 Lattice 主 App 转发（多一跳，体验上可接受但不是文档 §五 隐含的「扩展直接深链」）。
+- Reflux 三方 App Group：待你在 Apple Developer 后台为 `io.reflux.apple` 启用 `group.io.lattice.shared` 并重新生成描述文件后，重跑一次 Reflux 即可自动补测（探针已就位）。
+
+## 附：本次 spike 的遗留物与回滚
+
+- lattice-apple 分支 `spike/cast-gateway-phase0`：spike 代码 + project.yml 把 LatticeCastKit 加回 `Lattice`/`LatticeTunnel`（§九 约定）+ Swifter 包声明（与 LatticeCastKit 同 revision 钉）。
+- reflux 仓 `dev` 分支：`CastSpikeProbe.swift` + `RefluxAppleApp.swift` 探针挂载。
+- 手机上现装的是 spike 构建（io.lattice.ios 0.4.0 build 计数已增加）；卸载重装正式版即清理。
