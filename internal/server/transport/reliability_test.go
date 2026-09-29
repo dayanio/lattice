@@ -23,6 +23,7 @@ import (
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
+	"github.com/alatticeio/lattice/internal/agent/provision"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
@@ -133,21 +134,21 @@ func TestICEDialer_RestartNotifyStopsWhenClosed(t *testing.T) {
 }
 
 // wireguard-go re-arms a peer's persistent-keepalive timer on every
-// authenticated packet it sends OR receives. With keepalives on both sides
-// each received keepalive postpones the local one, so the sides alternate and
-// each receives one only about every 50 s instead of every 25 s: a single
-// lost keepalive then looks like a 75 s silence and trips the received-bytes
-// stall check on a healthy path. Only the initiator therefore sends them; the
-// responder sees a steady 25 s rhythm to judge liveness by.
-func TestKeepaliveFor_OnlyTheInitiatorSendsKeepalives(t *testing.T) {
+// authenticated packet it sends OR receives, so with keepalives on both sides
+// the sides alternate and each receives one about every 50 s. Both sides arm
+// them anyway: a responder without keepalives sends nothing while its device
+// is locked, the path goes quiet, and the data plane dies until the device
+// wakes (observed live on an iPhone, 2026-09-29). The liveness stall
+// threshold accounts for the alternating cadence (see rxStallThreshold).
+func TestKeepaliveFor_BothSidesSendKeepalives(t *testing.T) {
 	big := infra.NewPeerIdentity("big", wgtypes.Key{2})
 	small := infra.NewPeerIdentity("small", wgtypes.Key{1})
 
-	if got := keepaliveFor(big, small); got <= 0 {
-		t.Errorf("initiator keepalive = %d, want a positive interval", got)
+	if got := keepaliveFor(big, small); got != provision.PersistentKeepalive {
+		t.Errorf("initiator keepalive = %d, want %d", got, provision.PersistentKeepalive)
 	}
-	if got := keepaliveFor(small, big); got != 0 {
-		t.Errorf("responder keepalive = %d, want 0 so the initiator's keepalives stay on a fixed rhythm", got)
+	if got := keepaliveFor(small, big); got != provision.PersistentKeepalive {
+		t.Errorf("responder keepalive = %d, want %d (mobile peers must send keepalives while locked)", got, provision.PersistentKeepalive)
 	}
 }
 

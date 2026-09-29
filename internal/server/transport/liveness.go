@@ -30,9 +30,11 @@ type PeerStats struct {
 }
 
 // rxStallThreshold is how long a keepalive-armed peer may go without any
-// received byte before its path is declared dead. WireGuard keepalives arrive
-// every 25 s, so this tolerates two consecutive lost keepalives.
-const rxStallThreshold = 60 * time.Second
+// received byte before its path is declared dead. Both sides arm 25 s
+// keepalives and wireguard-go re-arms on every authenticated packet, so the
+// sides alternate and each receives one about every 50 s; 120 s tolerates two
+// consecutive lost keepalives on that cadence.
+const rxStallThreshold = 120 * time.Second
 
 type livenessVerdict int
 
