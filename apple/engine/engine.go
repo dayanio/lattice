@@ -398,6 +398,11 @@ func (e *Engine) run(ctx context.Context) {
 	}
 
 	t := newPacketTUN("lattice", e.cfg.MTU, e.cfg.TunFD)
+	// Cast 命令双传输共用同一接收回调（§十三）：主路 = 引擎内截获 overlay
+	// 保留端口（packetTUN.interceptCast），兜底 = NATS 订阅（NodeConfig）。
+	// 去重由上层按命令 id 做（两路可能同时送达同一条命令）。
+	castSink := func(payload []byte) { e.emit("cast: " + string(payload)) }
+	t.SetCastCommandHandler(castSink)
 	t.SetLocalIP(net.ParseIP(localIP))
 	e.setTUN(t)
 
@@ -444,7 +449,7 @@ func (e *Engine) run(ctx context.Context) {
 		Flags:              agentconfig.Conf,
 		CustomTUN:          t,
 		CustomName:         "lattice",
-		CastCommandHandler: func(payload []byte) { e.emit("cast: " + string(payload)) },
+		CastCommandHandler: castSink,
 		CurrentPeer:        peer,
 		ProvisionerFactory: newNEProvisionerFactory(localIP, "lattice"),
 	})

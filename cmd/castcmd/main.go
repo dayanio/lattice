@@ -26,9 +26,12 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"time"
 
@@ -38,17 +41,39 @@ import (
 )
 
 func main() {
-	natsURL := flag.String("nats", "nats://101.36.119.12:4222", "signaling NATS URL")
+	natsURL := flag.String("nats", "nats://101.36.119.12:4222", "signaling NATS URL (fallback transport)")
 	pubKey := flag.String("pubkey", "", "target device WireGuard public key (base64, as the engine's PublicKey() reports it)")
 	peerID := flag.Uint64("peerid", 0, "target device peer id (lattice.cast.<peerid>.cmd); wins over -pubkey")
 	media := flag.String("media", "", "media URL for the play command (required)")
 	title := flag.String("title", "cast spike", "media title")
+	transport := flag.String("transport", "nats", "nats | overlay — overlay sends a UDP datagram to the device's overlay IP on the reserved engine port and waits for the in-engine ACK")
+	target := flag.String("target", "10.96.0.4:47822", "overlay target for -transport overlay (device overlay IP : reserved port 47822)")
+	retries := flag.Int("retries", 3, "overlay retransmit count while no ACK arrives")
 	flag.Parse()
 
-	if *media == "" || (*pubKey == "" && *peerID == 0) {
-		fmt.Fprintln(os.Stderr, "usage: castcmd (-pubkey <base64 wg key> | -peerid <id>) -media <url> [-title t] [-nats url]")
+	if *media == "" || (*pubKey == "" && *peerID == 0 && *transport == "nats") {
+		fmt.Fprintln(os.Stderr, "usage: castcmd (-pubkey <key> | -peerid <id> | -transport overlay) -media <url> [-title t] ...")
 		os.Exit(2)
 	}
+
+	cmdID := randomID()
+	payload, err := json.Marshal(map[string]any{
+		"id":     cmdID,
+		"action": "play",
+		"url":    *media,
+		"title":  *title,
+		"ts":     time.Now().UnixMilli(),
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "castcmd: marshal: %v\n", err)
+		os.Exit(2)
+	}
+
+	if *transport == "overlay" {
+		sendOverlay(*target, *retries, payload, cmdID)
+		return
+	}
+
 	var subject string
 	if *peerID != 0 {
 		subject = fmt.Sprintf("lattice.cast.%d.cmd", *peerID)
@@ -59,17 +84,6 @@ func main() {
 			os.Exit(2)
 		}
 		subject = fmt.Sprintf("lattice.cast.%s.cmd", infra.FromKey(key))
-	}
-
-	payload, err := json.Marshal(map[string]any{
-		"action": "play",
-		"url":    *media,
-		"title":  *title,
-		"ts":     time.Now().UnixMilli(),
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "castcmd: marshal: %v\n", err)
-		os.Exit(2)
 	}
 
 	nc, err := natsgo.Connect(*natsURL, natsgo.Timeout(10*time.Second))
@@ -87,4 +101,58 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("published to %s: %s\n", subject, payload)
+}
+
+// sendOverlay sends the command as a UDP datagram to the device's overlay
+// IP on the reserved engine port and waits for the in-engine {"ack":id}.
+// The Mac's OS routes the datagram into the lattice TUN (10.96.0.0/24), so
+// no special sender support is needed — plain sockets, kernel routing.
+func sendOverlay(target string, retries int, payload []byte, cmdID string) {
+	raddr, err := net.ResolveUDPAddr("udp4", target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "castcmd: resolve %s: %v\n", target, err)
+		os.Exit(2)
+	}
+	conn, err := net.DialUDP("udp4", nil, raddr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "castcmd: dial %s: %v\n", target, err)
+		os.Exit(1)
+	}
+	defer conn.Close()
+	_ = conn.SetReadBuffer(1024)
+
+	var lastErr error
+	for attempt := 1; attempt <= retries; attempt++ {
+		if _, err := conn.Write(payload); err != nil {
+			lastErr = err
+			fmt.Fprintf(os.Stderr, "castcmd: attempt %d write: %v\n", attempt, err)
+			time.Sleep(time.Second)
+			continue
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 512)
+		n, err := conn.Read(buf)
+		if err != nil {
+			lastErr = err
+			fmt.Fprintf(os.Stderr, "castcmd: attempt %d no ack (%v), retrying\n", attempt, err)
+			continue
+		}
+		var ack struct {
+			Ack string `json:"ack"`
+		}
+		_ = json.Unmarshal(buf[:n], &ack)
+		fmt.Printf("overlay %s: acked id=%q after %d attempt(s): %s\n", target, ack.Ack, attempt, payload)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "castcmd: overlay %s: no ack after %d attempts (last: %v) — overlay path down? falling back to nats transport would be the gateway's job\n", target, retries, lastErr)
+	os.Exit(1)
+}
+
+// randomID returns 16 hex chars of crypto randomness for command dedup.
+func randomID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
 }

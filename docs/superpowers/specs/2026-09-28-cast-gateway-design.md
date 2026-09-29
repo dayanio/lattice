@@ -285,24 +285,34 @@ cast-agent ──HTTP 协议 v1（不变）──▶ 渲染网关/桥（Mac 侧�
   授权在 Phase 1' 补。
 - macOS 渲染端（Reflux Mac / tvOS）仍走 HTTP 监听（桌面无此限制），传输绑定按平台选择。
 
-**已实现（Phase 0b spike，`spike/cast-gateway-phase0` 等）**：
+**已实现（Phase 0b + 主路首版，`spike/cast-gateway-phase0` 等）**：
 
-- 引擎：`internal/agent` NodeConfig 新增 `CastCommandHandler`，node 订阅
+- 引擎兜底：`internal/agent` NodeConfig 新增 `CastCommandHandler`，node 订阅
   `lattice.cast.<peerid>.cmd`（`SubscribeRawPayload`），apple/engine 把载荷以 `cast: {json}`
   经既有 `EngineDelegate.OnEvent` 抛给 Swift（gomobile 委托协议零改动）。
-- 发布端：`cmd/castcmd`（测试工具，从设备公钥推导主题，发布 {action,url,title,ts}）。
-- iOS 扩展：收令 → 写 App Group `cast/cast-pending.json` + 本地通知（带 url/title）；
-  Lattice 主 App：通知点击 → 深链透传；Reflux：onOpenURL 弹窗确证。
+- 引擎主路：packetTUN 在 WG 解密后的入站路径上截获 **UDP 目的端口 47822**（保留端口，
+  LatticeDNS 同款引擎内消费，包不进 OS 栈——本地网络权限无从拦截），解析后走同一
+  `cast: {json}` 事件，并经 `t.inbound` 回注 `{"ack":<id>}` 给发送方（swapUDPReply 复用）。
+- 发布端：`cmd/castcmd`（`-transport nats|overlay`；overlay 模式直接 UDP 发往
+  `<设备 overlay IP>:47822`，内核路由进隧道，等 ACK、最多重试 3 次；命令带随机 id）。
+- iOS 扩展：收令 → **按命令 id 去重（保留 32 个，双通道并发送达同一命令只处理一次）** →
+  写 App Group `cast/cast-pending.json` + 本地通知（带 url/title）；Lattice 主 App：通知
+  点击 → 深链透传；Reflux：onOpenURL 弹窗确证。
 
-**Phase 0b 验证结果（2026-09-28 深夜，iPhone 15 Pro Max 实测）**：
+**Phase 0b 验证结果（2026-09-28/29，iPhone 15 Pro Max 实测）**：
 
-1. **锁屏可达性：通过。** 手机锁屏 34 分钟，Mac 每 2 分钟经 NATS 发布一条 cast 指令，
+1. **兜底（NATS）锁屏可达性：通过。** 手机锁屏 34 分钟，Mac 每 2 分钟经 NATS 发布一条 cast 指令，
    **19/19（含 1 条手动）100% 送达**，发布→接收延迟 <1 秒；全程同一个扩展进程处理
    （未重启）；期间 **overlay 数据面处于断开状态（ping 100% 丢包），NATS 指令通道完全
    不受影响**——指令通道与数据面解耦正是本设计的核心价值，实测成立。
 2. **接力链全通。** 扩展收令 → 写 App Group `cast-pending.json` + 本地通知（带
    url/title）→ 用户点击 → Lattice 主 App 深链透传 → Reflux 被拉起。人工确认通过。
-3. **附带发现（重要）**：手机在蜂窝网络（源地址 10.59.39.99，非家 WiFi）下，到 NATS
+3. **主路（引擎内截获）首版实测：通过。** Mac 隧道在线时，`castcmd -transport overlay`
+   发往 `10.96.0.4:47822` 的 UDP 命令被手机引擎在 WG 解密路径上截获消费（OS 栈无任何
+   监听——本地网络权限无从介入），**首次尝试即收到引擎内合成 ACK**（id 回传），扩展
+   收令、通知发出。Mac 隧道断开时 overlay 主路不可达（发送方 UDP 直接超时）——同一时刻
+   兜底 NATS 照常送达（现场演示），双传输互补按设计工作。
+4. **附带发现（重要）**：手机在蜂窝网络（源地址 10.59.39.99，非家 WiFi）下，到 NATS
    服务器 101.36.119.12:4222 直接 i/o timeout，**引擎起不来、隧道反复重启**——管理面
    的网络可达性是整条链（含隧道本身）的前置条件。这既加重了「引擎内截获 overlay 命令包」
    主路的价值（设备在网即可投），也暴露一个产品级问题：4222 被墙/被墙的网络里整个
