@@ -317,6 +317,14 @@ cast-agent ──HTTP 协议 v1（不变）──▶ 渲染网关/桥（Mac 侧�
    的网络可达性是整条链（含隧道本身）的前置条件。这既加重了「引擎内截获 overlay 命令包」
    主路的价值（设备在网即可投），也暴露一个产品级问题：4222 被墙/被墙的网络里整个
    lattice 不可用，与 cast 无关，另行处理。
+5. **端到端真实播放（Phase 2' 首版，2026-09-29 人工确认通过）**：Mac 上 `castcmd` 经
+   overlay 发令 → 手机通知 → 点击 → Reflux 起播 → **播放器经 overlay 以 Range 请求
+   从 Mac 拉流，视频在手机上真实播放**。媒体源结论：公网媒体与 NAS/Jellyfin 类服务器
+   自带 Range HTTP（URL 直传即可，无需我们做）；**Mac 本地未共享文件需要网关内置一个
+   带 Range 的 HTTP 文件服务**（Phase 3 网关组件，按需授权 + 令牌鉴权；不支持 Range 的
+   源实测会让播放器反复断连报「源无法播放」——mp4 的 moov 在文件尾，播放器必须 Range
+   seek 才能开流）。引擎内截获主路 + 媒体 overlay 拉流的组合即「电影在 Mac，投到手机」
+   的完整闭环。
 
 **后续（转 Phase 1'）**：`lattice-cast` 定义 NATS binding（五端点语义、`player_not_running`
 的返回通道——命令式信令下改为「状态查询走 NATS 请求-响应」或渲染端状态经 App Group 暴露）、
