@@ -671,6 +671,21 @@ func (e *Engine) PublicKey() string {
 	return e.privKey.PublicKey().String()
 }
 
+// PublishCastCommand publishes a cast command payload to the peer with the
+// given workspace AppID over the engine's NATS session — the fallback cast
+// transport (§十三): the app reaches it through the provider message channel
+// when the overlay path to the target is down. The payload is delivered to
+// the target's cast subscription verbatim.
+func (e *Engine) PublishCastCommand(appID string, payload string) error {
+	e.mu.Lock()
+	node := e.node
+	e.mu.Unlock()
+	if node == nil {
+		return errors.New("cast publish: engine not running")
+	}
+	return node.PublishCastCommandToPeer(appID, []byte(payload))
+}
+
 // Peers returns the remote nodes this device knows about as a JSON array:
 // [{"appId","name","address","platform","state","online"}]. It comes from the
 // tunnel's own network map, so the app can list devices without a management

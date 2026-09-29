@@ -44,6 +44,7 @@ func main() {
 	natsURL := flag.String("nats", "nats://101.36.119.12:4222", "signaling NATS URL (fallback transport)")
 	pubKey := flag.String("pubkey", "", "target device WireGuard public key (base64, as the engine's PublicKey() reports it)")
 	peerID := flag.Uint64("peerid", 0, "target device peer id (lattice.cast.<peerid>.cmd); wins over -pubkey")
+	appID := flag.String("appid", "", "target device AppID (lattice.cast.<appid>.cmd); wins over -peerid")
 	media := flag.String("media", "", "media URL for the play command (required)")
 	title := flag.String("title", "cast spike", "media title")
 	transport := flag.String("transport", "nats", "nats | overlay — overlay sends a UDP datagram to the device's overlay IP on the reserved engine port and waits for the in-engine ACK")
@@ -51,8 +52,8 @@ func main() {
 	retries := flag.Int("retries", 3, "overlay retransmit count while no ACK arrives")
 	flag.Parse()
 
-	if *media == "" || (*pubKey == "" && *peerID == 0 && *transport == "nats") {
-		fmt.Fprintln(os.Stderr, "usage: castcmd (-pubkey <key> | -peerid <id> | -transport overlay) -media <url> [-title t] ...")
+	if *media == "" || (*pubKey == "" && *peerID == 0 && *appID == "") {
+		fmt.Fprintln(os.Stderr, "usage: castcmd (-pubkey <key> | -peerid <id> | -appid <id> | -transport overlay) -media <url> [-title t] [-nats url]")
 		os.Exit(2)
 	}
 
@@ -75,9 +76,12 @@ func main() {
 	}
 
 	var subject string
-	if *peerID != 0 {
+	switch {
+	case *appID != "":
+		subject = fmt.Sprintf("lattice.cast.%s.cmd", *appID)
+	case *peerID != 0:
 		subject = fmt.Sprintf("lattice.cast.%d.cmd", *peerID)
-	} else {
+	default:
 		key, err := wgtypes.ParseKey(*pubKey)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "castcmd: parse pubkey: %v\n", err)
