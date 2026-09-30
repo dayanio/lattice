@@ -84,7 +84,7 @@ spike `goarchive` 的产品化。导出（C ABI，Swift bridging 直链）：
 
 ```c
 // 生命周期
-char* TVStart(const char* cfgJSON, TVEventFn onEvent, void* ctx); // 阻塞至出错；返回 NULL=已退出
+char* TVStart(const char* cfgJSON, TVEventFn onEvent, void* ctx); // StartAsync 立即返回，Swift 轮询 TVOverlayAddress；返回 NULL=成功，错误串=失败（TVFree 释放）
 void  TVStop(void);
 char* TVOverlayAddress(void); // 空串=未入网
 
