@@ -12,15 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package tvoslib exports the embedded Lattice engine over a plain C ABI
-// for tvOS apps that link the static library directly (no gomobile). See
-// docs/superpowers/specs/2026-09-30-tvos-cast-design.md §4.2.
-package tvoslib
+package main
 
 import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -57,6 +55,14 @@ type mediaHandle struct {
 	// unblocks it.
 	cancelMu sync.Mutex
 	cancel   context.CancelFunc
+
+	// closing is set under cancelMu the moment close() starts. openAt checks
+	// it under cancelMu after publishing its cancel and refuses to start a
+	// new request against a closing handle. Without it a read that raced in
+	// after close's cancel snapshot could hang in Do while close waits on
+	// mu with nothing left to cancel — the loop in close re-snapshots, but
+	// refusing new requests up front keeps the in-flight set finite.
+	closing bool
 
 	closed bool
 }
@@ -165,6 +171,17 @@ func (h *mediaHandle) openAt(offset int64) error {
 	h.discardBody()
 	ctx, cancel := context.WithCancel(context.Background())
 	h.publishCancel(cancel) // before Do: close() must reach it while Do may hang
+	// close() may have started since our snapshot last looked; refuse to
+	// point a fresh request at a closing handle. Anything that raced past
+	// this check is still published, so close's retry loop cancels it.
+	h.cancelMu.Lock()
+	closing := h.closing
+	h.cancelMu.Unlock()
+	if closing {
+		h.unpublishCancel()
+		cancel()
+		return fmt.Errorf("handle is closing")
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", h.url, nil)
 	if err != nil {
 		h.unpublishCancel()
@@ -201,18 +218,49 @@ func (h *mediaHandle) openAt(offset int64) error {
 	return nil
 }
 
+// closeRetryInterval is how often close re-checks the lock while a racing
+// read drains; closeRetryTimeout is the defensive ceiling after which close
+// gives up (leaking the handle) rather than hanging the caller forever.
+const (
+	closeRetryInterval = 5 * time.Millisecond
+	closeRetryTimeout  = 5 * time.Second
+)
+
 func (h *mediaHandle) close() {
+	// Publish closing under cancelMu first: any openAt past this point
+	// refuses to start a new request, so the set of in-flight requests this
+	// loop still has to tear down is finite.
+	h.cancelMu.Lock()
+	h.closing = true
+	h.cancelMu.Unlock()
+
 	// Cancel before taking mu: a read blocked in a hung Do/Body.Read holds
 	// mu indefinitely, so firing the context cancel is what lets this close
 	// acquire the lock and complete instead of blocking TVClose forever.
-	h.cancelMu.Lock()
-	cancel := h.cancel
-	h.cancelMu.Unlock()
-	if cancel != nil {
-		cancel()
+	// A read that raced in after a snapshot re-publishes a fresh cancel, so
+	// snapshot+cancel+TryLock loops until the lock is ours — a one-shot
+	// snapshot here could miss it and block TVClose for good.
+	deadline := time.Now().Add(closeRetryTimeout)
+	for {
+		h.cancelMu.Lock()
+		cancel := h.cancel
+		h.cancelMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		if h.mu.TryLock() {
+			h.discardBody() // close the body; also catches a request that raced in
+			h.closed = true
+			h.mu.Unlock()
+			return
+		}
+		if time.Now().After(deadline) {
+			// Defensive ceiling only: every mu holder reacts to cancel, so
+			// this should be unreachable. If it ever fires, leak the handle
+			// rather than hang the calling (player) thread for good.
+			log.Printf("tvoslib: mediaHandle.close: giving up after %s, a read is still active and did not react to cancel (url=%q)", closeRetryTimeout, h.url)
+			return
+		}
+		time.Sleep(closeRetryInterval)
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.discardBody() // close the body; also catches a request that raced in
-	h.closed = true
 }

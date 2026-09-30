@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tvoslib
+package main
 
 import (
 	"bytes"
@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -195,5 +196,87 @@ func TestMediaHandleCloseUnblocksHungRead(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("readAt did not unblock after close")
+	}
+}
+
+func TestMediaHandleCloseRacingWithNewReadStillReturns(t *testing.T) {
+	// 上轮审查 Minor：旧 close 对快照到的 cancel 只发一次——若快照后另一
+	// 线程新起 read 且 body 停流，TVClose 仍可无限阻塞。新实现：closing
+	// 置位后 openAt 拒绝新请求；已漏过检查点的请求由 close 的 {快照+cancel;
+	// TryLock; 小睡} 循环兜底。两个方向的竞速都必须让 close 与 readAt 都在
+	// 2s 内返回（远小于 10s ResponseHeaderTimeout / 5s close 兜底上限）。
+	for _, tc := range []struct {
+		name       string
+		closeFirst bool
+		reads      int
+	}{
+		{"close-then-read", true, 1},
+		{"read-then-close-then-read", false, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var dataReqs int32 // 数据请求计数（size 探测除外）
+			entered := make(chan struct{}, 2)
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("Range") == "bytes=0-0" {
+					w.Header().Set("Content-Length", "8") // size 探测正常应答
+					w.Write([]byte("01234567"))
+					return
+				}
+				atomic.AddInt32(&dataReqs, 1)
+				entered <- struct{}{} // 数据请求已进入挂死的 Do
+				<-release             // 永不写响应，直到测试收尾
+			}))
+			defer srv.Close()
+			defer close(release)
+
+			h, err := newMediaHandle(srv.URL, loopbackDial)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			closed := make(chan struct{})
+			readDone := make(chan int, 2)
+			startClose := func() { go func() { h.close(); close(closed) }() }
+			startRead := func() { go func() { readDone <- h.readAt(0, make([]byte, 4)) }() }
+
+			if tc.closeFirst {
+				// close 先置 closing 并完成首轮快照（此刻无在途请求 → nil），
+				// 随后才来的新读必须被 openAt 拒绝，而不是挂进 Do 拖住 close。
+				startClose()
+				time.Sleep(20 * time.Millisecond)
+				startRead()
+			} else {
+				// 旧实现的真实漏洞序列：R1 挂死持 mu → close 触发 R1 的
+				// cancel 后停在拿锁路上 → R2 抢到 mu 进入挂死的 Do。旧 close
+				// 的 cancel 只发一次、已花掉，TVClose 从此永久阻塞；新 close
+				// 循环重新快照到 R2 的 cancel 并触发，最终拿到锁返回。
+				startRead()
+				<-entered
+				startClose()
+				time.Sleep(5 * time.Millisecond) // 让 close 先触发 R1 的 cancel
+				startRead()
+			}
+
+			select {
+			case <-closed:
+			case <-time.After(2 * time.Second):
+				t.Fatal("close blocked >2s while racing a new read")
+			}
+			for i := 0; i < tc.reads; i++ {
+				select {
+				case n := <-readDone:
+					if n != -1 {
+						t.Fatalf("readAt racing close = %d, want -1", n)
+					}
+				case <-time.After(2 * time.Second):
+					t.Fatal("readAt did not return while close raced it")
+				}
+			}
+			if tc.closeFirst && atomic.LoadInt32(&dataReqs) != 0 {
+				// close-then-read：新读必须在 openAt 就被拒绝，请求不得出门。
+				t.Fatalf("closing handle let %d new data request(s) through", dataReqs)
+			}
+		})
 	}
 }

@@ -12,7 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tvoslib
+// Command tvoslib is not a real command: the package name must be main
+// because -buildmode=c-archive requires exactly one main package (verified
+// 2026-09-30, see task-2-report.md §5), while the directory — and the
+// engine package Task 4 links against — stays tvoslib. It exports the
+// embedded Lattice engine over a plain C ABI for tvOS apps that link the
+// static library directly (no gomobile). See
+// docs/superpowers/specs/2026-09-30-tvos-cast-design.md §4.2.
+package main
 
 /*
 #include <stdlib.h>
