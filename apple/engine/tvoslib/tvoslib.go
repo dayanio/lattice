@@ -40,6 +40,30 @@ var (
 func setEngine(e *embedded.EmbeddedEngine) { mu.Lock(); engine = e; mu.Unlock() }
 func getEngine() *embedded.EmbeddedEngine  { mu.Lock(); defer mu.Unlock(); return engine }
 
+// handles is the Go-side GC root for open media handles. Once TVOpenURL has
+// written a handle pointer into C memory, Go no longer tracks it; without an
+// explicit root the collector could free the handle while C still uses it
+// (use-after-free). TVOpenURL registers on success, TVClose unregisters
+// before closing. The C ABI is unchanged.
+var handles = struct {
+	sync.Mutex
+	m map[unsafe.Pointer]*mediaHandle
+}{m: map[unsafe.Pointer]*mediaHandle{}}
+
+func registerHandle(h *mediaHandle) unsafe.Pointer {
+	p := unsafe.Pointer(h)
+	handles.Lock()
+	handles.m[p] = h
+	handles.Unlock()
+	return p
+}
+
+func unregisterHandle(p unsafe.Pointer) {
+	handles.Lock()
+	delete(handles.m, p)
+	handles.Unlock()
+}
+
 //export TVStart
 func TVStart(cfg *C.char, onEvent C.TVEventFn, ctx unsafe.Pointer) *C.char {
 	e, err := embedded.New(C.GoString(cfg))
@@ -89,7 +113,7 @@ func TVOpenURL(url *C.char, handleOut *unsafe.Pointer) *C.char {
 	if err != nil {
 		return C.CString("open: " + err.Error())
 	}
-	*handleOut = unsafe.Pointer(h)
+	*handleOut = registerHandle(h)
 	return nil
 }
 
@@ -100,6 +124,10 @@ func TVTotalSize(handle unsafe.Pointer) C.int64_t {
 
 //export TVReadAt
 func TVReadAt(handle unsafe.Pointer, offset C.int64_t, length C.int, buf *C.char) C.int {
+	if length < 0 {
+		// unsafe.Slice would panic below; never crash across FFI.
+		return -1
+	}
 	h := (*mediaHandle)(handle)
 	out := unsafe.Slice((*byte)(unsafe.Pointer(buf)), int(length))
 	return C.int(h.readAt(int64(offset), out))
@@ -107,6 +135,7 @@ func TVReadAt(handle unsafe.Pointer, offset C.int64_t, length C.int, buf *C.char
 
 //export TVClose
 func TVClose(handle unsafe.Pointer) {
+	unregisterHandle(handle) // drop the GC root before closing
 	(*mediaHandle)(handle).close()
 }
 
@@ -115,4 +144,7 @@ func TVFree(p *C.char) {
 	C.free(unsafe.Pointer(p))
 }
 
+// main is never called: -buildmode=c-archive requires a main package
+// (verified 2026-09-30 — the build fails with "-buildmode=c-archive
+// requires exactly one main package"; see task-2-report.md §Fix round 1).
 func main() {}

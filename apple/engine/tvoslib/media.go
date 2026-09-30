@@ -26,7 +26,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
+
+// responseHeaderTimeout bounds every HTTP request: without it a server that
+// accepts the connection but never answers would hang TVOpenURL/readAt
+// (and, while readAt holds the mutex, TVClose) forever.
+const responseHeaderTimeout = 10 * time.Second
 
 // mediaHandle serves one URL over an injectable dial function. Production
 // dials through the embedded engine's netstack; tests dial loopback.
@@ -40,9 +46,18 @@ type mediaHandle struct {
 	size   int64
 	client *http.Client
 
-	mu     sync.Mutex
-	body   io.ReadCloser
-	pos    int64 // next byte the open body will return
+	mu   sync.Mutex // guards body, pos, closed
+	body io.ReadCloser
+	pos  int64 // next byte the open body will return
+
+	// cancel aborts the in-flight request, from before its Do until its
+	// body is discarded. It has its own lock so close() can fire it without
+	// waiting on mu: a read blocked in a hung Do/Body.Read holds mu for as
+	// long as the server stays silent, and cancelling first is exactly what
+	// unblocks it.
+	cancelMu sync.Mutex
+	cancel   context.CancelFunc
+
 	closed bool
 }
 
@@ -52,13 +67,16 @@ func newMediaHandle(urlStr string, dial func(ctx context.Context, network, addr 
 		dial: dial,
 		size: -1,
 		client: &http.Client{Transport: &http.Transport{
-			DialContext:        dial,
-			DisableCompression: true,
+			DialContext:           dial,
+			DisableCompression:    true,
+			ResponseHeaderTimeout: responseHeaderTimeout,
 		}},
 	}
 	// Probe total size with a 1-byte Range; servers without Range support
 	// return 200 + Content-Length, which we also accept (no seek then).
-	req, err := http.NewRequest("GET", urlStr, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), responseHeaderTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -100,42 +118,101 @@ func (h *mediaHandle) readAt(offset int64, buf []byte) int {
 		return n
 	}
 	if err != nil {
-		h.body.Close()
-		h.body = nil
+		h.discardBody()
 		return -1
 	}
 	return n
 }
 
-func (h *mediaHandle) openAt(offset int64) error {
+// publishCancel makes c reachable for close() while the request is in
+// flight — Do may hang forever while holding h.mu, so the cancel must be
+// visible before it starts, not after the response arrives. Caller must
+// hold h.mu.
+func (h *mediaHandle) publishCancel(c context.CancelFunc) {
+	h.cancelMu.Lock()
+	h.cancel = c
+	h.cancelMu.Unlock()
+}
+
+// unpublishCancel drops the in-flight cancel entry. Safe unconditionally
+// because openAt calls are serialized by h.mu (the entry can only be this
+// request's own) and close() never writes it. Caller must hold h.mu.
+func (h *mediaHandle) unpublishCancel() {
+	h.cancelMu.Lock()
+	h.cancel = nil
+	h.cancelMu.Unlock()
+}
+
+// discardBody cancels the in-flight request and then closes the body. The
+// cancel must happen first: a request stuck in Do or Read is not released by
+// closing the body alone, but the context cancel tears it down immediately.
+// Caller must hold h.mu.
+func (h *mediaHandle) discardBody() {
+	h.cancelMu.Lock()
+	cancel := h.cancel
+	h.cancel = nil
+	h.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if h.body != nil {
 		h.body.Close()
 		h.body = nil
 	}
-	req, err := http.NewRequest("GET", h.url, nil)
+}
+
+func (h *mediaHandle) openAt(offset int64) error {
+	h.discardBody()
+	ctx, cancel := context.WithCancel(context.Background())
+	h.publishCancel(cancel) // before Do: close() must reach it while Do may hang
+	req, err := http.NewRequestWithContext(ctx, "GET", h.url, nil)
 	if err != nil {
+		h.unpublishCancel()
+		cancel()
 		return err
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	resp, err := h.client.Do(req)
 	if err != nil {
+		h.unpublishCancel()
+		cancel()
 		return err
 	}
+	// 206 = Range honored. 200 at offset 0 = server without Range support
+	// serving the full body; fine for a first sequential read (nothing
+	// before 0 to seek to). 200 at offset > 0 means the server ignored our
+	// Range: adopting it would silently hand back bytes from the wrong
+	// offset (h.pos=offset while the body starts at 0), so reject — readAt
+	// reports -1.
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
 		resp.Body.Close()
+		h.unpublishCancel()
+		cancel()
 		return fmt.Errorf("range get: status %d", resp.StatusCode)
 	}
-	h.body = resp.Body
+	if resp.StatusCode == http.StatusOK && offset > 0 {
+		resp.Body.Close()
+		h.unpublishCancel()
+		cancel()
+		return fmt.Errorf("range get: server ignored Range at offset %d (status 200)", offset)
+	}
+	h.body = resp.Body // cancel stays published: it aborts this body's request
 	h.pos = offset
 	return nil
 }
 
 func (h *mediaHandle) close() {
+	// Cancel before taking mu: a read blocked in a hung Do/Body.Read holds
+	// mu indefinitely, so firing the context cancel is what lets this close
+	// acquire the lock and complete instead of blocking TVClose forever.
+	h.cancelMu.Lock()
+	cancel := h.cancel
+	h.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.body != nil {
-		h.body.Close()
-		h.body = nil
-	}
+	h.discardBody() // close the body; also catches a request that raced in
 	h.closed = true
 }
