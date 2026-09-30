@@ -35,6 +35,17 @@ func loopbackDial(ctx context.Context, network, addr string) (net.Conn, error) {
 	return d.DialContext(ctx, network, addr)
 }
 
+func TestTVPrivateKeyEmptyBeforeStart(t *testing.T) {
+	// 引擎未启动（未生成 WireGuard 身份）时 TVPrivateKey 必须返回空串：
+	// 宿主据此知道没有可持久化的私钥。已启动路径依赖真实控制面入网，
+	// 不在离线单测范围。cgo 不能进 _test.go，故经 Go 辅助 privateKey()
+	// 断言；setEngine(nil) 固定前置条件，不依赖测试顺序。
+	setEngine(nil)
+	if got := privateKey(); got != "" {
+		t.Fatalf("privateKey before start = %q, want empty", got)
+	}
+}
+
 func TestMediaHandleReadAtAndSize(t *testing.T) {
 	body := bytes.Repeat([]byte("0123456789abcdef"), 64) // 1024 bytes
 

@@ -108,6 +108,26 @@ func TVOverlayAddress() *C.char {
 	return C.CString(e.OverlayAddress())
 }
 
+//export TVPrivateKey
+func TVPrivateKey() *C.char {
+	// The embedded engine generates the WireGuard identity at first start.
+	// The host must persist the returned base64 key and pass it back via
+	// Config.PrivateKey on later runs: re-registering the same device name
+	// under a different key is rejected by the control plane, which would
+	// permanently brick the TV's network membership. Empty string before the
+	// engine has started. Caller frees with TVFree.
+	return C.CString(privateKey())
+}
+
+// privateKey backs TVPrivateKey; kept Go-side because cgo cannot be used in
+// _test.go files, so the not-started behavior is tested through this helper.
+func privateKey() string {
+	if e := getEngine(); e != nil {
+		return e.PrivateKey()
+	}
+	return ""
+}
+
 //export TVOpenURL
 func TVOpenURL(url *C.char, handleOut *unsafe.Pointer) *C.char {
 	e := getEngine()
