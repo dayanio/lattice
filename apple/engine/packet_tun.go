@@ -16,6 +16,7 @@ package engine
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -60,6 +61,12 @@ type packetTUN struct {
 	// Custom name answers for server-pushed records — not used yet; the
 	// interceptor gates on peerSource (see WriteInbound).
 	dnsResolver func(qname string) (string, bool)
+	// castCommandHandler receives cast command payloads intercepted on the
+	// reserved overlay UDP port (castCommandPort) — the primary cast
+	// transport: commands ride the WireGuard data plane and are consumed
+	// in-engine (LatticeDNS pattern), so no OS listener exists for the
+	// Local Network privacy filter to drop. See interceptCast.
+	castCommandHandler func(payload []byte)
 	// Upstream resolvers for non-lattice queries (exit-node DNS takeover):
 	// system resolvers, parsed once from /etc/resolv.conf. Empty until the
 	// first lookup succeeds; a built-in CN fallback list is used then.
@@ -83,6 +90,17 @@ type packetTUN struct {
 // SetDNSResolver wires the *.lattice name resolver (LatticeDNS).
 func (t *packetTUN) SetDNSResolver(r func(qname string) (string, bool)) {
 	t.dnsResolver = r
+}
+
+// castCommandPort is the reserved overlay UDP port for cast commands. Any
+// packet landing on it (this node's overlay address, IPv4) is consumed by
+// the engine before the OS ever sees it, like the LatticeDNS interceptor.
+const castCommandPort = 47822
+
+// SetCastCommandHandler wires the in-engine cast command receiver
+// (§十三 primary transport). Nil (the default) leaves the port unused.
+func (t *packetTUN) SetCastCommandHandler(h func(payload []byte)) {
+	t.castCommandHandler = h
 }
 
 // SetPeerSource wires the current mesh peer table used for name resolution.
@@ -254,6 +272,23 @@ func (t *packetTUN) Write(bufs [][]byte, offset int) (int, error) {
 			t.mu.Unlock()
 			continue
 		}
+		// Cast 命令（§十三主路）：保留 UDP 端口的包在引擎内消费（LatticeDNS
+		// 同款），永远不进 OS 网络栈——本地网络权限对它无从拦截。命中即回
+		// ACK（经 WG 发回发送方），应用重传去重。
+		if t.castCommandHandler != nil {
+			if ack, handled := t.interceptCast(raw); handled {
+				if ack != nil {
+					select {
+					case t.inbound <- ack: // egress: WG 加密后发回发送方
+					default:
+						t.mu.Lock()
+						t.dropped++
+						t.mu.Unlock()
+					}
+				}
+				continue
+			}
+		}
 		pkt := make([]byte, len(raw))
 		copy(pkt, raw)
 		if err := t.writeFramed(pkt); err != nil {
@@ -313,6 +348,55 @@ func (t *packetTUN) WriteInbound(packet []byte) error {
 // tunnelDNSIP is the resolver address the client points the system at
 // (NEDNSSettings on the Swift side); queries to it are answered by the engine.
 var tunnelDNSIP = net.IPv4(10, 96, 0, 1)
+
+// interceptCast consumes UDP cast command packets on the reserved overlay
+// port (§十三 primary transport). Returns (ackPacket, true) when the packet
+// was a cast command (consumed in-engine; ackPacket routes the {"ack":id}
+// reply back to the sender), (nil, true) for reserved-port garbage (consumed
+// silently — the sender's retransmit gives up), (nil, false) when the packet
+// is not ours and must flow to the OS unchanged.
+func (t *packetTUN) interceptCast(packet []byte) ([]byte, bool) {
+	if len(packet) < 20 || packet[0]>>4 != 4 {
+		return nil, false
+	}
+	ihl := int(packet[0]&0x0f) * 4
+	if len(packet) < ihl+8 || packet[9] != 17 { // proto != UDP
+		return nil, false
+	}
+	srcIP := net.IP(append([]byte(nil), packet[12:16]...))
+	dstIP := net.IP(append([]byte(nil), packet[16:20]...))
+	udp := packet[ihl:]
+	if len(udp) < 8 {
+		return nil, false
+	}
+	srcPort := binary.BigEndian.Uint16(udp[0:2])
+	dstPort := binary.BigEndian.Uint16(udp[2:4])
+	if dstPort != castCommandPort {
+		return nil, false
+	}
+	payload := udp[8:]
+
+	// Handler off the WG routine; payload is a slice of the WG buffer — copy.
+	body := make([]byte, len(payload))
+	copy(body, payload)
+	var cmd struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		URL   string `json:"url"`
+	}
+	_ = json.Unmarshal(body, &cmd) // 保留端口上的非 JSON 垃圾：吞掉不回 ACK
+	handler := t.castCommandHandler
+	if handler != nil {
+		go handler(body)
+	}
+
+	ackPayload, err := json.Marshal(map[string]string{"ack": cmd.ID})
+	if err != nil {
+		return nil, true
+	}
+	// swapUDPReply 与 DNS 应答共用：源/目的对调 + 校验和重算，与协议无关。
+	return swapUDPReply(packet, ihl, srcIP, dstIP, srcPort, dstPort, ackPayload), true
+}
 
 // interceptLatticeDNS answers UDP DNS queries for *.lattice names from the
 // current peer table. Returns (responsePacket, true) when the packet was a

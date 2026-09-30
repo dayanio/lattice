@@ -404,6 +404,11 @@ func (e *Engine) run(ctx context.Context) {
 	}
 
 	t := newPacketTUN("lattice", e.cfg.MTU, e.cfg.TunFD)
+	// Cast 命令双传输共用同一接收回调（§十三）：主路 = 引擎内截获 overlay
+	// 保留端口（packetTUN.interceptCast），兜底 = NATS 订阅（NodeConfig）。
+	// 去重由上层按命令 id 做（两路可能同时送达同一条命令）。
+	castSink := func(payload []byte) { e.emit("cast: " + string(payload)) }
+	t.SetCastCommandHandler(castSink)
 	t.SetLocalIP(net.ParseIP(localIP))
 	e.setTUN(t)
 
@@ -450,6 +455,7 @@ func (e *Engine) run(ctx context.Context) {
 		Flags:              agentconfig.Conf,
 		CustomTUN:          t,
 		CustomName:         "lattice",
+		CastCommandHandler: castSink,
 		CurrentPeer:        peer,
 		ProvisionerFactory: newNEProvisionerFactory(localIP, "lattice"),
 	})
@@ -510,8 +516,12 @@ func (e *Engine) run(ctx context.Context) {
 					continue
 				}
 				sent, dropped6 := tun.IPv6Stats()
+				ms := readMemStats()
 				log.Info("tun stats", "inbound", len(tun.inbound), "dropped", tun.Dropped(),
-					"icmp6Sent", sent, "icmp6Dropped", dropped6)
+					"icmp6Sent", sent, "icmp6Dropped", dropped6,
+					"heapAlloc", ms.HeapAlloc>>10, "heapInuse", ms.HeapInuse>>10,
+					"stackInuse", ms.StackInuse>>10, "sys", ms.Sys>>10,
+					"numGC", ms.NumGC, "goroutines", ms.Goroutines)
 			}
 		}
 	}()
@@ -673,6 +683,21 @@ func (e *Engine) PublicKey() string {
 		return ""
 	}
 	return e.privKey.PublicKey().String()
+}
+
+// PublishCastCommand publishes a cast command payload to the peer with the
+// given workspace AppID over the engine's NATS session — the fallback cast
+// transport (§十三): the app reaches it through the provider message channel
+// when the overlay path to the target is down. The payload is delivered to
+// the target's cast subscription verbatim.
+func (e *Engine) PublishCastCommand(appID string, payload string) error {
+	e.mu.Lock()
+	node := e.node
+	e.mu.Unlock()
+	if node == nil {
+		return errors.New("cast publish: engine not running")
+	}
+	return node.PublishCastCommandToPeer(appID, []byte(payload))
 }
 
 // Peers returns the remote nodes this device knows about as a JSON array:

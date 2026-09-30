@@ -105,21 +105,20 @@ func (p *ProbeFactory) pingDirect(ctx context.Context, addr string, timeout time
 }
 
 // keepaliveFor returns the WireGuard persistent-keepalive interval this side
-// configures for the peer: only the initiator sends keepalives.
+// configures for the peer: both sides send keepalives.
+//
+// Both sides arming keepalives is what keeps mobile (iOS) peers alive through
+// lock screens: a responder without keepalives sends nothing while the device
+// is locked, the path goes quiet, and the data plane dies until the device
+// wakes (observed live: iPhone overlay dead after ~10 min locked while NATS
+// stayed connected, 2026-09-29).
 //
 // wireguard-go re-arms the keepalive timer on every authenticated packet it
-// sends or receives. With keepalives on both sides each received one postpones
-// the local one, the sides alternate, and each receives a keepalive only about
-// every 50 s. That makes a single lost packet look like a 75 s silence and
-// would trip the received-bytes stall check (livenessTracker) on a healthy
-// path. With only the initiator sending, the responder receives one on a fixed
-// 25 s rhythm and can judge liveness by it; the initiator has no such rhythm
-// and relies on the handshake age, or on the responder's restart notice.
+// sends or receives, so with both sides at 25 s the sides alternate and each
+// receives a keepalive only about every 50 s. A single lost packet then looks
+// like a 75 s rx silence — rxStallThreshold must stay above that (120 s).
 func keepaliveFor(local, remote infra.PeerIdentity) int {
-	if isInitiator(local, remote) {
-		return provision.PersistentKeepalive
-	}
-	return 0
+	return provision.PersistentKeepalive
 }
 
 // reconcileAction is what the reconciler must do with a probe.

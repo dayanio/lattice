@@ -166,6 +166,10 @@ type Node struct {
 	callback       func(message *infra.Message) error // nolint
 	messageHandler Handler
 
+	// castCommandHandler is the NodeConfig.CastCommandHandler callback; nil
+	// means the embedder has no player and the cast subject is not subscribed.
+	castCommandHandler func(payload []byte)
+
 	DeviceManager *wireguard.DeviceManager
 
 	// filteringMux{,6} are the sole readers of the shared UDP4/UDP6 sockets.
@@ -202,6 +206,13 @@ type NodeConfig struct {
 	// Address. Used by the agent sandbox, which pre-registers via HTTP and
 	// obtains peer info from the control plane before NewNode is called.
 	CurrentPeer *infra.Peer
+
+	// CastCommandHandler, if non-nil, subscribes this node to
+	// lattice.cast.<peerid>.cmd and invokes it with each raw payload (the
+	// cast signaling transport binding: commands ride the outbound NATS
+	// session so a renderer needs no inbound listener). The Apple engine
+	// wires this to its delegate; agents without a player leave it nil.
+	CastCommandHandler func(payload []byte)
 }
 
 // NewNode constructs and wires a fully operational Node instance.
@@ -322,6 +333,7 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 		return nil, err
 	}
 	node.natsService = natsSignalService
+	node.castCommandHandler = cfg.CastCommandHandler
 
 	// ── Phase 2: Identity and signaling ──────────────────────────────────────
 
@@ -581,6 +593,18 @@ func NewNode(ctx context.Context, cfg *NodeConfig) (*Node, error) {
 	netmapSubject := infra.NetmapChangedSubject(localIdentity.AppID)
 	if err = natsSignalService.SubscribeRaw(netmapSubject, requestNetmapRefresh); err != nil {
 		return nil, err
+	}
+
+	// Cast commands (cast signaling transport binding): commands ride the same
+	// outbound NATS session as signaling, so a renderer never opens an inbound
+	// listener. Subject keyed by AppID — the workspace-stable identity both the
+	// publisher (netmap) and this node know. Without a handler (agents without
+	// a player) the subject stays unsubscribed.
+	if node.castCommandHandler != nil {
+		castSubject := fmt.Sprintf("%s.%s.cmd", "lattice.cast", localIdentity.AppID)
+		if err = natsSignalService.SubscribeRawPayload(castSubject, node.castCommandHandler); err != nil {
+			return nil, err
+		}
 	}
 	node.token = cfg.Token
 
@@ -879,6 +903,26 @@ func (c *Node) PrunePeersExcept(keep map[string]struct{}) {
 
 func (c *Node) GetDeviceName() string {
 	return c.Name
+}
+
+// PublishCastCommandToPeer publishes a cast command payload to the peer with
+// the given workspace AppID over NATS — the fallback cast transport (§十三):
+// the overlay path carries the primary send, NATS covers peers that are not
+// reachable over the mesh right now. The target subscribes as
+// lattice.cast.<its AppID>.cmd.
+func (c *Node) PublishCastCommandToPeer(appID string, payload []byte) error {
+	found := false
+	for _, p := range c.GetPeerManager().GetAll() {
+		if p.AppID == appID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("cast: peer %q not in netmap", appID)
+	}
+	return c.natsService.Publish(context.Background(),
+		fmt.Sprintf("%s.%s.cmd", "lattice.cast", appID), payload)
 }
 
 func (c *Node) GetPeerManager() *infra.PeerManager {
