@@ -82,9 +82,9 @@ func main() {
 	case *peerID != 0:
 		subject = fmt.Sprintf("lattice.cast.%d.cmd", *peerID)
 	default:
-		key, err := wgtypes.ParseKey(*pubKey)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "castcmd: parse pubkey: %v\n", err)
+		key, keyErr := wgtypes.ParseKey(*pubKey)
+		if keyErr != nil {
+			fmt.Fprintf(os.Stderr, "castcmd: parse pubkey: %v\n", keyErr)
 			os.Exit(2)
 		}
 		subject = fmt.Sprintf("lattice.cast.%s.cmd", infra.FromKey(key))
