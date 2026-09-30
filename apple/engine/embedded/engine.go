@@ -45,6 +45,9 @@ type EmbeddedEngine struct {
 	overlay string
 	privKey wgtypes.Key
 
+	// eventFn is the host callback set via SetEventHandler; nil = no host.
+	eventFn func(event string)
+
 	// Lifecycle state for the context-free StartAsync/Stop pair. Start(ctx)
 	// does not touch these.
 	running bool
@@ -132,6 +135,7 @@ func (e *EmbeddedEngine) Start(ctx context.Context) error {
 		CustomTUN:          tunDevice,
 		CustomName:         e.cfg.Name,
 		CurrentPeer:        peer,
+		CastCommandHandler: e.dispatchCastCommand,
 		ProvisionerFactory: gvisor.NewSandboxProvisionerFactory(overlayIP, e.cfg.Name),
 	})
 	if err != nil {
@@ -227,6 +231,32 @@ func (e *EmbeddedEngine) OverlayAddress() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.overlay
+}
+
+// SetEventHandler registers the host callback. Events are plain strings;
+// cast commands arrive as "cast: {json}" — the same format the
+// tunnel-extension engine emits through its gomobile delegate
+// (apple/engine/engine.go:410). Dedup by command id is the host's job.
+func (e *EmbeddedEngine) SetEventHandler(fn func(event string)) {
+	e.mu.Lock()
+	e.eventFn = fn
+	e.mu.Unlock()
+}
+
+func (e *EmbeddedEngine) emitEvent(event string) {
+	e.mu.Lock()
+	fn := e.eventFn
+	e.mu.Unlock()
+	if fn != nil {
+		fn(event)
+	}
+}
+
+// dispatchCastCommand is the CastCommandHandler sink (NATS fallback
+// transport). The primary overlay-interception path does not exist in the
+// embedded engine; see the tvOS cast design §七.
+func (e *EmbeddedEngine) dispatchCastCommand(payload []byte) {
+	e.emitEvent("cast: " + string(payload))
 }
 
 // netstack returns the running shim server, or an error if Start has not
