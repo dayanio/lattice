@@ -506,8 +506,12 @@ func (e *Engine) run(ctx context.Context) {
 					continue
 				}
 				sent, dropped6 := tun.IPv6Stats()
+				ms := readMemStats()
 				log.Info("tun stats", "inbound", len(tun.inbound), "dropped", tun.Dropped(),
-					"icmp6Sent", sent, "icmp6Dropped", dropped6)
+					"icmp6Sent", sent, "icmp6Dropped", dropped6,
+					"heapAlloc", ms.HeapAlloc>>10, "heapInuse", ms.HeapInuse>>10,
+					"stackInuse", ms.StackInuse>>10, "sys", ms.Sys>>10,
+					"numGC", ms.NumGC, "goroutines", ms.Goroutines)
 			}
 		}
 	}()
