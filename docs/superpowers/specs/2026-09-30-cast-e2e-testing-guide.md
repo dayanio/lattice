@@ -2,7 +2,7 @@
 
 **日期**：2026-09-30
 **适用**：`spike/cast-gateway-phase0`（lattice-apple）+ `dev`（reflux）+ lattice `docs/cast-gateway-design` 分支上的投屏栈。
-**已验证基线**：93MB 小文件全链（面板发起 → 通知 → 点击 → Reflux 从 Mac 文件服务 Range 拉流真实播放）多轮通过；4K120 大文件的起播受路径吞吐与手机锁屏影响，见「已知坑」。
+**已验证基线**：93MB 小文件与 8.8GB 4K120 HDR 大文件全链（面板发起 → 通知 → 点击 → Reflux 从 Mac 文件服务 Range 拉流真实播放，含拖动进度条 seek）在真机上通过（2026-09-30）；大文件依赖 PlayerKit 帧内存预算与 seek 修复，见「已知坑」与 spike 文档附二。
 
 ---
 
@@ -23,7 +23,7 @@ Mac 面板/调试钩子发起
 ## 1. 健康检查（每次测试前全跑一遍）
 
 ```bash
-# 1a. Mac 的 LatticeMac 活着吗？（它经常静默退出——原因未明，死了就重新 open）
+# 1a. Mac 的 LatticeMac 活着吗？（退出原因见 /tmp/lattice-mac-lifecycle.log；死了就重新 open）
 pgrep -f "MacOS/LatticeMac" || open /Users/francis/workspc/lattice-apple/apple/build/Build/Products/Debug/LatticeMac.app
 
 # 1b. 媒体文件服务在监听吗？（开关：面板 → 投屏 → 允许其他设备播放本机文件，默认关）
@@ -87,11 +87,37 @@ grep -aE "Discover transport failed|SYN canceled" /tmp/lattice-ne.log | tail -3 
 
 ## 6. 已知坑（按命中概率排序）
 
-1. **Mac 的 LatticeMac 静默退出**（原因未明）→ 47823 无监听 → 一切失败。1a 检查 + 重启即恢复；
-2. **手机锁屏/闲置 ~10-40 分钟后 overlay 数据面死亡**（引擎活着、NATS 活着，WG 路径死）→ 解锁/交互恢复。这是 Phase 0 核心遗留，正在攻关（传输探测层 probe/ICE 不收敛）；
-3. **4K120 大文件（9GB，moov 34MB 在文件尾）**：慢路径上索引拉不完 → 起播超时。投屏发起预算已放宽到 60s（RendererBridge.loadWaitLimit）；更慢的路径仍会失败——建议先用小/中文件验证；
-4. **App 重启后旧令牌失效**（会话在内存里）→ 旧通知点开会 401，重新武装重投即可；
-5. **手机在蜂窝网络下**：NATS 4222 可能被墙 → 引擎起不来、隧道反复重启（engine log 会报 i/o timeout 到 101.36.119.12）——确保手机连家里 WiFi。
+1. **装了旧引擎**：macOS 隧道扩展按 bundle ID 经 LaunchServices 解析，`~/Applications/LatticeMac.app`
+   里的旧副本会悄悄提供引擎，而 UI 是新构建。改完代码后把新构建 `ditto` 进 `~/Applications`，并用
+   `ps` 确认隧道扩展路径与日期；
+2. **LatticeMac 消失**：先看 `/tmp/lattice-mac-lifecycle.log`（`ExitForensics`）——`prevExit=unclean`
+   说明被 SIGKILL/崩溃，`signal N` / `willTerminate` 说明有人让它退出。曾经的"静默退出"是 SIGPIPE
+   （已修）；
+3. **手机 `unavailable`（devicectl）**：锁屏/未在同一网络。装机和 `process launch` 都要求手机**解锁**；
+   `make ios` 装机会断开手机隧道，装完需在手机上重连；
+4. **8.8GB 4K120 大文件**：需要 PlayerKit 的帧内存预算修复（否则起播 1.5 秒被系统杀）。**不要**在 Mac 上用
+   `10.96.0.6` 复现/测速（本机访问自己的 overlay 地址只有 ~100KB/s）；
+5. **App 重启后旧令牌失效**（会话在内存里）→ 旧通知点开会 401，重新武装重投即可；
+6. **手机在蜂窝网络下**：NATS 4222 可能被墙 → 引擎起不来、隧道反复重启——确保手机连家里 WiFi；
+7. **手机锁屏 10-40 分钟后 overlay 疑似死亡**：**未证实**（见 spike 文档附二），复测时同时抓两侧日志。
+
+## 6b. 调试手册（测吞吐 / 看播放器日志）
+
+```bash
+# Mac→手机 TCP 连接的真实状态（重传、RTT、发送窗口）；netstat -s 在本机不可用
+nettop -m tcp -n -L 1 -J bytes_out,re-tx,rtt_avg,tx_win 2>&1 | grep "10.96.0.6:47823<->10.96.0.4"
+#  tx_win 恒为几十~上千字节 = 拥塞窗口被丢包打崩；0 = 手机在流控（播放器不读，正常）
+
+# 手机引擎内存与丢包：拉手机 lattice-ne.log 后看 mem[periodic] 与 tun stats
+#  footprint 逼近 limit≈52428800 = 即将被 jetsam；tun stats 的 dropped 应为 0
+
+# 直接看手机上 Reflux/PlayerKit 的日志（os.Logger）：带控制台启动并触发深链
+xcrun devicectl device process launch --device <id> --terminate-existing --console \
+  --environment-variables '{"OS_ACTIVITY_DT_MODE":"YES"}' \
+  --payload-url "reflux://cast?url=<urlencoded http://10.96.0.6:47823/<token>/x.mp4>&title=t&position=3600000" \
+  io.reflux.apple
+#  position= 可选（毫秒），用来测 seek；关键字：memory warning / signal 9 / q=… dur=… / landed physically
+```
 
 ## 7. 重新构建（改了代码之后）
 

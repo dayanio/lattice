@@ -89,41 +89,51 @@
 **新暴露的产品级问题（与 cast 无关，另行处理）**：手机在蜂窝网络下 NATS 4222 不通时，引擎
 起不来、隧道反复重启（i/o timeout 到 101.36.119.12:4222）——管理面可达性是全链前置条件。
 
-## 附二：隧道数据面闪断的根因分析（2026-09-29 深夜，引擎日志实证）
+## 附二：隧道不稳定的真实根因（2026-09-30 更正）
 
-当晚后续的投屏 E2E 反复失败，全部归因于**手机隧道数据面闪断**。用手机引擎日志
-（`/tmp/lattice-ne.log`，4MB，覆盖 11:28-12:21 CST，每分钟 300-400 行 DEBUG）做的取证：
+> **更正**：本节此前（2026-09-29）把"隧道数据面闪断"归因于 `internal/server/transport`
+> 的 probe/ICE 状态机不收敛。**该结论不成立，已撤回。** 当时引用的日志时间戳是 UTC，
+> 被误读成了"昨晚锁屏窗口"；`Discover transport failed` / `SYN canceled` 全部来自**不在线
+> 的对端**（lattice-gateway、cloud-node-1、local-consumer 等，永远没人回 OFFER），是
+> 噪声，与 Mac↔手机链路无关；同一窗口内手机与 Mac 的 WG 层握手、keepalive 全部正常。
 
-**观测到的事实**：
+2026-09-30 逐项实测后，"投屏时隧道不稳/播放卡死/手机变未连接/局域网只有 100KB/s"
+是**四个互相独立的缺陷**，逐个修复后互相遮蔽的现象才显露：
 
-1. **引擎进程全程存活、NATS 全程在线**：锁屏 34 分钟测试（23:45-00:20 CST）期间，NATS
-   发布 19/19 送达（<1s 延迟）——引擎没有被 iOS 杀死，控制面 TCP 存活；
-2. **overlay 数据面在同一窗口死亡**：`ping 10.96.0.4` 100% 丢包，且进行中的拉流 TCP
-   冻结（服务端阻塞式 send 无限挂起，直到对端彻底超时）；
-3. **引擎日志对数据面死亡零感知**：死亡窗口内引擎日志密度不变（300-400 行/分）、无任何
-   error/fail/timeout/reconnect——`liveness: ok` 探测每分钟 8 次全部报 OK；
-4. **传输探测层在循环失败**（每分钟 ~20 次）：`Discover transport failed` +
-   `SYN canceled`——lattice 自己的传输发现/探测协议没有完成建连；
-5. **WG 层握手正常**：`Sending handshake response` 双向都在——底层 UDP 路径可达，
-   WG 会话能建立；NATS（TCP 出站）也正常。
+| # | 根因（证据） | 症状 | 修复 |
+|---|---|---|---|
+| 1 | Mac 媒体服务向已断开的手机连接 `send()` 触发 **SIGPIPE**（launchd `exitStatus=13`，无崩溃报告） | LatticeMac"静默退出"，进行中的拉流被切断 | `SO_NOSIGPIPE` + 进程级忽略 SIGPIPE |
+| 2 | iOS 隧道扩展的包交付循环跑在永不返回的 GCD 线程上，**自动释放池永不 drain**；`writePackets` 桥接对象随交付字节 1:1 累积（malloc 0.7→28MB，Go 堆仅 2-3MB） | 拉流约 1 分钟撞 NE 50MB 上限被 jetsam 杀，手机"未连接" | 循环每轮 `autoreleasepool` |
+| 3 | 数据面 `SOCK_DGRAM` socketpair 默认队列只容得下 **3 个 1280B 包**，WG 突发交付时引擎非阻塞写满即丢（约 5%）→ 发送端 TCP 窗口崩到 1 个报文段（`nettop` tx_win 64-1216B） | 同一局域网只有 ~140KB/s | 两端缓冲调到 1MiB（实测可排 809 包） |
+| 4 | PlayerKit demux 循环**持 `demuxLock` 做阻塞网络读**，主线程 `pause/resume` 要同一把锁（崩溃栈：main 在 `NSLock.withLock`，demux 线程在 `poll`） | Reflux 被 watchdog 杀（0x8BADF00D） | 状态标志改用独立的 `demuxStateLock`（PlayerKit） |
 
-**结论（按可能性排序）**：
+修复后同一条链路实测：速度 ~140KB/s → ~16MB/s；手机 `dropped` ~5% → 0；扩展 footprint
+48MB → 稳定 13MB；TCP 发送窗口 64B → 2.9MB。
 
-- **lattice 传输探测协议的 bug**：probe/ICE 状态机无法收敛（SYN 发出但对端 ACK 永不
-  返回，或 ACK 返回但被状态机丢弃），导致对端路径（WG endpoint）无法建立/维持——
-  而引擎的 `liveness` 探测探测的是错误的Health指标（探测包本身能发出/收到，不代表
-  数据面通），**引擎对数据面死亡零感知、零自愈**。这是 `internal/server/transport`
-  的真 bug，是隧道稳定性的主攻方向；
-- 次要疑点：WG 的 endpoint（对端地址）依赖探测结果，探测失败 → WG session 无法
-  重建 → 数据面持续死亡，直到人工重连触发重新入网。
+**修完隧道后暴露的播放器问题（PlayerKit，均已修复并真机验证）**：
 
-**对 cast 功能的意义**：媒体拉流、UI 发起全链都依赖 overlay 数据面——隧道闪断期间
-一切失败是必然。传输层修复后，本 spike 的全部能力（含 4K 拉流）预期直接可用；
-修复前的过渡方案：保持手机亮屏可维持数据面（实测），但不可作为产品行为。
+- 8.8GB 4K120 HDR 起播后约 1.5 秒被 SIGKILL：解码帧缓冲只按帧数封顶（120fps 下 240 帧），
+  不看每帧大小（4K 10bit ≈ 18.5MB/帧 ≈ 4.4GB），起播阶段音频时钟未走、时间节流不生效，
+  以解码速度灌帧。Mac 上看不出来（帧是 IOSurface 显存，进程 RSS 仅 ~84MB）。
+  修复：字节预算 + 开播阈值随容量缩放 + 缓冲满时对 demux 背压。
+- 拖动进度条松手后圆点先闪回原位再跳到目标：`_seek` 立即递增 `seekSerial`，但物理
+  seek 100-200ms 后才落地，期间 demux 循环仍在读旧位置的包并带着"新 serial"入缓冲。
+  修复：物理 seek 落地前不接收新解码帧（`SeekFrameGate`）。
 
-**下一步**：`internal/server/transport` 的 probe 状态机专项（SYN-ACK 为何不收敛、
-liveness 探测为何与数据面脱节、网络变化时的重探测触发）——建议以本日志
-（`/tmp/lattice-ne.log`，覆盖 11:28-12:21 CST 全程）为复现依据新开会话。
+**仍未证实 / 未复现**：
+
+- "手机锁屏 10-40 分钟后 overlay 数据面死亡"：没有可靠证据，当晚的完整日志已被覆盖。
+  `6aa53b39`（双方都发 keepalive）针对的是 responder 静默，是否已解决需重做一次锁屏测试
+  并**同时抓 Mac 与手机两侧日志**。
+- 手机 relay TCP（`:6266`）持续 `upgrade failed: unexpected EOF`：中继兜底在测试期间是
+  死的，直连一旦抖动就没有后路；与本次 cast 无直接关系，另行处理。
+
+**测试方法上的陷阱**（本次因此走过弯路）：
+
+- **不要在 Mac 上用 `10.96.0.6` 做吞吐测试**：本机访问自己的 overlay 地址走 `utun5`（MTU
+  1280），实测只有 ~100KB/s，会让所有"Mac 作为客户端"的测试看起来像"打不开大文件"。
+  需要快速本地源时用 `127.0.0.1` 的 Range 服务器。
+- `netstat -s` 在这台机器上不可用（全 0），用 `nettop -m tcp -n -L 1 -J bytes_out,re-tx,rtt_avg,tx_win`。
 
 ## 附：本次 spike 的遗留物与回滚
 
