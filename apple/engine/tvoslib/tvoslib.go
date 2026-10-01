@@ -166,6 +166,24 @@ func TVClose(handle unsafe.Pointer) {
 	(*mediaHandle)(handle).close()
 }
 
+//export TVHTTPPost
+func TVHTTPPost(url *C.char, body *C.char, bearer *C.char) C.int {
+	// Status uplink (task-11): one-shot POST from the TV to the panel's
+	// /__cast/status, dialed through the engine overlay like TVOpenURL's
+	// media stream. Returns the HTTP status code, or <0 on local failure
+	// (-1 engine not started; -2 bad request; -3 transport error/timeout —
+	// whole request bounded by statusPostTimeout). Synchronous: callers must
+	// not invoke it on a thread that cannot block.
+	e := getEngine()
+	if e == nil {
+		return -1
+	}
+	return C.int(postWithURL(C.GoString(url), C.GoString(body), C.GoString(bearer),
+		func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return e.Dial(ctx, network, addr)
+		}))
+}
+
 //export TVFree
 func TVFree(p *C.char) {
 	C.free(unsafe.Pointer(p))

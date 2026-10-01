@@ -32,6 +32,25 @@ import (
 // (and, while readAt holds the mutex, TVClose) forever.
 const responseHeaderTimeout = 10 * time.Second
 
+// statusPostTimeout is the whole-request ceiling for the status uplink
+// (TVHTTPPost): a one-shot POST must not hang the caller's timer thread.
+// It is deliberately NOT part of newHTTPClient — the media Range stream
+// legitimately streams far longer than this (a two-hour movie), so a
+// whole-request deadline on the shared client would kill long plays.
+const statusPostTimeout = 15 * time.Second
+
+// newHTTPClient builds the engine-dialed HTTP client shared by the media
+// Range stream and the status uplink. Timeout is deliberately zero here:
+// callers that need a whole-request deadline set it on their own copy (see
+// statusPostTimeout). Tests dial loopback through the same injection point.
+func newHTTPClient(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		DialContext:           dial,
+		DisableCompression:    true,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+	}}
+}
+
 // mediaHandle serves one URL over an injectable dial function. Production
 // dials through the embedded engine's netstack; tests dial loopback.
 // ReadAt keeps one Range stream open and follows it while the caller reads
@@ -69,14 +88,10 @@ type mediaHandle struct {
 
 func newMediaHandle(urlStr string, dial func(ctx context.Context, network, addr string) (net.Conn, error)) (*mediaHandle, error) {
 	h := &mediaHandle{
-		url:  urlStr,
-		dial: dial,
-		size: -1,
-		client: &http.Client{Transport: &http.Transport{
-			DialContext:           dial,
-			DisableCompression:    true,
-			ResponseHeaderTimeout: responseHeaderTimeout,
-		}},
+		url:    urlStr,
+		dial:   dial,
+		size:   -1,
+		client: newHTTPClient(dial),
 	}
 	// Probe total size with a 1-byte Range; servers without Range support
 	// return 200 + Content-Length, which we also accept (no seek then).
@@ -225,6 +240,36 @@ const (
 	closeRetryInterval = 5 * time.Millisecond
 	closeRetryTimeout  = 5 * time.Second
 )
+
+// postWithURL sends one status POST over the injected dial (production: the
+// engine's overlay netstack; tests: loopback) and returns the HTTP status
+// code the server answered with, or a negative value on local failure:
+//
+//	-2 request could not be constructed (bad URL/body)
+//	-3 transport error (dial failure, timeout, no response)
+//
+// The whole request is bounded by statusPostTimeout so the caller's timer
+// thread can never hang on it. The response body is drained and closed —
+// callers only consume the numeric status.
+func postWithURL(urlStr, body, bearer string, dial func(ctx context.Context, network, addr string) (net.Conn, error)) int {
+	client := *newHTTPClient(dial)
+	client.Timeout = statusPostTimeout
+	req, err := http.NewRequest(http.MethodPost, urlStr, strings.NewReader(body))
+	if err != nil {
+		return -2
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return -3
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return resp.StatusCode
+}
 
 func (h *mediaHandle) close() {
 	// Publish closing under cancelMu first: any openAt past this point
