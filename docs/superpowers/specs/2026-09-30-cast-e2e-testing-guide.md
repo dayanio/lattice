@@ -2,7 +2,7 @@
 
 **日期**：2026-09-30
 **适用**：`spike/cast-gateway-phase0`（lattice-apple）+ `dev`（reflux）+ lattice `docs/cast-gateway-design` 分支上的投屏栈。
-**已验证基线**：93MB 小文件与 8.8GB 4K120 HDR 大文件全链（面板发起 → 通知 → 点击 → Reflux 从 Mac 文件服务 Range 拉流真实播放，含拖动进度条 seek）在真机上通过（2026-09-30）；大文件依赖 PlayerKit 帧内存预算与 seek 修复，见「已知坑」与 spike 文档附二。
+**已验证基线**：93MB 小文件与 8.8GB 4K120 HDR 大文件全链（面板发起 → 通知 → 点击 → Reflux 从 Mac 文件服务 Range 拉流真实播放，含拖动进度条 seek）在真机上通过（2026-09-30）；大文件依赖 PlayerKit 帧内存预算与 seek 修复，见「已知坑」与 spike 文档附二。tvOS 接收端代码全链就绪（三仓分支 feat/tvos-cast / feat/tv-cast / feat/tv-pair），真机验证待执行。
 
 ---
 
@@ -135,3 +135,101 @@ xcrun devicectl device install app --device A6D45DB9-9231-57C4-8121-5E69F33DEAB5
 
 改 Go 引擎代码后 `make ios`/`make mac` 会自动重建 xcframework；改 Swift 后同样。
 注意：`make ios` 装机会断开手机隧道，装完需在手机上重连一次。
+
+## 8. tvOS（Apple TV 接收端）【代码全链就绪，真机验证待执行】
+
+**架构一句话**：RefluxAppleTV 单进程内嵌引擎——无隧道扩展、无本地通知、无深链；命令走 NATS 兜底通道
+`lattice.cast.<电视AppID>.cmd`，媒体由引擎 `openMedia` 拨号经 overlay 从 Mac Range 拉流。入网配置
+（serverURL/token/name/privateKey）存 Keychain，WG 私钥持久化复用（重注册换 key 会被管理面拒绝）。
+电视退后台 App 即挂起 = 引擎停，**测试全程停在 Reflux 等待页**。
+
+### 8.1 构建与安装
+
+```bash
+# ① 引擎静态库（产出 apple/build/tvos/LatticeTVCore.a + LatticeTVCore.h，10 个 _TV 导出：
+#    TVStart/TVStop/TVOpenURL/TVReadAt/TVTotalSize/TVClose/TVFree/TVOverlayAddress/TVPrivateKey/TVHTTPPost）
+cd ~/workspc/lattice && make tvos-lib
+
+# ② 电视 App（Apple TV 需已与 Mac 配对；<ATV-ID> 用 xcrun devicectl list devices 查）
+cd ~/workspc/reflux && git checkout feat/tv-cast && xcodegen generate
+xcodebuild -project RefluxApple.xcodeproj -scheme RefluxAppleTV -configuration Debug \
+  -destination 'generic/platform=tvOS' -derivedDataPath build build
+xcrun devicectl device install app --device <ATV-ID> build/Build/Products/Debug-appletvos/RefluxAppleTV.app
+
+# ③ 手机端配对用 iOS App
+cd ~/workspc/lattice-apple && git checkout feat/tv-pair
+# Xcode 选 Lattice scheme 跑真机，或：
+xcodebuild -project LatticeApple.xcodeproj -scheme Lattice -configuration Debug \
+  -destination 'generic/platform=iOS' -derivedDataPath build build
+```
+
+### 8.2 入网（两种方式，任选其一）
+
+- **主入口·扫码**：电视「加入 Lattice」亮二维码（`lattice://tv-pair?…`）+ 4 位配对码 → 手机 Lattice
+  设置 → 投屏 → 添加 Apple TV 扫码。token 经 `/api/v1/token/generate` 下发（与管理台生成同流，token 名
+  带随机后缀），随后手机向电视 LAN URL `POST /config` 下发 TVCastConfig，header `X-Pair-Code` 必须
+  等于屏显 4 位码。
+- **次级兜底·粘贴链接**：电视等待页粘贴完整 `lattice://join?server=<管理地址>&token=<token>` 链接
+  （残缺/非此形态的链接会被拒）。
+
+提醒：tvOS 本地网络权限已在 project.yml 声明（`NSLocalNetworkUsageDescription`），首次弹窗必须
+允许——拒绝则 LAN 配对下发不通。
+
+### 8.3 投放与验收清单【待真机】
+
+投放命令与 §2 同形，peer = 电视在 netmap 里的名字：
+
+```bash
+echo '{"file":"/tmp/castmedia/test.mp4","peer":"<电视名>"}' \
+  > "$HOME/Library/Group Containers/group.io.lattice.shared/cast/cast-debug.json"
+
+# 或 castcmd 直接走 NATS 通道（AppID = 电视名）
+cd ~/workspc/lattice && GOTOOLCHAIN=go1.26.8 go run ./cmd/castcmd -appid "<电视名>" \
+  -media "http://10.96.0.6:47823/<token>/x.mp4" -title t
+```
+
+验收清单（设计 §十，逐项【待真机】）：
+1. 扫码入网：码一致确认 → 电视显示 overlay IP，netmap 出现该 peer；
+2. 面板发起 → 3 秒内起播 1080p（NATS 兜底路径）；
+3. 8.8GB 4K120 HDR 可播、进度条 seek 生效（overlay 拉流）；
+4. 播放中重投新内容直接切换；
+5. 电视退后台再回前台：重投恢复；
+6. Mac App 重启后旧令牌 401：重新武装会话重投即恢复；
+7. 配对 code 不匹配拒绝；入网后电视无监听端口（`netstat` 验证）；
+8. Phase 0 吞吐数据在案（见 8.6）。
+
+### 8.4 已知坑（按命中概率）
+
+1. **电视退后台即挂起 = 引擎停**：等待页 `isIdleTimerDisabled`（TVCastManager.swift:163）只防息屏，
+   不防用户按 Home/退出 App——退出后需重进 Reflux 等待页，引擎随 App 重启（PrivateKey 复用，入网快）；
+2. **Mac App 重启清媒体会话 → 电视拉流 401**：重新武装 cast-debug.json 重投即可（同 §6 坑 5）；
+3. **一次性配对监听只在电视配对页活着**：退出配对页监听即关——扫码要在亮码时完成；
+4. **会话令牌在 Mac 内存**：LatticeMac 别在投放中途重启；
+5. **推送失败残留的未消费 token**：在管理台可见、可删；
+6. **cast-debug.json 下发的 serverURL 是手机配置的管理地址**：电视必须可达该地址。
+
+### 8.5 取证
+
+- Mac 侧：`tail -20 /tmp/lattice-castmedia.log`，行含义沿用 §4（`delivered via nats-fallback` = 命令
+  经 NATS 到电视 ✓；`conn: GET /<token>/<file> Range=…` + `-> 206` = 电视播放器来拉流 ✓）；
+- 电视侧：引擎事件经 TVCastManager 打 OSLog（subsystem `io.reflux.apple`，category `TVCastManager`），
+  Console.app 连 USB 调试时可见【待真机确认】。
+
+### 8.6 吞吐（Phase 0）【待真机采集，不预写数字】
+
+工具链已就绪：SpikeTV.app（`spike-tvos/` 本地一次性目录，不入仓）从环境变量 `SPIKE_URL` 读当前会话
+URL，跑 45 秒后上报，Mac 侧收进 `/tmp/spike-tv-report.log`：
+
+```bash
+# ① 按 §2 武装会话，记下 47823 媒体 URL 里的 <token>
+# ② Xcode 跑 SpikeTV scheme 到 Apple TV：Edit Scheme → Run → Arguments →
+#    SPIKE_URL=http://10.96.0.6:47823/<token>/x.mp4   SPIKE_SECONDS=45
+# ③ Mac 侧收上报：
+python3 /tmp/spike_report_server.py &   # 若未在跑
+tail -2 /tmp/spike-tv-report.log        # 期待 JSON：MBps > 2（4K120 码率约 1-2 MB/s 留 2 倍余量）、Error 为空
+```
+
+注意：spike 上报地址硬编码在 `spike-tvos/app/Sources/Config.swift`（`reportURL`，Mac 的 LAN IP），
+换网络要改它重装。判据来自设计文档：spike 已验证引擎 c-archive 入网 + overlay 拉流通；Mac 对照组
+本机回环有 ~0.1MB/s 测量失真，**TV 端真实吞吐数字以本次采集为准**，达标（≥2MB/s）才继续后续
+Phase，不达标停下讨论 LAN 直连 fallback。
