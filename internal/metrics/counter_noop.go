@@ -16,9 +16,13 @@
 
 package metrics
 
+import "io"
+
 type noopCounter struct{}
 
 func (noopCounter) Inc()    {}
 func (noopCounter) Add(int) {}
 
 func newCounter(string) Counter { return noopCounter{} }
+
+func writePrometheus(io.Writer) {}

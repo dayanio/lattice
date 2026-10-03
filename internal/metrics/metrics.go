@@ -19,6 +19,8 @@
 // no-op (an NE process has nothing to scrape).
 package metrics
 
+import "io"
+
 // Counter is the minimal counter surface used by engine packages.
 type Counter interface {
 	Inc()
@@ -27,3 +29,9 @@ type Counter interface {
 
 // NewCounter creates (and registers, where a backend exists) a counter.
 func NewCounter(name string) Counter { return newCounter(name) }
+
+// WritePrometheus exposes every registered counter in Prometheus text
+// format. The /metrics handler must go through this — the counters live in
+// the VictoriaMetrics registry, and serving client_golang's (empty) default
+// registry instead made them invisible to scrapes.
+func WritePrometheus(w io.Writer) { writePrometheus(w) }
