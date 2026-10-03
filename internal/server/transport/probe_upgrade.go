@@ -53,7 +53,12 @@ func upgradeDelay(attempts int) time.Duration {
 // path, but each attempt still costs a signaling round and an ICE run, so
 // attempts back off exponentially.
 func (p *Probe) scheduleUpgrade() {
-	if UpgradeDisabled || !isInitiator(p.localId, p.remoteId) {
+	if UpgradeDisabled {
+		p.log.Debug("upgrade retry disabled by kill switch", "remoteId", p.remoteId.AppID)
+		return
+	}
+	if !isInitiator(p.localId, p.remoteId) {
+		p.log.Debug("upgrade retry skipped: responder", "remoteId", p.remoteId.AppID)
 		return
 	}
 	p.upgradeMu.Lock()
@@ -66,11 +71,17 @@ func (p *Probe) armUpgradeLocked(delay time.Duration) {
 		p.upgradeTimer.Stop()
 	}
 	epoch := p.epoch.Load()
+	p.log.Info("upgrade retry armed", "remoteId", p.remoteId.AppID, "delay", delay, "tries", p.upgradeTries, "epoch", epoch)
 	p.upgradeTimer = time.AfterFunc(delay, func() { p.tryUpgrade(epoch) })
 }
 
 func (p *Probe) tryUpgrade(epoch uint64) {
-	if p.epoch.Load() != epoch || p.sm.Current() != StateRelayReady {
+	if cur := p.epoch.Load(); cur != epoch {
+		p.log.Debug("upgrade retry skipped: epoch moved", "remoteId", p.remoteId.AppID, "armed", epoch, "current", cur)
+		return
+	}
+	if state := p.sm.Current(); state != StateRelayReady {
+		p.log.Debug("upgrade retry skipped: not relay-ready", "remoteId", p.remoteId.AppID, "state", state)
 		return
 	}
 	// The attempt renegotiates over signaling. With signaling down (e.g.
@@ -78,6 +89,7 @@ func (p *Probe) tryUpgrade(epoch uint64) {
 	// restart-based retry it would no longer tear anything down; it is
 	// simply pointless, so wait for signaling instead of burning an attempt.
 	if cs, ok := p.signal.(interface{ Connected() bool }); ok && !cs.Connected() {
+		p.log.Info("upgrade retry waits for signaling", "remoteId", p.remoteId.AppID, "recheck", upgradeSignalRetry)
 		p.upgradeMu.Lock()
 		p.armUpgradeLocked(upgradeSignalRetry)
 		p.upgradeMu.Unlock()
