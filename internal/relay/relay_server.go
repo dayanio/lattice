@@ -45,6 +45,7 @@ func NewServer(flags *config.Config) *Server {
 		authToken:       flags.RelayAuthToken,
 		requirePeerAuth: flags.RelayRequirePeerAuth,
 	}
+	setWriterLogger(s.log)
 	s.sessionMgr.SetRequirePeerAuth(flags.RelayRequirePeerAuth)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ferry/v1/upgrade", s.ferryUpgradeHandler)
@@ -196,14 +197,6 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 		}
 	}()
 
-	if !s.requirePeerAuth {
-		sess = &Session{ID: fromId, Stream: stream, Type: "TCP"}
-		s.sessionMgr.Register(fromId, sess)
-		_ = conn.SetReadDeadline(time.Time{})
-	} else {
-		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	}
-
 	var pending *relayChallenge
 	if challengePub, ch, chErr := newChallenge(); chErr == nil {
 		if sendErr := sendFrame(stream, AuthChallenge, challengePub[:]); sendErr == nil {
@@ -215,6 +208,14 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 	} else if s.requirePeerAuth {
 		s.log.Error("failed to generate auth challenge", chErr)
 		return
+	}
+
+	if !s.requirePeerAuth {
+		sess = newTCPSession(fromId, stream)
+		s.sessionMgr.Register(fromId, sess)
+		_ = conn.SetReadDeadline(time.Time{})
+	} else {
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	}
 	s.log.Info("session registered", "from", fromId)
 
@@ -253,7 +254,8 @@ func (s *Server) handleBoltSession(conn net.Conn, bufrw *bufio.ReadWriter) {
 				if sess != nil {
 					s.sessionMgr.MarkVerified(fromId, sess)
 				} else {
-					sess = &Session{ID: fromId, Stream: stream, Type: "TCP", verified: true}
+					sess = newTCPSession(fromId, stream)
+					sess.verified = true
 					s.sessionMgr.Register(fromId, sess)
 				}
 				pending = nil

@@ -17,6 +17,7 @@ package relay
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 // Stream abstract the exact transport protocol
@@ -32,11 +33,27 @@ type Session struct {
 	Stream Stream
 	Type   string // TCP / QUIC / KCP
 
-	// mu serializes Stream writes (see SessionManager.Relay): bufio-backed
-	// TCP streams are not safe for concurrent writers.
-	mu sync.Mutex
-
 	// verified is set once the session completed the X25519 per-peer auth
 	// handshake (ADR-0004). Guarded by SessionManager.mu.
 	verified bool
+
+	// ── Per-session forward queue (ADR-0005 F4) ──────────────────────────
+	//
+	// Relayed frames are handed to sendCh and written by the session's sole
+	// writer goroutine (session_writer.go). A slow destination therefore
+	// stalls only its own queue — senders to other peers are never blocked
+	// behind it, and a full queue drops the new frame instead of blocking
+	// the relaying peer's read loop (WireGuard retransmits; the relay path
+	// is best-effort by design).
+	//
+	// The writer starts lazily on the first enqueued frame, so sessions
+	// built as struct literals (tests) behave the same as newTCPSession.
+	sendCh    chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+	workOnce  sync.Once
+
+	// dropped counts frames discarded because the destination's queue was
+	// full (or the session was already shut down).
+	dropped atomic.Uint64
 }
