@@ -21,9 +21,9 @@ import "time"
 var upgradeBaseInterval = 2 * time.Minute
 
 // UpgradeDisabled turns the periodic relay→direct upgrade retry off entirely.
-// The retry is break-before-make (ADR-0007): every attempt tears down a
-// working relayed session. While the direct path is unusable anyway (e.g. the
-// macOS NE self-capture problem), the retries only buy outage windows.
+// Since ADR-0007 the retry is make-before-break (a shadow ICE probe beside
+// the relay path), so it no longer interrupts traffic; the kill switch is
+// kept for field diagnosis.
 var UpgradeDisabled = false
 
 const upgradeMaxInterval = 30 * time.Minute
@@ -47,10 +47,11 @@ func upgradeDelay(attempts int) time.Duration {
 // stays relayed until something else forces a restart, i.e. traffic keeps
 // flowing through the relay even after the direct path becomes usable again.
 //
-// Only the initiator schedules: a restart makes the remote side restart too,
-// so both sides doing it would collide. The retry is a full probe restart
-// (the signaling has no "upgrade only" flag), which costs a brief tunnel
-// interruption, so attempts back off exponentially.
+// Only the initiator schedules: the responder opens its own shadow when the
+// marked SYN arrives, so both sides doing it would collide. The retry is a
+// make-before-break background probe (ADR-0007) that never touches the relay
+// path, but each attempt still costs a signaling round and an ICE run, so
+// attempts back off exponentially.
 func (p *Probe) scheduleUpgrade() {
 	if UpgradeDisabled || !isInitiator(p.localId, p.remoteId) {
 		return
@@ -72,9 +73,10 @@ func (p *Probe) tryUpgrade(epoch uint64) {
 	if p.epoch.Load() != epoch || p.sm.Current() != StateRelayReady {
 		return
 	}
-	// The retry is a full restart that has to renegotiate over signaling. With
-	// signaling down (e.g. right after a network switch) it cannot complete
-	// and would only tear down the relay path that still works.
+	// The attempt renegotiates over signaling. With signaling down (e.g.
+	// right after a network switch) it cannot complete — but unlike the old
+	// restart-based retry it would no longer tear anything down; it is
+	// simply pointless, so wait for signaling instead of burning an attempt.
 	if cs, ok := p.signal.(interface{ Connected() bool }); ok && !cs.Connected() {
 		p.upgradeMu.Lock()
 		p.armUpgradeLocked(upgradeSignalRetry)
@@ -85,12 +87,12 @@ func (p *Probe) tryUpgrade(epoch uint64) {
 	p.upgradeTries++
 	tries := p.upgradeTries
 	p.upgradeMu.Unlock()
-	p.log.Info("relayed for a while, retrying a direct connection", "remoteId", p.remoteId.AppID, "attempt", tries)
-	if p.upgradeRestart != nil {
-		p.upgradeRestart()
+	p.log.Info("probing a direct connection in the background", "remoteId", p.remoteId.AppID, "attempt", tries)
+	if p.startUpgradeShadow != nil {
+		p.startUpgradeShadow(epoch)
 		return
 	}
-	p.restart()
+	p.beginUpgradeAttempt(epoch)
 }
 
 // cancelUpgrade stops any pending retry. reset also clears the backoff, for

@@ -49,16 +49,22 @@ func TestRelayPoisoned(t *testing.T) {
 	}
 }
 
-// fakeConfigurator records SetEndpoint calls.
+// fakeConfigurator records SetEndpoint and RemovePeer calls.
 type fakeConfigurator struct {
-	mu    sync.Mutex
-	calls []string
+	mu      sync.Mutex
+	calls   []string
+	removes []string
 }
 
 func (f *fakeConfigurator) RegisterPeer(string, string) error { return nil }
-func (f *fakeConfigurator) RemovePeer(string) error           { return nil }
-func (f *fakeConfigurator) ApplyRoute(string, string) error   { return nil }
-func (f *fakeConfigurator) SetupNAT(string) error             { return nil }
+func (f *fakeConfigurator) RemovePeer(pub string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removes = append(f.removes, pub)
+	return nil
+}
+func (f *fakeConfigurator) ApplyRoute(string, string) error { return nil }
+func (f *fakeConfigurator) SetupNAT(string) error           { return nil }
 func (f *fakeConfigurator) SetEndpoint(pub, endpoint string, ka int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -66,6 +72,11 @@ func (f *fakeConfigurator) SetEndpoint(pub, endpoint string, ka int) error {
 	return nil
 }
 func (f *fakeConfigurator) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.calls) }
+func (f *fakeConfigurator) removeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.removes)
+}
 
 // newIceReadyProbe builds an ice-ready probe whose WireGuard endpoint is
 // reported by endpoint().

@@ -567,6 +567,24 @@ func (p *ProbeFactory) NewProbe(remoteId infra.PeerIdentity) (*Probe, error) {
 		pathPing:     p.pingDirect,
 	}
 
+	// ADR-0007 make-before-break: the background upgrade probe shares the
+	// factory's UDP muxes (one wg-port, agents demuxed by ufrag) and sends
+	// through SendFrom so its signaling keeps the NATS→relay escalation of
+	// peerSignaler outside any Probing window.
+	probe.newShadow = func(attemptID string, onResult func(infra.Transport, error)) *shadowUpgrade {
+		return newShadowUpgrade(&shadowConfig{
+			log:       p.log,
+			localId:   p.localId,
+			remoteId:  remoteId,
+			sender:    signaler.SendFrom,
+			mux:       p.FilteringMux,
+			mux6:      p.FilteringMux6,
+			attemptID: attemptID,
+			showLog:   p.showLog,
+			onResult:  onResult,
+		})
+	}
+
 	makeIceDialer := func() infra.Dialer {
 		return NewIceDialer(&ICEDialerConfig{
 			LocalId:        p.localId,
