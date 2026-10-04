@@ -151,6 +151,7 @@ xcrun devicectl device install app --device A6D45DB9-9231-57C4-8121-5E69F33DEAB5
 cd ~/workspc/lattice && make tvos-lib
 
 # ② 电视 App（Apple TV 需已与 Mac 配对；<ATV-ID> 用 xcrun devicectl list devices 查）
+#    发现不了电视 / 连不上时先看：2026-10-04-appletv-connect-runbook.md（含 60 秒排查清单）
 cd ~/workspc/reflux && git checkout feat/tv-cast && xcodegen generate
 xcodebuild -project RefluxApple.xcodeproj -scheme RefluxAppleTV -configuration Debug \
   -destination 'generic/platform=tvOS' -derivedDataPath build build
