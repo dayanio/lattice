@@ -189,6 +189,15 @@ func (w *relayDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, p
 	}
 	switch packet.Type {
 	case signal.PacketType_HANDSHAKE_SYN:
+		// ADR-0007: a SYN marked as a background upgrade probe belongs to the
+		// shadow dialer (Probe.Handle intercepts first). This guard is
+		// insurance: a marked SYN must never be read as a remote restart on
+		// this active session, and its (absent) peer info must not be fed to
+		// the peer manager.
+		if hs := packet.GetHandshake(); hs != nil && hs.IsUpgradeProbe {
+			return nil
+		}
+
 		// Extract peer info from SYN — new design: peer info in SYN/ACK.
 		if hs := packet.GetHandshake(); hs != nil && len(hs.PeerInfo) > 0 {
 			var remotePeer infra.Peer

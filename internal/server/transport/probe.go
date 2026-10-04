@@ -87,10 +87,16 @@ type Probe struct {
 	livenessCancel context.CancelFunc
 
 	// Relay→direct upgrade retries (see probe_upgrade.go).
-	upgradeMu      sync.Mutex
-	upgradeTimer   *time.Timer
-	upgradeTries   int
-	upgradeRestart func() // test hook; defaults to restart
+	upgradeMu          sync.Mutex
+	upgradeTimer       *time.Timer
+	upgradeTries       int
+	startUpgradeShadow func(epoch uint64) // test hook; defaults to beginUpgradeAttempt
+
+	// Make-before-break upgrade shadow (ADR-0007, probe_shadow_upgrade.go):
+	// the one in-flight background attempt to a relayed peer.
+	shadowMu  sync.Mutex
+	shadow    *shadowUpgrade
+	newShadow func(attemptID string, onResult func(infra.Transport, error)) *shadowUpgrade
 
 	// pathPing sends a direct-path echo (nil disables the check); pathRestart
 	// is a test hook that replaces restart when the path is declared dead.
@@ -110,6 +116,13 @@ func (p *Probe) RemoteAppID() string {
 }
 
 func (p *Probe) Handle(ctx context.Context, remoteId infra.PeerIdentity, packet *signal.SignalPacket) error {
+	// ADR-0007: upgrade-probe signaling is routed to the shadow dialer and
+	// must never reach the main dialers — a marked SYN would otherwise be
+	// misread as a remote restart (relay dialer) or answered from the main
+	// ICE agent (ice dialer), polluting live state.
+	if isUpgradeSignal(packet) {
+		return p.handleShadowSignal(ctx, packet)
+	}
 	switch packet.Dialer {
 	case signal.DialerType_ICE:
 		p.mu.RLock()
@@ -223,6 +236,7 @@ func (p *Probe) restart() {
 
 	p.stopLivenessTicker()
 	p.cancelUpgrade(false)
+	p.cancelShadow()
 
 	if p.newIceDialer == nil {
 		return
@@ -252,6 +266,8 @@ func (p *Probe) restart() {
 func (p *Probe) Close() {
 	p.stopLivenessTicker()
 	p.cancelUpgrade(true)
+	p.newShadow = nil // onShadowResult must not re-arm on a closed probe
+	p.cancelShadow()
 	p.mu.Lock()
 	p.newIceDialer = nil
 	p.newRelayDialer = nil

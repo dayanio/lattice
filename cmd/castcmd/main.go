@@ -122,7 +122,7 @@ func sendOverlay(target string, retries int, payload []byte, cmdID string) {
 		fmt.Fprintf(os.Stderr, "castcmd: dial %s: %v\n", target, err)
 		os.Exit(1)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_ = conn.SetReadBuffer(1024)
 
 	var lastErr error

@@ -88,6 +88,9 @@ type Offer struct {
 	Vip        string `json:"vip,omitempty"`
 	Current    []byte `json:"current,omitempty"`
 	PublicKey  string `json:"publicKey,omitempty"`
+	// AttemptID correlates the OFFER with one make-before-break upgrade
+	// attempt (ADR-0007). Empty on main-line handshakes.
+	AttemptID string `json:"attempt_id,omitempty"`
 }
 
 // Message carries opaque content bytes.
@@ -99,4 +102,11 @@ type Message struct {
 type Handshake struct {
 	Timestamp int64  `json:"timestamp,omitempty"`
 	PeerInfo  []byte `json:"peer_info,omitempty"`
+	// IsUpgradeProbe marks a SYN/ACK that belongs to a background
+	// relay→direct upgrade attempt (ADR-0007) rather than a main-line
+	// handshake: receivers must not treat it as a remote restart. Older
+	// nodes ignore both fields on unmarshal and keep their legacy behavior.
+	IsUpgradeProbe bool `json:"is_upgrade_probe,omitempty"`
+	// AttemptID correlates all signaling of one upgrade attempt.
+	AttemptID string `json:"attempt_id,omitempty"`
 }

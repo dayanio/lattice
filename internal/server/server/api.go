@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
+	"github.com/alatticeio/lattice/internal/metrics"
 	"github.com/alatticeio/lattice/internal/server/dex"
 	"github.com/alatticeio/lattice/internal/server/dto"
 	"github.com/alatticeio/lattice/internal/server/models"
@@ -15,7 +16,6 @@ import (
 	"github.com/alatticeio/lattice/pkg/utils/resp"
 
 	"github.com/gin-gonic/gin"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var ipLimiter = middleware.NewIPRateLimiter()
@@ -55,8 +55,13 @@ func (s *Server) apiRouter() error {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Attach monitoring
-	s.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	// Attach monitoring — the engine's counters live in the VictoriaMetrics
+	// registry (internal/metrics); serving client_golang's empty default
+	// registry made every counter invisible to scrapes.
+	s.GET("/metrics", func(c *gin.Context) {
+		c.Header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		metrics.WritePrometheus(c.Writer)
+	})
 	api := s.Group("/api/v1")
 	{
 		// Network management (Namespace) — workspace-scoped, requires membership

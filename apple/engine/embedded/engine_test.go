@@ -451,3 +451,26 @@ func TestEmbeddedEngine_Dial_ReachesContainer(t *testing.T) {
 	}
 	defer conn.Close()
 }
+
+func TestDispatchCastCommandEmitsEvent(t *testing.T) {
+	e, err := New(`{"serverURL":"http://x","token":"t","name":"n"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan string, 1)
+	e.SetEventHandler(func(event string) { got <- event })
+	e.dispatchCastCommand([]byte(`{"id":"a","action":"play"}`))
+	select {
+	case ev := <-got:
+		if !strings.HasPrefix(ev, "cast: ") {
+			t.Fatalf("event = %q, want cast: prefix", ev)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no event emitted")
+	}
+}
+
+func TestSetEventHandlerNilSafe(t *testing.T) {
+	e, _ := New(`{"serverURL":"http://x","token":"t","name":"n"}`)
+	e.dispatchCastCommand([]byte(`{}`)) // 无 handler 不得 panic
+}

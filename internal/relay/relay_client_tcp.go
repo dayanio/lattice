@@ -321,17 +321,28 @@ func (c *TCPClient) writeFrames(frames [][]byte) bool {
 	if conn == nil || w == nil {
 		return false
 	}
-	if !c.flushFrames(w, frames) {
+	if !c.flushFrames(conn, w, frames) {
 		c.disconnectIfCurrent(conn)
 		return false
 	}
 	return true
 }
 
-// flushFrames appends the frames to w and flushes, under writeMu.
-func (c *TCPClient) flushFrames(w *bufio.Writer, frames [][]byte) bool {
+// clientWriteDeadline bounds each write+flush: a TCP connection that stops
+// accepting data must fail fast (→ reconnect backoff) instead of stalling
+// the writerLoop — and with it every queued WireGuard packet — forever.
+const clientWriteDeadline = 2 * time.Second
+
+// flushFrames appends the frames to w and flushes, under writeMu and a
+// write deadline. The deadline applies to the whole batch: either it all
+// lands within 2 s or the connection is torn down.
+func (c *TCPClient) flushFrames(conn net.Conn, w *bufio.Writer, frames [][]byte) bool {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if err := conn.SetWriteDeadline(time.Now().Add(clientWriteDeadline)); err != nil {
+		return false
+	}
+	defer func() { _ = conn.SetWriteDeadline(time.Time{}) }() //nolint:errcheck
 	for _, f := range frames {
 		if _, err := w.Write(f); err != nil {
 			return false
@@ -434,7 +445,7 @@ func (c *TCPClient) writeFramesTo(conn net.Conn, frames [][]byte) bool {
 	if cur != conn || w == nil {
 		return false
 	}
-	if !c.flushFrames(w, frames) {
+	if !c.flushFrames(conn, w, frames) {
 		c.disconnectIfCurrent(conn)
 		return false
 	}

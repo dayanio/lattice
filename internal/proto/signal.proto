@@ -40,6 +40,9 @@ message Offer {
   bytes current = 6;
 
   string publicKey = 7;
+
+  // ADR-0007 make-before-break upgrade attempt correlation id.
+  string attempt_id = 8;
 }
 
 
@@ -51,4 +54,9 @@ message Message {
 message Handshake {
   int64 timestamp = 1;
   bytes peer_info = 2;  // JSON-encoded infra.Peer (local WG config)
+
+  // ADR-0007: true on SYN/ACK of a background relay→direct upgrade probe —
+  // receivers must not treat it as a remote restart.
+  bool is_upgrade_probe = 3;
+  string attempt_id = 4;
 }
