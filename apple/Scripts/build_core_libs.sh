@@ -8,18 +8,21 @@
 # docs/superpowers/specs/2026-10-05-apple-engine-carchive-migration-design.md.
 #
 # Artifacts land at the same paths gomobile used:
-#   apple/Frameworks/iOS/LatticeCore.xcframework    (ios-arm64, static)
-#   apple/Frameworks/MacOS/LatticeCore.xcframework  (macos-arm64, static)
+#   <out>/iOS/LatticeCore.xcframework    (ios-arm64, static)
+#   <out>/MacOS/LatticeCore.xcframework  (macos-arm64, static)
 # The first run copies the gomobile originals aside to
-# apple/Frameworks-gomobile-backup/ — rollback is swapping the directory
-# back; the backup is never refreshed by later runs.
+# <out>-gomobile-backup/ — rollback is swapping the directory back; the
+# backup is never refreshed by later runs.
 #
-# usage: build_core_libs.sh [ios|macos|all]   (default all)
+# usage: build_core_libs.sh [ios|macos|all] [out-frameworks-dir]
+#   out-frameworks-dir defaults to this repo's apple/Frameworks. The Apple
+#   app repo (lattice-apple) passes its own Frameworks dir: the engine
+#   artifacts it links live in the consuming repo, next to its engine stamps.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-FRAMEWORKS=apple/Frameworks
-BACKUP=apple/Frameworks-gomobile-backup
+FRAMEWORKS="${2:-apple/Frameworks}"
+BACKUP="${FRAMEWORKS}-gomobile-backup"
 STAGE=apple/build/corelib
 IOS_MIN=17.0      # project.yml deploymentTarget (Lattice / LatticeTunnel)
 MACOS_MIN=26.0    # project.yml deploymentTarget (LatticeMac / LatticeTunnelMac)
