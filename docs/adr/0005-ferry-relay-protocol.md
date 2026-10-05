@@ -1,6 +1,6 @@
 # ADR-0005: FERRY — the Lattice relay service and the FERRY/1 protocol
 
-- **Status**: Proposed
+- **Status**: Accepted（2026-10-04 云端节点验收通过；实现 landed 于 a74ba39c make-before-break、1e1ea049 per-session queue）
 - **Date**: 2026-09-19
 - **Related**: ADR-0004 (LRP per-peer authentication), ADR-0003 (client-side
   keygen)
