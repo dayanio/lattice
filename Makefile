@@ -461,6 +461,10 @@ build-installer: manifests generate kustomize ## Build kustomize manifests into 
 tvos-lib: ## build the tvOS static library (LatticeTVCore.a + header)
 	@apple/Scripts/build_tvos_lib.sh
 
+.PHONY: core-libs
+core-libs: ## build the macOS/iOS static engine xcframeworks (c-archive, replaces gomobile)
+	@apple/Scripts/build_core_libs.sh $(if $(PLATFORM),$(PLATFORM),all)
+
 ##@ Deployment
 
 ifndef ignore-not-found
