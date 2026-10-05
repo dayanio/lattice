@@ -126,6 +126,8 @@ function userSidebar() {
         { text: 'Multi-Cloud Peering', link: '/guide/multi-cloud-peering' },
         { text: 'Remote Device Onboarding', link: '/guide/remote-device-onboarding' },
         { text: 'AI Agent Zero-Trust', link: '/guide/ai-agent-zero-trust' },
+        { text: 'Cross-network Cast (投屏)', link: '/guide/cast' },
+        { text: 'Build Apple Apps (Reflux 客户端)', link: '/guide/build-apple-apps' },
       ],
     },
   ]
