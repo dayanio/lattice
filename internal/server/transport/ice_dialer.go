@@ -128,6 +128,12 @@ func (i *iceDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		}
 		return nil
 	case signal.PacketType_HANDSHAKE_ACK:
+		// ADR-0007: upgrade-probe signaling is answered by the shadow dialer
+		// (Probe.Handle intercepts first). This guard is insurance: a marked
+		// ACK must not cancel the main SYN ticker or gather on the main agent.
+		if hs := packet.GetHandshake(); hs != nil && hs.IsUpgradeProbe {
+			return nil
+		}
 		if i.closed.Load() {
 			return nil
 		}
@@ -177,6 +183,12 @@ func (i *iceDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		}
 		return gatherErr
 	case signal.PacketType_HANDSHAKE_SYN:
+		// ADR-0007: a SYN marked as a background upgrade probe belongs to the
+		// shadow dialer. The main dialer must neither treat it as a remote
+		// restart (the closed branch below) nor answer it from the main agent.
+		if hs := packet.GetHandshake(); hs != nil && hs.IsUpgradeProbe {
+			return nil
+		}
 		// If already fully closed, the remote peer restarted after our ICE cleanup.
 		// Trigger probe.restart() so a fresh dialer is created to handle the peer's
 		// next SYN retry (sent every 2 s). Without this the probe stays stuck in
@@ -278,6 +290,12 @@ func (i *iceDialer) Handle(ctx context.Context, remoteId infra.PeerIdentity, pac
 		}
 
 		offer := packet.GetOffer()
+
+		// ADR-0007: a marked OFFER belongs to the shadow dialer's attempt;
+		// never feed it into the main agent's credentials or candidates.
+		if offer != nil && offer.AttemptID != "" {
+			return nil
+		}
 
 		// Always ensure remote ICE credentials are set — credentialsInited may
 		// already be true from an earlier ACK/SYN (which don't carry ICE creds).
@@ -556,29 +574,52 @@ func (i *iceDialer) Type() infra.DialerType {
 	return infra.ICE_DIALER
 }
 
-// udpMux returns a combined UDPMux for all available network interfaces.
+// udpMuxFor returns a combined UDPMux for all available network interfaces.
 // When IPv6 is available, MultiUDPMuxDefault aggregates v4 and v6 host candidates
 // so the ICE agent can gather candidates from both stacks via a single option.
-func (i *iceDialer) udpMux() ice.UDPMux {
-	if i.filteringMux6 != nil {
-		return ice.NewMultiUDPMuxDefault(i.filteringMux.UDPMux(), i.filteringMux6.UDPMux())
+func udpMuxFor(mux, mux6 *infra.FilteringUDPMux) ice.UDPMux {
+	if mux6 != nil {
+		return ice.NewMultiUDPMuxDefault(mux.UDPMux(), mux6.UDPMux())
 	}
-	return i.filteringMux.UDPMux()
+	return mux.UDPMux()
 }
 
-// networkTypes returns the ICE network types enabled for this dialer.
+// networkTypesFor returns the ICE network types enabled for a mux pair.
 // UDP6 is only included when a v6 FilteringUDPMux is present.
-func (i *iceDialer) networkTypes() []ice.NetworkType {
+func networkTypesFor(mux6 *infra.FilteringUDPMux) []ice.NetworkType {
 	types := []ice.NetworkType{ice.NetworkTypeUDP4}
-	if i.filteringMux6 != nil {
+	if mux6 != nil {
 		types = append(types, ice.NetworkTypeUDP6)
 	}
 	return types
 }
 
-func (i *iceDialer) getAgent(remoteId infra.PeerIdentity) (*ice.Agent, error) {
+// iceAgentOpts carries the per-dialer behaviors handed to newICEAgent.
+type iceAgentOpts struct {
+	mux     *infra.FilteringUDPMux
+	mux6    *infra.FilteringUDPMux // nil when IPv6 unavailable
+	showLog bool
+	// onCandidate is called for every gathered local candidate (nil at the
+	// end of gathering, mirroring pion semantics).
+	onCandidate func(ice.Candidate)
+	// onFailed is called when the agent's ICE state reaches Failed.
+	onFailed func()
+}
+
+// stunURIsFn indirection lets tests drop the public STUN list (host-only
+// candidates are enough for loopback-topology ICE tests).
+var stunURIsFn = stunURIs
+
+// newICEAgent builds a pion ICE agent with everything the main dialer and the
+// ADR-0007 upgrade shadow must agree on: the shared UDP mux (one wg-port for
+// all agents), the STUN list, network types and the disconnect/fail timeouts.
+// Each agent carries its own ufrag/pwd, so several agents can share one mux.
+func newICEAgent(o iceAgentOpts) (*ice.Agent, error) {
+	if o.mux == nil {
+		return nil, errors.New("no UDP mux for ICE agent")
+	}
 	f := logging.NewDefaultLoggerFactory()
-	if i.showLog {
+	if o.showLog {
 		f.DefaultLogLevel = logging.LogLevelDebug
 	} else {
 		f.DefaultLogLevel = logging.LogLevelError
@@ -596,10 +637,10 @@ func (i *iceDialer) getAgent(remoteId infra.PeerIdentity) (*ice.Agent, error) {
 	failedTimeout := 15 * time.Second
 	iceAgent, err := ice.NewAgentWithOptions(
 		ice.WithInterfaceFilter(infra.ICEInterfaceAllowed),
-		ice.WithUDPMux(i.udpMux()),
-		ice.WithUDPMuxSrflx(i.filteringMux.UDPMuxSrflx()),
-		ice.WithNetworkTypes(i.networkTypes()),
-		ice.WithUrls(stunURIs()),
+		ice.WithUDPMux(udpMuxFor(o.mux, o.mux6)),
+		ice.WithUDPMuxSrflx(o.mux.UDPMuxSrflx()),
+		ice.WithNetworkTypes(networkTypesFor(o.mux6)),
+		ice.WithUrls(stunURIsFn()),
 		ice.WithLoggerFactory(f),
 		ice.WithCandidateTypes([]ice.CandidateType{ice.CandidateTypeHost, ice.CandidateTypeServerReflexive}),
 		ice.WithDisconnectedTimeout(disconnectedTimeout),
@@ -610,36 +651,48 @@ func (i *iceDialer) getAgent(remoteId infra.PeerIdentity) (*ice.Agent, error) {
 		return nil, err
 	}
 	if err = iceAgent.OnConnectionStateChange(func(s ice.ConnectionState) {
-		i.log.Debug("ice state changed", "state", s)
 		// Only close on Failed, not Disconnected.
 		// When ICE enters Disconnected it retries keepalives aggressively for
 		// FailedTimeout (15s) and can recover to Connected without any
 		// application intervention.  Closing on Disconnected short-circuits
 		// that built-in recovery and triggers a full SYN restart cycle which
 		// cascades to the remote side as well, causing the connect/disconnect loop.
-		if s == ice.ConnectionStateFailed {
-			i.Close() //nolint:errcheck
+		if s == ice.ConnectionStateFailed && o.onFailed != nil {
+			o.onFailed()
 		}
 	}); err != nil {
 		return nil, err
 	}
 
-	if err = iceAgent.OnCandidate(func(candidate ice.Candidate) {
-		if candidate == nil {
-			return
-		}
-		i.mu.Lock()
-		i.gatheredCandidates = append(i.gatheredCandidates, candidate)
-		i.mu.Unlock()
-		if err = i.sendPacket(context.TODO(), remoteId, signal.PacketType_OFFER, candidate); err != nil {
-			i.log.Error("Send candidate", err)
-		}
-		i.log.Debug("Sending candidate", "remoteId", remoteId, "candidate", candidate)
-	}); err != nil {
+	if err = iceAgent.OnCandidate(o.onCandidate); err != nil {
 		return nil, err
 	}
 
 	return iceAgent, nil
+}
+
+func (i *iceDialer) getAgent(remoteId infra.PeerIdentity) (*ice.Agent, error) {
+	return newICEAgent(iceAgentOpts{
+		mux:     i.filteringMux,
+		mux6:    i.filteringMux6,
+		showLog: i.showLog,
+		onCandidate: func(candidate ice.Candidate) {
+			if candidate == nil {
+				return
+			}
+			i.mu.Lock()
+			i.gatheredCandidates = append(i.gatheredCandidates, candidate)
+			i.mu.Unlock()
+			if err := i.sendPacket(context.TODO(), remoteId, signal.PacketType_OFFER, candidate); err != nil {
+				i.log.Error("Send candidate", err)
+			}
+			i.log.Debug("Sending candidate", "remoteId", remoteId, "candidate", candidate)
+		},
+		onFailed: func() {
+			i.log.Debug("ice state changed", "state", ice.ConnectionStateFailed)
+			i.Close() //nolint:errcheck
+		},
+	})
 }
 
 // sendPacket sends a signal packet to remoteId.

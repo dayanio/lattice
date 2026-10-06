@@ -53,3 +53,9 @@ ExportOptions.plist
 # Local tooling / scratch
 .zcodeignore
 tmp-syntool/
+
+# Apple local build artifacts (xcframeworks, SwiftPM caches, load-gen binary)
+apple/Frameworks/
+apple/Frameworks-gomobile-backup/
+apple/EmbeddedKit/
+/relayloadgen

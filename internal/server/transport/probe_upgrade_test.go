@@ -46,8 +46,8 @@ func fastUpgrade(t *testing.T) {
 	t.Cleanup(func() { upgradeBaseInterval = prev })
 }
 
-// newUpgradeProbe builds a probe whose upgrade restart is observable. The
-// initiator is the side with the numerically larger peer ID.
+// newUpgradeProbe builds a probe whose background upgrade attempt is
+// observable. The initiator is the side with the numerically larger peer ID.
 func newUpgradeProbe(t *testing.T, initiator bool, fired *atomic.Int32) *Probe {
 	t.Helper()
 	big := infra.NewPeerIdentity("big", wgtypes.Key{2})
@@ -57,11 +57,11 @@ func newUpgradeProbe(t *testing.T, initiator bool, fired *atomic.Int32) *Probe {
 		local, remote = big, small
 	}
 	return &Probe{
-		sm:             NewStateMachine(StateProbing),
-		localId:        local,
-		remoteId:       remote,
-		log:            log.GetLogger("test-probe"),
-		upgradeRestart: func() { fired.Add(1) },
+		sm:                 NewStateMachine(StateProbing),
+		localId:            local,
+		remoteId:           remote,
+		log:                log.GetLogger("test-probe"),
+		startUpgradeShadow: func(uint64) { fired.Add(1) },
 	}
 }
 
@@ -73,6 +73,9 @@ func TestUpgrade_RelayedInitiatorRetriesDirect(t *testing.T) {
 	p.onSuccess(&mockTransport{tp: infra.Relay, addr: "fake"})
 
 	waitUntil(t, time.Second, func() bool { return fired.Load() == 1 }, "a relayed initiator must retry a direct connection")
+	if got := p.sm.Current(); got != StateRelayReady {
+		t.Fatalf("state = %s during the upgrade attempt, want it to stay relay-ready (make-before-break)", got)
+	}
 }
 
 func TestUpgrade_ResponderNeverInitiates(t *testing.T) {
@@ -84,7 +87,7 @@ func TestUpgrade_ResponderNeverInitiates(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 	if n := fired.Load(); n != 0 {
-		t.Fatalf("responder fired %d upgrade restart(s); only the initiator may, or both sides would restart at once", n)
+		t.Fatalf("responder fired %d upgrade attempt(s); only the initiator may, or both sides would collide", n)
 	}
 }
 
@@ -97,12 +100,12 @@ func TestUpgrade_DirectConnectionSchedulesNothing(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 	if n := fired.Load(); n != 0 {
-		t.Fatalf("a direct connection fired %d upgrade restart(s)", n)
+		t.Fatalf("a direct connection fired %d upgrade attempt(s)", n)
 	}
 }
 
 // The ICE dial that races the relay can win late; that upgrade must cancel the
-// pending retry instead of restarting a connection that is already direct.
+// pending retry instead of probing a connection that is already direct.
 func TestUpgrade_LateICEWinCancelsTheRetry(t *testing.T) {
 	fastUpgrade(t)
 	var fired atomic.Int32

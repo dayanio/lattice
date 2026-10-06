@@ -49,7 +49,7 @@ func TestProbe_onSuccess_ICE(t *testing.T) {
 		transitions = append(transitions, struct{ from, to PeerState }{from, to})
 	})
 
-	p := &Probe{sm: sm}
+	p := &Probe{sm: sm, log: log.GetLogger("test-probe")}
 	transport := &mockTransport{tp: infra.ICE, addr: "1.2.3.4:5000"}
 	p.onSuccess(transport)
 
@@ -69,7 +69,7 @@ func TestProbe_onSuccess_ICE(t *testing.T) {
 
 func TestProbe_onSuccess_Relay(t *testing.T) {
 	sm := NewStateMachine(StateProbing)
-	p := &Probe{sm: sm}
+	p := &Probe{sm: sm, log: log.GetLogger("test-probe")}
 	transport := &mockTransport{tp: infra.Relay, addr: "fake"}
 	p.onSuccess(transport)
 

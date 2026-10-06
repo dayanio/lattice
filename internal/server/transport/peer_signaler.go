@@ -94,14 +94,24 @@ func (s *peerSignaler) onState(_, to PeerState) {
 	s.since = time.Time{}
 }
 
-func (s *peerSignaler) stalled() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return !s.since.IsZero() && s.now().Sub(s.since) >= s.after
-}
-
 // Send has the signature of the dialers' Sender.
 func (s *peerSignaler) Send(ctx context.Context, to infra.PeerID, data []byte) error {
+	return s.SendFrom(ctx, to, data, s.attemptStart())
+}
+
+// attemptStart snapshots the start of the current Probing attempt (zero when
+// the probe is not probing).
+func (s *peerSignaler) attemptStart() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.since
+}
+
+// SendFrom behaves like Send but takes the start of the attempt explicitly:
+// the ADR-0007 upgrade shadow (probe_shadow_upgrade.go) runs while the probe
+// is relay-ready, outside any Probing window, so it passes its own start time
+// and gets the same NATS→relay escalation the restart-based upgrade relied on.
+func (s *peerSignaler) SendFrom(ctx context.Context, to infra.PeerID, data []byte, start time.Time) error {
 	reason := ""
 	var natsErr error
 	if s.natsUp != nil && !s.natsUp() {
@@ -109,7 +119,7 @@ func (s *peerSignaler) Send(ctx context.Context, to infra.PeerID, data []byte) e
 	} else if natsErr = s.nats(ctx, to, data); natsErr != nil {
 		reason = "nats-error"
 	}
-	if reason == "" && s.stalled() {
+	if reason == "" && s.stalledSince(start) {
 		reason = "no-progress"
 	}
 	if reason == "" {
@@ -121,6 +131,11 @@ func (s *peerSignaler) Send(ctx context.Context, to infra.PeerID, data []byte) e
 		return nil
 	}
 	return errors.Join(natsErr, relayErr)
+}
+
+// stalledSince reports whether start is older than the escalation window.
+func (s *peerSignaler) stalledSince(start time.Time) bool {
+	return !start.IsZero() && s.now().Sub(start) >= s.after
 }
 
 func (s *peerSignaler) viaRelay(ctx context.Context, to infra.PeerID, data []byte, reason string) error {

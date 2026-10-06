@@ -17,9 +17,16 @@
 package metrics
 
 import (
+	"io"
+
 	victoriametrics "github.com/VictoriaMetrics/metrics"
 )
 
 func newCounter(name string) Counter {
 	return victoriametrics.NewCounter(name)
+}
+
+func writePrometheus(w io.Writer) {
+	// Include process metrics (Go runtime, fds, memory) alongside ours.
+	victoriametrics.WritePrometheus(w, true)
 }
