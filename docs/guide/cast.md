@@ -4,12 +4,31 @@ Cast 是构建在 Lattice overlay 网络之上的投屏能力：手机 / Mac 上
 
 ## 与传统投屏的区别
 
-| | AirPlay / DLNA | Lattice Cast |
-|---|---|---|
-| 网络范围 | 同一局域网 | 任意 Lattice 网络（跨地域、跨 NAT） |
-| 发现机制 | mDNS 广播 | 控制面注册表（设备即节点） |
-| 媒体传输 | 局域网直传 | WireGuard overlay 直连，不通时自动走中继 |
-| 安全 | 依赖局域网信任 | WireGuard 加密 + 网络策略 |
+| | DLNA | Google Cast / AirPlay | Lattice Cast |
+|---|---|---|---|
+| 网络范围 | 同一局域网 | 同一局域网 | 任意 Lattice 网络（跨地域、跨 NAT） |
+| 发现机制 | mDNS/SSDP 广播 | 生态内发现 | 控制面注册表（设备即节点）+ 局域网 mDNS |
+| 接收端门槛 | 电视预装 | 硬件或认证（Chromecast / MFi） | 软件：装 App 即是（tvOS / Mac / Go renderer） |
+| 媒体传输 | renderer 拉流，格式协商脆弱 | sender 给 URL，receiver 拉流 | 同 URL 拉流 + overlay 直连，不通时自动走中继 |
+| 安全 | 依赖局域网信任（裸奔） | 生态内托管 | WireGuard 加密 + renderer Bearer token |
+
+## 适用场景
+
+一句话定位：**Google Cast / AirPlay 做"同一 WiFi 的客厅投屏"，Lattice Cast 做"私有内容 × 自有设备"的跨网播放通道**。
+
+核心场景都是跨网的——这是上面三家协议结构上做不到的：
+
+- **外网手机 → 家里电视**：人在公司或出差，家里电视开着 Reflux，手机把 NAS / 115 网盘的影片投过去，家人在家直接看。命令走控制面（NATS），媒体走 overlay 直连（ICE 打洞，不通走 FERRY 中继）——内容与流量都不经过第三方。
+- **两处住宅互投**：老家和城里的电视都在同一 Lattice 网络，任意一端的媒体库可被另一端投放。
+- **Mac/PC 作为接收端**：卧室 Mac 装上 Reflux 即是富格式接收端（PlayerKit 渲染），手机把网盘剧集投给电脑看；LatticeMac 内置 AVPlayer 接收端在其离场时自动兜底。
+
+局域网内 Lattice Cast 与 AirPlay / DLNA 并存且可用（接收端是软件，无需任何硬件门槛），但**同一 WiFi 下用户没有理由优先选它**——遥控器上贴着的 AirPlay 标是现成的体验预期。这段能力是跨网通道顺路覆盖的一段，不是卖点。
+
+## 什么时候不用 cast
+
+- **内容在云端流媒体**：电视 App 直接播更简单，还省一次拉流。cast 的价值在**私有内容**——NAS、网盘（115）、本地文件。
+- **接收端不归你管**：酒店、朋友家的电视装不了你的 App，跨网 cast 无从落地。
+- **客厅多人同时投放**：协议 v1 尚无 sender 会话仲裁（互踢/队列/音量同步是 Google Cast 打磨了十年的部分），多人场景会暴露。
 
 ## 架构总览
 
