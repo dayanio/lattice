@@ -68,19 +68,32 @@ The Makefile sets `BPF2GO_CC=/opt/homebrew/opt/llvm/bin/clang` on macOS to pick 
 
 ## Git Workflow
 
-- **Branches**: `master` (main), `dev` (development)
-- **Commits**: Conventional commits with scope: `feat(scope):`, `fix(scope):`, `refactor:`, `ci:`
+- **Branches**: `master` 是主干（合并目的地，**永不直推**）；`dev` 仅作集成验证（push dev 触发 e2e/helm/benchmark CI）。日常工作在短命分支 `feat/<slug>` / `fix/<slug>` / `docs/<slug>`（kebab-case），推到 fork（`origin` = winstonfly/lattice）
+- **Commits**: Conventional commits with scope: `feat(scope):`, `fix(scope):`, `refactor:`, `ci:`, `docs:`
 - **Git Commit Rules**（复制自 reflux 项目，提交规则以这里为准）:
 
   - A feature should be a single commit. If the implementation spans multiple changes, stage them all together and make one commit at the end — do not commit incrementally.
   - Always use `git commit -s` (Signed-off-by).
   - Never add `Co-Authored-By` in commit messages.
   - Do not amend or rebase existing commits. If a previous commit needs a fix, just make a new commit on top. Keep it simple and linear — no force-pushing, no history rewriting.
-  - After completing a design/plan and its implementation, automatically commit all changes without waiting for the user to ask.
-  - **Push after commit**: 所有修改提交完写了 commit 后，立即推送到远程（`git push`），不要把 commit 留在本地。
+  - After completing a design/plan and its implementation, automatically commit all changes without waiting for the user to ask. (Auto-commit is local commits only — pushing the branch and opening the PR requires showing the draft and asking first; see 工作与 PR 流程.)
+  - **Branch push**: commit 落在 feature 分支上；push 分支与开 PR 前向用户展示草稿征得同意，`master` 永不直推。
 
 - **Commit author**: Always use the identity from `git config user.name` / `git config user.email`, 提交之前先跑一下'make lint'检查有没有lint errors,如果有直接提示并修复
 - **PR triggers**: `run-docker`, `run-e2e`, `run-helm`, `run-readme`, `run-benchmark` labels (see `.github/PR_LABELS.md`)
+
+## 工作与 PR 流程（2026-10-09 起全 PR 化）
+
+完整规范：`docs/superpowers/specs/2026-10-09-pr-workflow-design.md`（流程细节、收尾清单、兄弟仓协作）。速查：
+
+- **一律 分支 → PR → 人审合并，不直推 master**（docs-only、单行修复、hotfix 也走 PR；hotfix 打 `hotfix` 标签优先审）
+- **两道人审闸门**：① 开 PR 前必须先向用户展示草稿（分支名 / commit 清单 / PR 标题+body）征得同意，一次询问同时覆盖 push 分支与开 PR；② 合并永远人审（或用户明示"直接合"）。本地 commit 不受限（见 Git Commit Rules 自动提交条目）
+- **PR 开到 upstream 组织仓（`alatticeio/lattice`），基准取 `upstream/master`**：`origin` 是 fork（`winstonfly/lattice`），其 master 常滞后——开分支/更新代码前先 `git fetch upstream`
+- **问题入口**：bug / 功能统一开 issue（`.github/ISSUE_TEMPLATE/` 的 bug_report / feature_request），PR body 用 `Fixes #n` / `Ref #n` 回链；微小改动可跳 issue 但 body 必须写清动机。设计类先出 spec（`docs/superpowers/specs/`）合并后再实施
+- **验证绿才请求合并**：`make lint` + `make test`（前端改动加 `cd frontend && pnpm build`）；重 CI 按 label 触发（e2e ~30min，只给网络面/部署面改动加）
+- **合并方式**：merge commit（与现历史一致，不用 squash/rebase merge）
+- **收尾清单**：删分支（远端+本地）→ 切回 master `git fetch upstream && git pull upstream master` → issue 关闭（Fixes 自动关）→ 有复用价值的教训写入 memory
+
 
 ## Code Patterns
 
