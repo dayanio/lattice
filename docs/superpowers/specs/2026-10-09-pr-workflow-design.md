@@ -67,7 +67,7 @@ issue → 方案讨论(需要决策时进 plan mode,方案落 plan/spec)
 - 分支:`feat/<slug>` / `fix/<slug>` / `docs/<slug>`,slug 用 kebab-case 英文(现例:`feat/tvos-cast`、`fix/docker-go-version`)
 - commit:一个 feature 一个 commit(多改动攒齐一次提交)、`git commit -s`、禁 `Co-Authored-By`、禁 amend/rebase/force-push(修前提交 = 在其上新建 commit)
 - PR 标题与主 commit 同格式:`type(scope): 摘要`
-- **PR 目标仓与分支基准**:PR 一律开到 upstream 组织仓 `alatticeio/lattice`,**基准取 `upstream/master`**——`origin` 是 fork(`winstonfly/lattice`),其 master 常滞后;开分支/更新代码前先 `git fetch upstream`。feature 分支推到 fork(`git push origin <branch>`),从 fork 分支向 upstream/master 开 PR(与现历史一致:`Merge pull request #55 from winstonfly/feat/tvos-cast`)
+- **PR 目标仓与分支基准**:PR 一律开到 upstream 组织仓 `dayanio/lattice`,**基准取 `upstream/master`**——`origin` 是 fork(`winstonfly/lattice`),其 master 常滞后;开分支/更新代码前先 `git fetch upstream`。feature 分支推到 fork(`git push origin <branch>`),从 fork 分支向 upstream/master 开 PR(与现历史一致:`Merge pull request #55 from winstonfly/feat/tvos-cast`)。注意:go module path 仍是 `github.com/alatticeio/lattice`,本地 upstream remote 也指向旧 org 名(GitHub 自动重定向)——写文档/issue 引用仓库时用 `dayanio/lattice`,改代码 import 时用 module path
 - **`master` 永不直推**;`dev` 分支仅作集成验证(push dev 触发 e2e/helm/benchmark CI),不是合并目的地
 
 ## 6. 验证与 CI

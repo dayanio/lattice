@@ -88,7 +88,7 @@ The Makefile sets `BPF2GO_CC=/opt/homebrew/opt/llvm/bin/clang` on macOS to pick 
 
 - **一律 分支 → PR → 人审合并，不直推 master**（docs-only、单行修复、hotfix 也走 PR；hotfix 打 `hotfix` 标签优先审）
 - **两道人审闸门**：① 开 PR 前必须先向用户展示草稿（分支名 / commit 清单 / PR 标题+body）征得同意，一次询问同时覆盖 push 分支与开 PR；② 合并永远人审（或用户明示"直接合"）。本地 commit 不受限（见 Git Commit Rules 自动提交条目）
-- **PR 开到 upstream 组织仓（`alatticeio/lattice`），基准取 `upstream/master`**：`origin` 是 fork（`winstonfly/lattice`），其 master 常滞后——开分支/更新代码前先 `git fetch upstream`
+- **PR 开到 upstream 组织仓（`dayanio/lattice`），基准取 `upstream/master`**：`origin` 是 fork（`winstonfly/lattice`），其 master 常滞后——开分支/更新代码前先 `git fetch upstream`。注：go module path 仍是 `github.com/alatticeio/lattice`（go.mod 未随 org 改名），本地 `upstream` remote 也还指向旧 org 名（GitHub 自动重定向），不影响使用
 - **问题入口**：bug / 功能统一开 issue（`.github/ISSUE_TEMPLATE/` 的 bug_report / feature_request），PR body 用 `Fixes #n` / `Ref #n` 回链；微小改动可跳 issue 但 body 必须写清动机。设计类先出 spec（`docs/superpowers/specs/`）合并后再实施
 - **验证绿才请求合并**：`make lint` + `make test`（前端改动加 `cd frontend && pnpm build`）；重 CI 按 label 触发（e2e ~30min，只给网络面/部署面改动加）
 - **合并方式**：merge commit（与现历史一致，不用 squash/rebase merge）
