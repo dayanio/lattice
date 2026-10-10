@@ -83,6 +83,20 @@ func TestCleanupCommandsSweepTableAndRules(t *testing.T) {
 	}
 }
 
+func TestCleanupCommandsSweepQualifiedJumps(t *testing.T) {
+	// Legacy enforcer attaches are interface-qualified (INPUT -i wf0);
+	// the sweep must remove those too, not only the plain jumps.
+	joined := strings.Join(CleanupCommands(), "\n")
+	for _, want := range []string{
+		"-D INPUT -i wf0 -j LATTICE-INGRESS",
+		"-D OUTPUT -o wf0 -j LATTICE-EGRESS",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("CleanupCommands missing qualified jump removal %q", want)
+		}
+	}
+}
+
 func TestIsExitAllowedIPs(t *testing.T) {
 	cases := map[string]bool{
 		"0.0.0.0/0":          true,

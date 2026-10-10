@@ -106,20 +106,34 @@ func ExitTakeoverRemoveCommands() []string {
 // written, removed by well-known markers (table number, rule priorities,
 // chain names) — deliberately independent of any manifest file, so it works
 // even when lattice will not start. Idempotent by construction.
+//
+// The interface name is fixed ("wf0", infra.getInterfaceName), so jumps
+// attached with an interface qualifier (the policy enforcer's INPUT -i wf0
+// style) are swept alongside the plain variants.
 func CleanupCommands() []string {
 	cmds := ExitTakeoverRemoveCommands()
 	// Policy-enforcer chains (INPUT/OUTPUT) and gateway chains
-	// (FORWARD/POSTROUTING): detach the single jump, flush, delete.
+	// (FORWARD/POSTROUTING): detach the jump (both the plain and the
+	// interface-qualified variants), flush, delete.
+	edge := "wf0"
 	for _, c := range []struct {
-		chain, parent, table string
+		chain       string
+		parent      string
+		table       string
+		qualifiedJa string
 	}{
-		{ChainIngress, "INPUT", "filter"},
-		{ChainEgress, "OUTPUT", "filter"},
-		{ChainForward, "FORWARD", "filter"},
-		{ChainNAT, "POSTROUTING", "nat"},
+		{ChainIngress, "INPUT", "filter", fmt.Sprintf("-D INPUT -i %s -j %s 2>/dev/null || true", edge, ChainIngress)},
+		{ChainEgress, "OUTPUT", "filter", fmt.Sprintf("-D OUTPUT -o %s -j %s 2>/dev/null || true", edge, ChainEgress)},
+		{ChainForward, "FORWARD", "filter", ""},
+		{ChainNAT, "POSTROUTING", "nat", ""},
 	} {
 		cmds = append(cmds,
 			fmt.Sprintf("iptables -w 5 -t %[2]s -D %[1]s -j %[3]s 2>/dev/null || true", c.parent, c.table, c.chain),
+		)
+		if c.qualifiedJa != "" {
+			cmds = append(cmds, fmt.Sprintf("iptables -w 5 -t %s %s", c.table, c.qualifiedJa))
+		}
+		cmds = append(cmds,
 			fmt.Sprintf("iptables -w 5 -t %s -F %s 2>/dev/null || true", c.table, c.chain),
 			fmt.Sprintf("iptables -w 5 -t %s -X %s 2>/dev/null || true", c.table, c.chain),
 		)
