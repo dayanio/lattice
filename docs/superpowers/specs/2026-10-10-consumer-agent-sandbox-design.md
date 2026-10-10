@@ -20,7 +20,7 @@
 - 沙箱不做独立 SKU，作为 **Pro 订阅的核心理由之一**（"agent 上网要过审 + 家庭 mesh 细粒度授权"），Community 保留基础出网管控；
 - 一句话价值主张：**"我机器上跑的 AI agent，不能背着我乱来"** —— 面向消费者的 "Little Snitch for AI agents"。
 
-> ⚠️ 遗留事项：`docs/superpowers/specs/pricing.md`（2026-04-27）仍是 B 端模板（按节点数、SSO、SLA、客户成功经理），与 2026-05 之后的 C 端实践（personal mode、Apple 客户端、投屏）已经脱节，需按本定位重写。见 §六。
+> ⚠️ 遗留事项：`docs/superpowers/specs/pricing.md`（2026-04-27）仍是 B 端模板（按节点数、SSO、SLA、客户成功经理），与 2026-05 之后的 C 端实践（personal mode、Apple 客户端、投屏）已经脱节，需按本定位重写。见 §七。
 
 ### 1.2 问题
 
@@ -51,6 +51,7 @@
 | D4 | **弹窗授权动作**：允许一次 / 总是允许 / 拒绝；"总是允许"落入该 agent 的个人策略集并同步控制面（跨设备一致） | 手机权限弹窗的成熟范式；跨设备一致是 mesh 的差异化 |
 | D5 | **agent 接入形态**：v1 一律走 `sandbox run` 包装（补 `--image` / `--mount` / `--env`）；**不做**全机流量的进程归因识别 | 归因是老大难且被包装路线结构性绕开（§1.3-3）；全机归因列为远期研究，不承诺 |
 | D6 | **隔离强度分层**：本设计只覆盖"网络收编 + 域名策略 + 弹窗 + 审计"（现有 netstack 档）；进程级隔离（Linux runsc / macOS-Windows VM 档）另行立项，作为 Pro 高阶档 | 本设计的价值（策略/弹窗/审计/身份）不依赖进程隔离；分档推进避免一个大 spec 卡死 |
+| D7 | **Linux 档防绕以能力分离为先**：lattice 主进程持 CAP_NET_ADMIN（仅装规则/起 tproxy），spawn agent 时 setuid 到专用 UID + 摘除全部 caps + `no_new_privs`；iptables 规则用 owner match 区分放行面。iptables 劫持保留，直至 runsc 档将其取代 | "可绕"的前提是 agent 手里有钥匙——现状示例 `--cap-add NET_ADMIN` 恰好把钥匙发给了整个容器；分离后拆规则、raw socket、改 UID 全部无着力点（详见 §四） |
 
 ## 三、范围：三件核心事 + 一个支撑件
 
@@ -70,6 +71,17 @@ netstack 连接决策点（扩展现有 PolicyChecker）：
   目的 IP ∈ 映射 但域名被拒        → 拒绝（RST/ICMP unreachable）
   目的 IP ∉ 映射（未经理 DNS 的直连）→ 默认拒绝（包装模式下）
 ```
+
+**IP 与域名是并存的两层规则，不是二选一**：IP 层即现有 `--egress-allow` CIDR（今天已可用），M0 在其上叠加域名维度。每条连接按序判定，四类流量都有归属：
+
+| agent 行为 | 判定层 | 结果 |
+|---|---|---|
+| 经 DNS 连白名单域名（如 api.anthropic.com） | 域名策略 | 放行 |
+| 硬编码 IP 连已放行 CIDR（如家庭网段 192.168.0.0/16 的 NAS） | CIDR 规则 | 放行 |
+| 硬编码 IP 连陌生公网地址 | CIDR 未命中 | **默认拒绝** |
+| 未包装的普通流量 | 现有 mesh CIDR 策略 | 行为不变 |
+
+优先级规则：映射命中的连接**域名优先**（域名比 IP 具体）；未命中映射的连接 **CIDR 优先**。注意"用 IP 绕过域名封锁"仅在黑名单制下成立——本设计是白名单制（"未允许 = 拒"），硬编码 IP 是被兜住的行为而非漏网行为。
 
 - 策略模型：per-agent 规则集，条目 = `{domain, port?, action: allow-session|allow-always|deny}`；CIDR 规则保留（现有 `--egress-allow` 语义不变），域名维度叠加在其上；
 - 防绕边界（v1，诚实声明）：覆盖明文 DNS（53）与已知 DoH 域名（拒绝/重定向策略可配）；agent 硬编码 IP 直连、私有 DoH 属**残余风险**，由"包装 + 默认拒绝"结构兜底（IP 不在映射即拒），不做深度对抗；
@@ -95,7 +107,39 @@ netstack 连接决策点（扩展现有 PolicyChecker）：
 - 展示为日级 / 会话级人话摘要："今天 Claude Code：连 Anthropic 312 次、git 推送 2 次、仅触碰项目目录、尝试访问 1 个被拒域名"；
 - Mac 客户端 + iPhone 设备页均可查看；数据不出本地（除非用户开启云备份，另行评估）。
 
-## 四、明确非目标
+## 四、威胁模型与档位自洽
+
+### 4.1 威胁分层（netstack 档的真实定位）
+
+| 对手画像 | netstack 档（+D7 加固）覆盖度 | 说明 |
+|---|---|---|
+| 误伤型 agent（提示词注入后乱连、误传文件） | **全量覆盖** | DNS 默认拒绝、弹窗、审计正是为此设计；对手不会主动拆防线 |
+| 对抗型 agent（被诱导主动拆防线） | 加固后从"一步之遥"降为"需要内核漏洞" | 天花板在档位本身——这正是 runsc / VM 档存在的理由（D6） |
+| macOS 侧 | 执法点是系统管理的 NE，无"拆规则"问题 | Mac 档的真实短板是**归因**，由包装路线解决（§1.3-3） |
+
+### 4.2 能力分离加固（标准透明代理做法，M0 随手做）
+
+```
+lattice 主进程：持 CAP_NET_ADMIN（仅用于装规则、起 tproxy）
+   │ spawn agent：setuid 专用 UID + 摘除全部 caps + no_new_privs
+   ▼
+agent 进程：无 NET_ADMIN / 无 NET_RAW / 非 root
+
+iptables 规则（OUTPUT + owner match）：
+  -m owner --uid-owner <agent-uid>  -j REDIRECT → tproxy/netstack
+  -m owner --uid-owner <lattice-uid> -j ACCEPT   ← 防回环
+```
+
+加固后逐条核对绕法：拆/改规则 → EPERM；raw socket 绕劫持 → 无 NET_RAW；改 UID 冒充放行面 → 非 root；硬编码 IP 绕 DNS → IP 层默认拒绝兜底（§3.1）。残余路径 = 内核 0day / 容器逃逸，归隔离档（runsc/VM）管辖。
+
+### 4.3 档位关系澄清（避免"过渡方案"误读）
+
+- **iptables 劫持是过渡品**：Apple 侧从未使用（NE），runsc 档不需要它；
+- **netstack 是永久承重层**：策略、审计、LatticeDNS、WireGuard 身份全部挂在这里；runsc 档内它站在墙外侧（veth 桥）继续干同样的活，Apple/iOS 上它本来就是唯一形态；
+- **runsc / VM / microVM 只接管进程隔离**：阶梯为 netstack（现在，全平台）→ runsc（Linux）→ VM（macOS VZ / Windows WSL2）→ microVM（Pro 终态）→ 组合纵深；
+- `--isolation` flag **与 runsc 档同 PR 出生**（netstack 为默认值），当前不引入单值 flag。
+
+## 五、明确非目标
 
 - B 端"沙箱即服务"运营件（session API、预热池、快照、按秒计费）；
 - 进程级隔离档（Linux runsc、macOS VZ / Windows WSL2 VM）——另行立项，Pro 高阶档；
@@ -103,16 +147,16 @@ netstack 连接决策点（扩展现有 PolicyChecker）：
 - 对抗性绕行研究（私有 DoH、硬编码 IP 的深度对抗，v1 靠默认拒绝结构兜底）；
 - Windows 客户端弹窗 UI（wintun 网络收编已具备，UI 二期）。
 
-## 五、阶段计划与成功标准
+## 六、阶段计划与成功标准
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| M0 | 引擎域名过滤：DNS 拦截 + 映射表 + netstack 决策点扩展，CLI 可配策略 | `sandbox run` 包装的进程：未授权域名 DNS 被拒；白名单域名可连；直连未知 IP 被默认拒绝；`make lint` / `make test` 绿 |
+| M0 | 引擎域名过滤 + 能力分离加固：DNS 拦截 + 映射表 + netstack 决策点扩展；agent 专用 UID + 摘除 caps + owner-match 规则 | `sandbox run` 包装的进程：未授权域名 DNS 被拒；白名单域名可连；直连未知 IP 被默认拒绝；**agent 进程 caps 为空，`iptables` 操作返回 EPERM，raw socket 不可用**；`make lint` / `make test` 绿 |
 | M1 | Mac 权限弹窗 + 策略下发闭环 | 真机 Claude Code：首连弹窗 → 允许后可连 / 拒绝后连不上且留痕；"总是允许"重启引擎后仍生效 |
 | M2 | `sandbox run --image/--mount/--env`（Linux）+ Claude Code 北极星场景演示 | §3.3 演示命令在干净 Linux 容器内跑通，agent 流量全量过策略与审计 |
 | M3 | 人话审计时间线（Mac）+ iPhone 弹窗转发 | 时间线可读、按 agent 身份过滤；iPhone 可批准 Mac 上 agent 的首连请求 |
 
-## 六、开放问题
+## 七、开放问题
 
 1. "总是允许"策略的存储位置：本地为主 + 控制面同步，还是控制面为唯一真源？（涉及离线行为与隐私取舍）
 2. Apple 端嵌入式引擎包装 Claude Code 的落地形态（无 NE 槽位冲突验证，依赖引擎 c-archive 迁移完成度）；
