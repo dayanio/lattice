@@ -51,7 +51,7 @@
 | D4 | **弹窗授权动作**：允许一次 / 总是允许 / 拒绝；"总是允许"落入该 agent 的个人策略集并同步控制面（跨设备一致） | 手机权限弹窗的成熟范式；跨设备一致是 mesh 的差异化 |
 | D5 | **agent 接入形态**：v1 一律走 `sandbox run` 包装（补 `--image` / `--mount` / `--env`）；**不做**全机流量的进程归因识别 | 归因是老大难且被包装路线结构性绕开（§1.3-3）；全机归因列为远期研究，不承诺 |
 | D6 | **隔离强度分层**：本设计只覆盖"网络收编 + 域名策略 + 弹窗 + 审计"（现有 netstack 档）；进程级隔离（Linux runsc / macOS-Windows VM 档）另行立项，作为 Pro 高阶档 | 本设计的价值（策略/弹窗/审计/身份）不依赖进程隔离；分档推进避免一个大 spec 卡死 |
-| D7 | **Linux 档防绕以能力分离为先**：lattice 主进程持 CAP_NET_ADMIN（仅装规则/起 tproxy），spawn agent 时 setuid 到专用 UID + 摘除全部 caps + `no_new_privs`；iptables 规则用 owner match 区分放行面。iptables 劫持保留，直至 runsc 档将其取代 | "可绕"的前提是 agent 手里有钥匙——现状示例 `--cap-add NET_ADMIN` 恰好把钥匙发给了整个容器；分离后拆规则、raw socket、改 UID 全部无着力点（详见 §四） |
+| D7 | **Linux 档防绕与防污染以专属 netns 为先**：agent 与其 REDIRECT/TPROXY 规则整体住进专属 network namespace，**宿主机 iptables 各表零写入**；agent 进程摘除全部 caps + `no_new_privs`。iptables 劫持保留（在 netns 内），直至 runsc 档将其取代 | 一并解决两个问题：防绕（agent 无钥匙；netns 内居民唯一，无需 owner match）与防污染（宿主表不感知 lattice，与 Docker/kube-proxy/Clash 零交互；崩溃随 netns 蒸发，无孤儿规则）（详见 §4.2） |
 
 ## 三、范围：三件核心事 + 一个支撑件
 
@@ -117,20 +117,29 @@ netstack 连接决策点（扩展现有 PolicyChecker）：
 | 对抗型 agent（被诱导主动拆防线） | 加固后从"一步之遥"降为"需要内核漏洞" | 天花板在档位本身——这正是 runsc / VM 档存在的理由（D6） |
 | macOS 侧 | 执法点是系统管理的 NE，无"拆规则"问题 | Mac 档的真实短板是**归因**，由包装路线解决（§1.3-3） |
 
-### 4.2 能力分离加固（标准透明代理做法，M0 随手做）
+### 4.2 专属 netns：防绕与防污染一体解决（M0 交付）
+
+在宿主机上写透明代理规则是这类工具的经典翻车点：与 Docker（`DOCKER`/`DOCKER-USER` 链）、kube-proxy（数千条规则）、用户自装的 Clash TUN 互相打架；lattice 被 `kill -9` 后孤儿 REDIRECT 规则把宿主流量送进黑洞。因此规则**不进宿主表**——每个 agent 一个专属 network namespace：
 
 ```
-lattice 主进程：持 CAP_NET_ADMIN（仅用于装规则、起 tproxy）
-   │ spawn agent：setuid 专用 UID + 摘除全部 caps + no_new_privs
-   ▼
-agent 进程：无 NET_ADMIN / 无 NET_RAW / 非 root
-
-iptables 规则（OUTPUT + owner match）：
-  -m owner --uid-owner <agent-uid>  -j REDIRECT → tproxy/netstack
-  -m owner --uid-owner <lattice-uid> -j ACCEPT   ← 防回环
+宿主机 iptables：一条不加，永远不动
+│
+├── lattice 主进程（netstack + wireguard-go + 控制面信令）
+│        ▲ AF_PACKET 收发
+│        │ veth（对端）
+└────────┼────────────────────────────────
+   netns "lattice-sbx-<id>"（每个 agent 一个）
+   ├── agent 进程（无 caps，眼里只有 lo 和 veth0）
+   └── REDIRECT/TPROXY 规则【只存在于本 netns】
+       全部 TCP + UDP53 → 本 netns 代理端口
 ```
 
-加固后逐条核对绕法：拆/改规则 → EPERM；raw socket 绕劫持 → 无 NET_RAW；改 UID 冒充放行面 → 非 root；硬编码 IP 绕 DNS → IP 层默认拒绝兜底（§3.1）。残余路径 = 内核 0day / 容器逃逸，归隔离档（runsc/VM）管辖。
+- **防污染**：netns 表对宿主完全不可见，与宿主上任何网络软件零交互；**崩溃即自愈**——netns 随其中最后一个进程消亡，规则同灭，无孤儿规则；多 agent 各自 netns，规则互不可见；
+- **防绕**：netns 内只有 agent 一个居民，全量 REDIRECT 无需 owner match；agent 摘除全部 caps + `no_new_privs`，拆规则、raw socket、改 UID 均无着力点；硬编码 IP 由 IP 层默认拒绝兜底（§3.1）；
+- **能力形状**：建 netns 需 `CAP_SYS_ADMIN`，或走 rootless 路线（`unshare -Urn`，user namespaces；部分发行版默认限制需评估）。从"宿主 NET_ADMIN"换成"netns SYS_ADMIN / userns"，换来宿主表零污染；
+- **拓扑与 runsc 档同构**：runsc 档本就规划"专属 netns + veth + lattice 桥"，桥侧代码两档复用——netns 化等于提前铺好 runsc 档的一半路基。
+
+加固后逐条核对绕法：拆/改规则 → netns 内且无权限；raw socket 绕劫持 → 无 NET_RAW；改 UID → 非 root；硬编码 IP 绕 DNS → IP 层默认拒绝（§3.1）。残余路径 = 内核 0day / 容器逃逸，归隔离档（runsc/VM）管辖。
 
 ### 4.3 档位关系澄清（避免"过渡方案"误读）
 
@@ -138,6 +147,13 @@ iptables 规则（OUTPUT + owner match）：
 - **netstack 是永久承重层**：策略、审计、LatticeDNS、WireGuard 身份全部挂在这里；runsc 档内它站在墙外侧（veth 桥）继续干同样的活，Apple/iOS 上它本来就是唯一形态；
 - **runsc / VM / microVM 只接管进程隔离**：阶梯为 netstack（现在，全平台）→ runsc（Linux）→ VM（macOS VZ / Windows WSL2）→ microVM（Pro 终态）→ 组合纵深；
 - `--isolation` flag **与 runsc 档同 PR 出生**（netstack 为默认值），当前不引入单值 flag。
+
+### 4.4 同源问题：出口节点的宿主零污染（v2 方向，另行立项）
+
+出口节点今天是更重的宿主侵入：`net.ipv4.ip_forward` 是宿主级 sysctl，FORWARD 链与 MASQUERADE 写在宿主表（v0.4.0 数据面）。收敛分两步，与沙箱共用"宿主机只当网络附件，不当规则场"的原则：
+
+- **近期（netns 包裹）**：出口数据面搬进专属 netns——`ip_forward` 本就是 per-netns sysctl，FORWARD/MASQUERADE 全部写入 netns 内，宿主表零写入；egress 侧选 macvlan/ipvlan 直连物理网（注意 Wi-Fi 不支持 macvlan 的限制），与沙箱 M0 共享同一套 netns 基建；
+- **终局（userspace NAT）**：出口本就以 netstack 终结隧道，可不再进内核——会话级 NAT 直接以宿主 socket 出网（gVisor 系 gvproxy / gvisor-tap-vsock 同法），零 sysctl、零 iptables、零 netns，且出口流量从此穿过策略/审计钩子（内核转发的流量目前是审计盲区）。代价是数据面重写与吞吐/UDP 性能对齐，作为出口节点 v2 目标。
 
 ## 五、明确非目标
 
@@ -151,7 +167,7 @@ iptables 规则（OUTPUT + owner match）：
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| M0 | 引擎域名过滤 + 能力分离加固：DNS 拦截 + 映射表 + netstack 决策点扩展；agent 专用 UID + 摘除 caps + owner-match 规则 | `sandbox run` 包装的进程：未授权域名 DNS 被拒；白名单域名可连；直连未知 IP 被默认拒绝；**agent 进程 caps 为空，`iptables` 操作返回 EPERM，raw socket 不可用**；`make lint` / `make test` 绿 |
+| M0 | 引擎域名过滤 + netns 零污染加固：DNS 拦截 + 映射表 + netstack 决策点扩展；agent 与其规则入住专属 netns（宿主表零写入）+ 摘除 caps | `sandbox run` 包装的进程：未授权域名 DNS 被拒；白名单域名可连；直连未知 IP 被默认拒绝；**宿主 iptables 各表零条目，`kill -9` lattice 后无残留规则**；agent 进程 caps 为空，netns 内 `iptables` 操作返回 EPERM，raw socket 不可用；`make lint` / `make test` 绿 |
 | M1 | Mac 权限弹窗 + 策略下发闭环 | 真机 Claude Code：首连弹窗 → 允许后可连 / 拒绝后连不上且留痕；"总是允许"重启引擎后仍生效 |
 | M2 | `sandbox run --image/--mount/--env`（Linux）+ Claude Code 北极星场景演示 | §3.3 演示命令在干净 Linux 容器内跑通，agent 流量全量过策略与审计 |
 | M3 | 人话审计时间线（Mac）+ iPhone 弹窗转发 | 时间线可读、按 agent 身份过滤；iPhone 可批准 Mac 上 agent 的首连请求 |
