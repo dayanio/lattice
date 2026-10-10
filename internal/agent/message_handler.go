@@ -22,6 +22,7 @@ import (
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
+	"github.com/alatticeio/lattice/internal/agent/netstate"
 	"github.com/alatticeio/lattice/internal/agent/provision"
 	"github.com/alatticeio/lattice/internal/overlay6"
 )
@@ -43,6 +44,12 @@ type MessageHandler struct {
 	// without serialization its check-then-act device writes (IpcGet →
 	// compare → IpcSet, ApplyIP, routes) interleave and flap.
 	applyMu sync.Mutex
+
+	// exitTakeoverActive tracks whether the consumer-side exit takeover
+	// (table 5180 policy routing) is currently installed, so a netmap that
+	// withdraws the exit (user switched back to direct) removes it instead
+	// of leaving a stale takeover.
+	exitTakeoverActive bool
 }
 
 func NewMessageHandler(e infra.NodeInterface, logger *log.Logger, provisioner provision.Provisioner) *MessageHandler {
@@ -232,6 +239,37 @@ func (h *MessageHandler) applyRemotePeers(ctx context.Context, msg *infra.Messag
 		// add peer to peers cached and probe start
 		if err := h.deviceManager.AddPeer(peer); err != nil {
 			return err
+		}
+	}
+
+	// Consumer-side exit takeover: when the netmap widens a provider peer's
+	// AllowedIPs to 0.0.0.0/0 (this node selected it as its exit), route all
+	// non-root traffic into the tunnel via policy table 5180 — never via the
+	// default route, which stays untouched. If lattice dies, the kernel
+	// deletes wf0 and the 0/1+128/1 routes with it, table 5180 goes empty
+	// and rule lookups fall through to main: internet restores itself even
+	// before any cleanup runs.
+	exitSelected := false
+	for _, peer := range msg.ComputedPeers {
+		if netstate.IsExitAllowedIPs(peer.AllowedIPs) {
+			exitSelected = true
+			break
+		}
+	}
+	switch {
+	case exitSelected && !h.exitTakeoverActive:
+		if err := netstate.ApplyExitTakeover(infra.ExecCommand, h.deviceManager.GetDeviceName()); err != nil {
+			h.logger.Warn("exit takeover install failed", "err", err)
+		} else {
+			h.exitTakeoverActive = true
+			h.logger.Info("exit takeover installed", "iface", h.deviceManager.GetDeviceName())
+		}
+	case !exitSelected && h.exitTakeoverActive:
+		if err := netstate.RemoveExitTakeover(infra.ExecCommand); err != nil {
+			h.logger.Warn("exit takeover removal failed", "err", err)
+		} else {
+			h.exitTakeoverActive = false
+			h.logger.Info("exit takeover removed: back to direct")
 		}
 	}
 	return nil

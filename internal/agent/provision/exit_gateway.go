@@ -22,17 +22,28 @@ package provision
 import (
 	"fmt"
 	"net"
+
+	"github.com/alatticeio/lattice/internal/agent/netstate"
 )
 
 // ExitGatewayCommands returns the idempotent commands that make dev forward
 // mesh-sourced traffic (meshCIDR) out of the node's default WAN interface.
-// Every rule is check→add so repeated netmap applications stay clean.
+// Every rule lives inside the LATTICE-FORWARD / LATTICE-NAT chains (single
+// jump from the built-ins) so `lattice net cleanup` sweeps them without
+// touching foreign rules. sysctl ip_forward stays host-level in v1 (moving
+// it into a netns is the M1 containment step).
 func ExitGatewayCommands(dev, meshCIDR string) []string {
 	return []string{
 		"sysctl -w net.ipv4.ip_forward=1",
-		fmt.Sprintf("iptables -w 5 -C FORWARD -i %[1]s -j ACCEPT 2>/dev/null || iptables -w 5 -A FORWARD -i %[1]s -j ACCEPT", dev),
-		fmt.Sprintf("iptables -w 5 -C FORWARD -o %[1]s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -w 5 -A FORWARD -o %[1]s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT", dev),
-		fmt.Sprintf("DEV=$(ip route show default | awk 'NR==1{print $5}'); iptables -w 5 -t nat -C POSTROUTING -o \"$DEV\" -s %[1]s -j MASQUERADE 2>/dev/null || iptables -w 5 -t nat -A POSTROUTING -o \"$DEV\" -s %[1]s -j MASQUERADE", meshCIDR),
+		// Ensure the chains exist and are attached (single jump each).
+		fmt.Sprintf("iptables -w 5 -N %[1]s 2>/dev/null || true; "+
+			"iptables -w 5 -C FORWARD -j %[1]s 2>/dev/null || iptables -w 5 -I FORWARD 1 -j %[1]s", netstate.ChainForward),
+		fmt.Sprintf("iptables -w 5 -t nat -N %[1]s 2>/dev/null || true; "+
+			"iptables -w 5 -t nat -C POSTROUTING -j %[1]s 2>/dev/null || iptables -w 5 -t nat -I POSTROUTING 1 -j %[1]s", netstate.ChainNAT),
+		// Forwarding rules inside the chain.
+		fmt.Sprintf("iptables -w 5 -C %[1]s -i %[2]s -j ACCEPT 2>/dev/null || iptables -w 5 -A %[1]s -i %[2]s -j ACCEPT", netstate.ChainForward, dev),
+		fmt.Sprintf("iptables -w 5 -C %[1]s -o %[2]s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -w 5 -A %[1]s -o %[2]s -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT", netstate.ChainForward, dev),
+		fmt.Sprintf("DEV=$(ip route show default | awk 'NR==1{print $5}'); iptables -w 5 -t nat -C %[1]s -o \"$DEV\" -s %[2]s -j MASQUERADE 2>/dev/null || iptables -w 5 -t nat -A %[1]s -o \"$DEV\" -s %[2]s -j MASQUERADE", netstate.ChainNAT, meshCIDR),
 	}
 }
 

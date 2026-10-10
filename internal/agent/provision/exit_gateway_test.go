@@ -25,10 +25,16 @@ func TestExitGatewayCommands(t *testing.T) {
 	joined := strings.Join(cmds, "\n")
 	for _, want := range []string{
 		"net.ipv4.ip_forward=1",
-		"FORWARD -i lattice0 -j ACCEPT",
-		"FORWARD -o lattice0",
+		// chains exist and are attached with a single jump
+		"-N LATTICE-FORWARD",
+		"-C FORWARD -j LATTICE-FORWARD",
+		"-N LATTICE-NAT",
+		"-C POSTROUTING -j LATTICE-NAT",
+		// rules live inside the chains, not the built-ins
+		"LATTICE-FORWARD -i lattice0 -j ACCEPT",
+		"LATTICE-FORWARD -o lattice0",
 		"ESTABLISHED,RELATED",
-		"POSTROUTING -o \"$DEV\" -s 10.96.0.0/24 -j MASQUERADE",
+		"LATTICE-NAT -o \"$DEV\" -s 10.96.0.0/24 -j MASQUERADE",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("commands missing %q:\n%s", want, joined)
@@ -38,6 +44,13 @@ func TestExitGatewayCommands(t *testing.T) {
 	for _, cmd := range cmds {
 		if strings.Contains(cmd, "iptables") && !strings.Contains(cmd, " -C ") {
 			t.Errorf("iptables rule not idempotent (no -C check): %s", cmd)
+		}
+	}
+	// Built-in chains must never receive direct rule appends — only the
+	// single jump (-C … -j LATTICE-* / -I … 1 -j LATTICE-*).
+	for _, cmd := range cmds {
+		if strings.Contains(cmd, "-A FORWARD") || strings.Contains(cmd, "-A POSTROUTING") {
+			t.Errorf("rule appended directly to a built-in chain: %s", cmd)
 		}
 	}
 }
@@ -66,8 +79,8 @@ func TestEnsureExitGateway(t *testing.T) {
 	if err := EnsureExitGateway(runner, "lattice0", "10.96.0.0/24", "linux"); err != nil {
 		t.Fatalf("EnsureExitGateway: %v", err)
 	}
-	if len(ran) != 4 {
-		t.Errorf("expected 4 commands on linux, got %d", len(ran))
+	if len(ran) != 6 {
+		t.Errorf("expected 6 commands on linux, got %d", len(ran))
 	}
 
 	ran = nil

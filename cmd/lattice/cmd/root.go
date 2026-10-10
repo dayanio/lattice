@@ -86,6 +86,7 @@ func init() {
 	rootCmd.AddCommand(downCmd())
 	rootCmd.AddCommand(serviceCmd())
 	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(netCmd())
 	rootCmd.AddCommand(token.NewTokenCommand())
 	rootCmd.AddCommand(workspace.NewWorkspaceCommand())
 	rootCmd.AddCommand(policy.NewPolicyCommand())

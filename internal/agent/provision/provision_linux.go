@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/alatticeio/lattice/internal/agent/infra"
+	"github.com/alatticeio/lattice/internal/agent/netstate"
 	"log"
 	"os"
 	"os/exec"
@@ -34,13 +35,21 @@ func (r *routeProvisioner) ApplyRoute(action, address, name string) error {
 		// see the rule absent, both attempt -A, the second gets xtables lock
 		// error and returns exit status 1.  Holding the mutex makes the
 		// check→add sequence atomic within this process.
+		//
+		// All rules live inside the LATTICE-FORWARD / LATTICE-NAT chains; the
+		// built-in chains hold only the one jump each — `lattice net cleanup`
+		// can therefore sweep everything without touching foreign rules.
 		r.mu.Lock()
 		iptCmds := fmt.Sprintf(
-			"iptables -w 5 -C FORWARD -i %[1]s -j ACCEPT 2>/dev/null || iptables -w 5 -A FORWARD -i %[1]s -j ACCEPT; "+
-				"iptables -w 5 -C FORWARD -o %[1]s -j ACCEPT 2>/dev/null || iptables -w 5 -A FORWARD -o %[1]s -j ACCEPT; "+
+			"iptables -w 5 -N %[2]s 2>/dev/null || true; "+
+				"iptables -w 5 -C FORWARD -j %[2]s 2>/dev/null || iptables -w 5 -I FORWARD 1 -j %[2]s; "+
+				"iptables -w 5 -C %[2]s -i %[1]s -j ACCEPT 2>/dev/null || iptables -w 5 -A %[2]s -i %[1]s -j ACCEPT; "+
+				"iptables -w 5 -C %[2]s -o %[1]s -j ACCEPT 2>/dev/null || iptables -w 5 -A %[2]s -o %[1]s -j ACCEPT; "+
+				"iptables -w 5 -t nat -N %[3]s 2>/dev/null || true; "+
+				"iptables -w 5 -t nat -C POSTROUTING -j %[3]s 2>/dev/null || iptables -w 5 -t nat -I POSTROUTING 1 -j %[3]s; "+
 				"DEV=$(ip route show default | awk 'NR==1{print $5}'); "+
-				"iptables -w 5 -t nat -C POSTROUTING -o \"$DEV\" -j MASQUERADE 2>/dev/null || iptables -w 5 -t nat -A POSTROUTING -o \"$DEV\" -j MASQUERADE",
-			name,
+				"iptables -w 5 -t nat -C %[3]s -o \"$DEV\" -j MASQUERADE 2>/dev/null || iptables -w 5 -t nat -A %[3]s -o \"$DEV\" -j MASQUERADE",
+			name, netstate.ChainForward, netstate.ChainNAT,
 		)
 		iptErr := infra.ExecCommand("/bin/sh", "-c", iptCmds)
 		r.mu.Unlock()
@@ -83,8 +92,8 @@ func (r *ruleProvisioner) Name() string {
 }
 
 func (r *ruleProvisioner) Provision(rule *infra.FirewallRule) error {
-	inChain := "LATTICE-INGRESS"
-	outChain := "LATTICE-EGRESS"
+	inChain := netstate.ChainIngress
+	outChain := netstate.ChainEgress
 
 	r.logger.Info("provisioning iptables rules",
 		"ingressRules", len(rule.Ingress),
@@ -204,8 +213,10 @@ func (p *ruleProvisioner) addRule(chain, dir, ip string, tr infra.TrafficRule) e
 }
 
 func (p *ruleProvisioner) Cleanup() error {
-	// Logic: remove attachment points -> flush chains -> delete chains
-	return nil
+	// Full sweep: detach LATTICE-* jumps from the built-in chains, flush and
+	// delete the chains, plus the exit-takeover policy rules/table. Guarded
+	// and idempotent — safe to run when nothing is applied.
+	return netstate.Cleanup(infra.ExecCommand)
 }
 
 // isRunningInContainer reports whether the process is running inside a container.
@@ -245,22 +256,34 @@ func (r *ruleProvisioner) SetupNAT(interfaceName string) error {
 	}
 
 	// Check each rule with -C first to avoid duplicate appends on reconnection.
+	// Rules live inside the LATTICE chains (single jump from the built-ins),
+	// so cleanup stays a flush-and-detach of our own chains only.
 	type natRule struct {
 		check string
 		add   string
 	}
 	rules := []natRule{
 		{
-			check: fmt.Sprintf("iptables -w 5 -t nat -C POSTROUTING -o %s -j MASQUERADE", interfaceName),
-			add:   fmt.Sprintf("iptables -w 5 -t nat -A POSTROUTING -o %s -j MASQUERADE", interfaceName),
+			check: fmt.Sprintf("iptables -w 5 -N %s 2>/dev/null || true", netstate.ChainForward),
+			add: fmt.Sprintf("iptables -w 5 -C FORWARD -j %[1]s 2>/dev/null || iptables -w 5 -I FORWARD 1 -j %[1]s; "+
+				"iptables -w 5 -N %[1]s 2>/dev/null || true", netstate.ChainForward),
 		},
 		{
-			check: "iptables -w 5 -C FORWARD -j ACCEPT",
-			add:   "iptables -w 5 -A FORWARD -j ACCEPT",
+			check: fmt.Sprintf("iptables -w 5 -C %s -j ACCEPT", netstate.ChainForward),
+			add:   fmt.Sprintf("iptables -w 5 -A %s -j ACCEPT", netstate.ChainForward),
 		},
 		{
-			check: fmt.Sprintf("iptables -w 5 -C FORWARD -i %s -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT", interfaceName),
-			add:   fmt.Sprintf("iptables -w 5 -A FORWARD -i %s -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT", interfaceName),
+			check: fmt.Sprintf("iptables -w 5 -C %s -i %s -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT", netstate.ChainForward, interfaceName),
+			add:   fmt.Sprintf("iptables -w 5 -A %s -i %s -o eth0 -m state --state RELATED,ESTABLISHED -j ACCEPT", netstate.ChainForward, interfaceName),
+		},
+		{
+			check: fmt.Sprintf("iptables -w 5 -t nat -N %s 2>/dev/null || true", netstate.ChainNAT),
+			add: fmt.Sprintf("iptables -w 5 -t nat -C POSTROUTING -j %[1]s 2>/dev/null || iptables -w 5 -t nat -I POSTROUTING 1 -j %[1]s; "+
+				"iptables -w 5 -t nat -N %[1]s 2>/dev/null || true", netstate.ChainNAT),
+		},
+		{
+			check: fmt.Sprintf("iptables -w 5 -t nat -C %s -o %s -j MASQUERADE", netstate.ChainNAT, interfaceName),
+			add:   fmt.Sprintf("iptables -w 5 -t nat -A %s -o %s -j MASQUERADE", netstate.ChainNAT, interfaceName),
 		},
 	}
 
