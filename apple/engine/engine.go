@@ -144,6 +144,15 @@ type Engine struct {
 	batchStats         struct{ calls, packets int }
 	splitRouting       bool          // guarded by mu
 	routesKick         chan struct{} // wakes pollRoutes to re-emit right away (buffered 1)
+
+	// Exit fail-open gate (issue #63): while the selected exit provider's
+	// data path is dead, currentRoutes drops 0.0.0.0/0 from the payload so
+	// the NE tears down the 0/1+128/1 takeover and traffic falls back to
+	// direct. Guarded by exitGateMu; pollPeerStates drives the evaluation.
+	exitGateMu     sync.Mutex
+	exitGate       latticeagent.ExitPathGate
+	exitGateClosed bool
+	exitPeerAppID  string
 }
 
 // NewEngine validates the config and returns an engine bound to delegate.
@@ -340,6 +349,14 @@ func (e *Engine) splitEnabled() bool {
 func (e *Engine) currentRoutes(node *latticeagent.Node) (string, error) {
 	pm := node.GetPeerManager()
 	included := computeExtraRoutes(pm.GetAll())
+
+	// Fail-open (issue #63): while the exit provider's data path is dead,
+	// keep 0.0.0.0/0 out of the payload — the NE then tears down the
+	// 0/1+128/1 takeover and traffic falls back to the direct path.
+	e.setExitPeer(ExitPeerAppID(pm.GetAll()))
+	if e.exitRouteBlocked() {
+		included = WithoutExitRoute(included)
+	}
 
 	var v6 netip.Addr
 	if lp := pm.GetPeer(agentconfig.Conf.AppId); lp != nil {
@@ -566,6 +583,7 @@ func (e *Engine) pollPeerStates(ctx context.Context, node *latticeagent.Node) {
 			if len(merged) == 0 {
 				continue
 			}
+			e.reconcileExitGate(merged)
 			out := make(map[string]peerStatJSON, len(merged))
 			for appID, s := range merged {
 				hs := s.HandshakeAgo
@@ -603,6 +621,34 @@ type peerStatJSON struct {
 	Tx           uint64 `json:"tx,omitempty"`
 	HandshakeAgo int64  `json:"handshakeAgo,omitempty"`
 	RttMs        int64  `json:"rtt,omitempty"`
+}
+
+func (e *Engine) setExitPeer(appID string) {
+	e.exitGateMu.Lock()
+	e.exitPeerAppID = appID
+	e.exitGateMu.Unlock()
+}
+
+func (e *Engine) exitRouteBlocked() bool {
+	e.exitGateMu.Lock()
+	defer e.exitGateMu.Unlock()
+	return e.exitGateClosed
+}
+
+// reconcileExitGate feeds the exit provider's stats into the fail-open gate
+// (issue #63) and kicks the routes loop when the gate flips: closed → the
+// payload drops 0.0.0.0/0 (NE tears down the takeover); open → it goes back.
+func (e *Engine) reconcileExitGate(merged map[string]latticeagent.PeerStat) {
+	e.exitGateMu.Lock()
+	defer e.exitGateMu.Unlock()
+	if e.exitPeerAppID == "" {
+		return
+	}
+	was := e.exitGateClosed
+	e.exitGateClosed = e.exitGate.Evaluate(merged[e.exitPeerAppID], time.Now())
+	if e.exitGateClosed != was {
+		e.kickRoutes()
+	}
 }
 
 // pollRoutes watches the peer manager's AllowedIPs and pushes the extra-

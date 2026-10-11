@@ -233,3 +233,34 @@ func TestKickRoutes_NeverBlocksAndCoalesces(t *testing.T) {
 		t.Fatal("a kick after the previous one was consumed must be delivered")
 	}
 }
+
+func TestExitPeerAppID(t *testing.T) {
+	peers := []*infra.Peer{
+		{AppID: "a", AllowedIPs: "10.96.0.4/32"},
+		{AppID: "cloud-host", AllowedIPs: "10.96.0.2/32, 0.0.0.0/0"},
+	}
+	if got := ExitPeerAppID(peers); got != "cloud-host" {
+		t.Errorf("ExitPeerAppID = %q, want %q", got, "cloud-host")
+	}
+	if got := ExitPeerAppID(peers[:1]); got != "" {
+		t.Errorf("no exit selected: got %q, want empty", got)
+	}
+}
+
+func TestWithoutExitRoute(t *testing.T) {
+	in := []string{"0.0.0.0/0", "192.168.1.0/24", "10.96.0.0/24"}
+	out := WithoutExitRoute(in)
+	if len(out) != 2 {
+		t.Fatalf("expected 2 routes after dropping 0/0, got %v", out)
+	}
+	for _, cidr := range out {
+		if cidr == "0.0.0.0/0" {
+			t.Errorf("0.0.0.0/0 still present: %v", out)
+		}
+	}
+	// No exit in the set → unchanged content.
+	plain := []string{"192.168.1.0/24"}
+	if got := WithoutExitRoute(plain); len(got) != 1 || got[0] != "192.168.1.0/24" {
+		t.Errorf("plain set should pass through, got %v", got)
+	}
+}
