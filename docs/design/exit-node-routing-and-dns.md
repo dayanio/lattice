@@ -4,8 +4,8 @@ title: 出口节点：路由、DNS 与分流
 
 # 出口节点：路由、DNS 与分流
 
-> 说明性文档 · 2026-09-24
-> 配套设计：`docs/superpowers/specs/2026-09-23-exit-node-dataplane-design.md`（提供端转发）
+> 说明性文档 · 2026-09-24 · 增补 2026-10-11（第 7 节：角色与崩溃自愈）
+> 配套设计：`docs/superpowers/specs/2026-09-23-exit-node-dataplane-design.md`（提供端转发）、`docs/superpowers/specs/2026-10-10-exit-node-crash-safety-design.md`（崩溃自愈）
 >
 > 文中的结论分三档：**【实测】** 在本项目环境里亲手验证过；**【代码】** 读代码得出；**【推断】** 合理判断但没有验证。
 
@@ -312,3 +312,37 @@ scutil --dns | head -20
 cat /proc/sys/net/ipv4/ip_forward
 iptables -t nat -S POSTROUTING
 ```
+
+## 7. 角色速查与崩溃自愈（2026-10-10 真机验证）
+
+### 7.1 三个角色，别混
+
+| 角色 | 是什么 | 这台机器上跑什么 |
+|---|---|---|
+| 控制面（latticed） | 指挥部：管节点名册、下发 netmap | `latticed --standalone`（内嵌 NATS + SQLite + relay） |
+| **Provider（出口提供者）** | 把自己的公网出口贡献出来，给别的节点当"出门通道" | `lattice` 边缘 agent 守护进程（systemd 服务），持有 `ip_forward` / `FORWARD` / `MASQUERADE` |
+| **Consumer（消费端）** | 选中某个 provider 当出口，自己的流量改走对方出去 | macOS/iOS 上是 App（NE 系统隧道）；Linux 上是 `lattice` agent |
+
+「provider 挂了」= 出口那台机器上的 lattice 守护进程死了——不是 consumer 的 App，也不是控制面。
+
+### 7.2 provider 崩溃/停止时，consumer 会怎样（【实测】，macOS App ↔ 阿里云 provider）
+
+| 情形 | consumer 体验 | 机制 |
+|---|---|---|
+| `kill -9`（进程崩溃，systemd 秒级拉回） | **无感**，出口持续可用 | provider 2 秒内重启，服务器不触发撤收 |
+| `systemctl stop`（持续下线） | IPv4 黑洞 **~25 秒**（服务器下线检测周期）→ **自动回落直连**（恢复家庭出口 IP），无需任何手工操作 | 服务器检测 provider 下线 → 从 consumer 的 netmap 撤收 `0.0.0.0/0` → NE/引擎重配（`exit true -> false`） |
+| provider 恢复上线 | consumer **自动重新走上出口**（`exit false -> true`），无需重选 | 服务器重新展开 0/0 |
+| provider 宿主机 | 规则零残留：`iptables-save` 中 LATTICE 条目 = **0** | systemd `ExecStopPost` 清扫（见 7.3） |
+
+已知缺口【实测】：provider 短窗口内多次重启时，consumer 数据面会黑洞直到用户重连隧道（控制面在线但 WG 会话未重建）——消费端 fail-open 缺失，独立 issue 跟踪。
+
+### 7.3 Linux 宿主机零残留（【实测】）
+
+lattice 写在宿主机上的全部网络状态都住在标记物里，进程怎么死都能清干净：
+
+- **iptables**：只住 `LATTICE-FORWARD / LATTICE-NAT / LATTICE-INGRESS / LATTICE-EGRESS` 四条专属链，内建链只留一条 jump——清理时不可能碰 Docker/ufw/kube 的规则；
+- **路由**：出口接管走专属表 **5180** + ip rule（优先级 4500/5170/5180），**默认路由永不触碰**——进程死亡时内核删除隧道接口、连带撤掉表内路由，空表自然回落 main 表，恢复先于任何清理代码；
+- **systemd**：`ExecStartPre` / `ExecStopPost` 均执行 `lattice net cleanup`（幂等、离线可跑），配 `Restart=always`；
+- **手工兜底**：`lattice net cleanup` 一条命令清零全部状态，`lattice net status` 查看当前施加了什么。
+
+设计与真机报告：`docs/superpowers/specs/2026-10-10-exit-node-crash-safety-design.md`、PR #62 验收评论。
