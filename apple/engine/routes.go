@@ -22,8 +22,44 @@ import (
 
 	"github.com/alatticeio/lattice/apple/engine/split"
 	"github.com/alatticeio/lattice/internal/agent/infra"
+	"github.com/alatticeio/lattice/internal/agent/netstate"
 	"github.com/alatticeio/lattice/internal/overlay6"
 )
+
+// ExitPeerAppID returns the AppID of the peer whose AllowedIPs carry the
+// exit takeover (0.0.0.0/0) — the provider this consumer routes through.
+// Empty when no exit is selected.
+func ExitPeerAppID(peers []*infra.Peer) string {
+	for _, p := range peers {
+		if p == nil {
+			continue
+		}
+		if netstate.IsExitAllowedIPs(p.AllowedIPs) {
+			return p.AppID
+		}
+	}
+	return ""
+}
+
+// WithoutExitRoute drops 0.0.0.0/0 from the included set — the consumer-side
+// fail-open filter applied while the exit provider's data path is dead
+// (issue #63): without it the NE keeps routing everything into a dead
+// tunnel and the machine blackholes.
+func WithoutExitRoute(included []string) []string {
+	out := make([]string, 0, len(included))
+	dropped := false
+	for _, cidr := range included {
+		if cidr == "0.0.0.0/0" {
+			dropped = true
+			continue
+		}
+		out = append(out, cidr)
+	}
+	if !dropped {
+		return included
+	}
+	return out
+}
 
 // computeExtraRoutes returns the deduped, sorted set of CIDRs across all
 // peers' AllowedIPs that are NOT a peer's own /32 overlay address — i.e.

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
@@ -50,6 +51,17 @@ type MessageHandler struct {
 	// withdraws the exit (user switched back to direct) removes it instead
 	// of leaving a stale takeover.
 	exitTakeoverActive bool
+
+	// Exit fail-open state (issue #63): the takeover is gated on the
+	// provider's data-path liveness. exitSelected/exitPeerAppID come from
+	// the netmap; the gate watch loop flips exitGateDead when the provider
+	// path stalls (counters frozen / handshake stale) and removes the
+	// takeover so traffic falls back to direct instead of blackholing.
+	exitSelected  bool
+	exitPeerAppID string
+	exitGateDead  bool
+	exitGate      ExitPathGate
+	gateOnce      sync.Once
 }
 
 func NewMessageHandler(e infra.NodeInterface, logger *log.Logger, provisioner provision.Provisioner) *MessageHandler {
@@ -250,14 +262,19 @@ func (h *MessageHandler) applyRemotePeers(ctx context.Context, msg *infra.Messag
 	// and rule lookups fall through to main: internet restores itself even
 	// before any cleanup runs.
 	exitSelected := false
+	exitAppID := ""
 	for _, peer := range msg.ComputedPeers {
 		if netstate.IsExitAllowedIPs(peer.AllowedIPs) {
 			exitSelected = true
+			exitAppID = peer.AppID
 			break
 		}
 	}
+	// The fail-open gate watch takes over from here on: while the provider's
+	// data path is dead (exitGateDead), a re-applied 0/0 must NOT reinstall
+	// the takeover — the watch loop reinstalls it when the path revives.
 	switch {
-	case exitSelected && !h.exitTakeoverActive:
+	case exitSelected && !h.exitTakeoverActive && !h.exitGateDead:
 		if err := netstate.ApplyExitTakeover(infra.ExecCommand, h.deviceManager.GetDeviceName()); err != nil {
 			h.logger.Warn("exit takeover install failed", "err", err)
 		} else {
@@ -269,10 +286,75 @@ func (h *MessageHandler) applyRemotePeers(ctx context.Context, msg *infra.Messag
 			h.logger.Warn("exit takeover removal failed", "err", err)
 		} else {
 			h.exitTakeoverActive = false
+			h.exitGateDead = false
 			h.logger.Info("exit takeover removed: back to direct")
 		}
 	}
+	if exitSelected {
+		h.exitSelected = true
+		h.exitPeerAppID = exitAppID
+		h.startExitGateWatch()
+	} else {
+		h.exitSelected = false
+	}
 	return nil
+}
+
+// peerStatsSource is implemented by *Node (PeerStatsSnapshot merges probe
+// states, WireGuard counters and handshake ages per AppID). Asserted instead
+// of widening infra.NodeInterface so tests can fake the source.
+type peerStatsSource interface {
+	PeerStatsSnapshot() map[string]PeerStat
+}
+
+// startExitGateWatch launches the fail-open monitor (once per daemon): every
+// 5 s it evaluates the exit provider's data-path gate and removes/restores
+// the takeover accordingly. Serialized with netmap applies through applyMu.
+func (h *MessageHandler) startExitGateWatch() {
+	h.gateOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				h.applyMu.Lock()
+				h.reconcileExitGate(time.Now())
+				h.applyMu.Unlock()
+			}
+		}()
+	})
+}
+
+// reconcileExitGate is the gate body: dead provider path → remove the
+// takeover (traffic falls back to direct); revived → reinstall it.
+func (h *MessageHandler) reconcileExitGate(now time.Time) {
+	if !h.exitSelected || h.exitPeerAppID == "" {
+		return
+	}
+	src, ok := h.deviceManager.(peerStatsSource)
+	if !ok {
+		return
+	}
+	dead := h.exitGate.Evaluate(src.PeerStatsSnapshot()[h.exitPeerAppID], now)
+	switch {
+	case dead && h.exitTakeoverActive:
+		if err := netstate.RemoveExitTakeover(infra.ExecCommand); err != nil {
+			h.logger.Warn("exit fail-open removal failed", "err", err)
+			return
+		}
+		h.exitTakeoverActive = false
+		h.exitGateDead = true
+		h.logger.Info("exit provider data path dead: fail-open to direct",
+			"peer", h.exitPeerAppID)
+	case !dead && h.exitGateDead:
+		if err := netstate.ApplyExitTakeover(infra.ExecCommand, h.deviceManager.GetDeviceName()); err != nil {
+			h.logger.Warn("exit fail-open restore failed", "err", err)
+			return
+		}
+		h.exitTakeoverActive = true
+		h.exitGateDead = false
+		h.logger.Info("exit provider data path recovered: takeover restored",
+			"peer", h.exitPeerAppID)
+	}
 }
 
 func (h *MessageHandler) applyFirewallRules(ctx context.Context, msg *infra.Message) error {
