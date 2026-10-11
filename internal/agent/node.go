@@ -30,6 +30,7 @@ import (
 	"github.com/alatticeio/lattice/internal/agent/config"
 	"github.com/alatticeio/lattice/internal/agent/infra"
 	"github.com/alatticeio/lattice/internal/agent/log"
+	"github.com/alatticeio/lattice/internal/agent/netstate"
 	"github.com/alatticeio/lattice/internal/agent/provision"
 	"github.com/alatticeio/lattice/internal/agent/wireguard"
 	"github.com/alatticeio/lattice/internal/daemon"
@@ -763,6 +764,14 @@ func (c *Node) Stop() error {
 	}
 	if c.filteringMux6 != nil {
 		_ = c.filteringMux6.Close()
+	}
+	// The exit-takeover policy rules (table 5180) outlive the interface we
+	// are about to close — the 0/1+128/1 routes die with wf0 and orphaned
+	// rules fall through to main (harmless), but sweep them anyway so the
+	// host is left exactly as it was found. Crash path is covered by
+	// systemd ExecStopPost / `lattice net cleanup`.
+	if err := netstate.RemoveExitTakeover(infra.ExecCommand); err != nil {
+		c.logger.Debug("exit takeover cleanup failed", "err", err)
 	}
 	c.iface.Close()
 	return nil

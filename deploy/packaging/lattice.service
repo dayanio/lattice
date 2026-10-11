@@ -5,9 +5,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Crash safety (2026-10-10-exit-node-crash-safety-design.md): sweep every
+# piece of host network state lattice wrote (table 5180, LATTICE-* chains)
+# before start and after any exit — including SIGKILL — so a dead lattice
+# never leaves the machine without internet.
+ExecStartPre=/usr/bin/lattice net cleanup
 ExecStart=/usr/bin/lattice start
-Restart=on-failure
-RestartSec=5
+ExecStopPost=/usr/bin/lattice net cleanup
+Restart=always
+RestartSec=2
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal
