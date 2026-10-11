@@ -6,6 +6,40 @@ Versions follow `MAJOR.MINOR.PATCH`. During the 0.x phase (Public Beta), minor v
 
 ---
 
+## v0.4.1 (2026-10-11)
+
+Exit-node reliability is the theme: a dead exit node no longer blackholes anyone, and it leaves nothing behind on the host. Also lands the make-before-break relay→direct upgrade and the tvOS cast engine work. The GUI clients (Mac/iOS) ship from the `lattice-apple` repository on their own schedule — see *Upgrade notes*.
+
+### Exit node crash safety (Linux provider)
+- A provider crash or `kill -9` no longer leaves the host in a broken state: every iptables rule lives in dedicated `LATTICE-FORWARD` / `LATTICE-NAT` / `LATTICE-INGRESS` / `LATTICE-EGRESS` chains (built-in chains hold a single jump each), exit-takeover routes live in policy table 5180 with rules at priorities 4500/5170/5180, and the host's default route is never touched. When the process dies any death, the kernel removes the tunnel interface, the takeover routes die with it, and lookups fall through to the main table — recovery starts before any cleanup code runs (verified on a real node: internet restored, `iptables-save` shows zero lattice entries)
+- New command `lattice net cleanup` sweeps every piece of lattice network state (idempotent, works offline — this is what systemd runs on ExecStopPost/ExecStartPre); `lattice net status` shows what is currently applied
+- The packaged `lattice.service` unit now wires `ExecStartPre`/`ExecStopPost` cleanup with `Restart=always`, so even SIGKILL sweeps the host within seconds
+
+### Exit node consumer fail-open
+- A consumer that selected an exit node no longer blackholes when the provider restarts: the takeover route is now gated on the provider's data path being alive (WireGuard counters growing, handshake renewing — probe state alone is not trusted). A stalled path fails open after 60 s to the direct path and reinstalls automatically on recovery (issue #63; verified on real devices: the "must disconnect and reconnect the tunnel" symptom is gone)
+- Servers already withdrew a dead provider's routes after ~25 s; the gate covers the window where the control plane still believes the provider is online while its data path is dead
+
+### Connectivity
+- Relay→direct upgrades no longer tear down the working relay path first (make-before-break, ADR-0007): an ICE that cannot connect (symmetric NAT, TUN-mode proxies capturing UDP) no longer interrupts the tunnel every few minutes during upgrade retries
+- Relay: fixed a per-session write race that could corrupt a stream, added per-session forward queues with write deadlines (ADR-0005 P1), and both peers now arm persistent keepalives
+- Both peers measure direct-path latency (previously the responder never did, so some devices showed no RTT for a link)
+
+### Cast (tvOS) — experimental
+- Cast commands travel over the NATS signaling plane (`lattice.cast.<AppID>.cmd`) with in-engine interception as the primary transport; the embedded engine surfaces cast commands as host events
+- `tvoslib`: a C-ABI static library of the engine for the tvOS player, plus `corelib` c-archive builds; `relayloadgen` is a load generator for relay fault drills
+
+### Fixes
+- The `lattice` CLI compiles for Windows again
+- `/metrics` exposes VictoriaMetrics counters
+- Docker builder image bumped to Go 1.26.8
+
+### Upgrade notes
+- **GUI clients are not part of this release.** The Mac/iOS apps build from the private `lattice-apple` repository and release on their own version — the consumer-side fail-open inside the Apple engine takes effect with the next app release, not with this tag
+- Upgrade the control plane together with Linux agents; providers upgraded from ≤0.4.0 have their legacy rules swept automatically on first start (`lattice net cleanup` runs before the engine)
+- As in every 0.x release, control plane and clients are meant to run the same minor version
+
+---
+
 ## v0.4.0 (2026-09-27)
 
 Exit nodes, "China direct" split routing and IPv6 for exit-node mode; latency now measured on both ends of a link. The iOS and macOS clients are now built from their own repository (see *Clients*), and the apps and the engine are released together under one version from here on.
