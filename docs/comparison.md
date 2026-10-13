@@ -1,5 +1,7 @@
 # How Lattice Compares
 
+> ⚠️ **2026-05 时的快照,已过时**:中继现为 FERRY(非 LRP)、平台新增 Windows CLI 与 Mac/iOS App、出口节点/分流/cast 未收录。最新全面对标见 `docs/superpowers/specs/2026-10-11-lattice-vs-tailscale-comparison.md`。
+
 ## Overview
 
 | Feature | Lattice | Tailscale | NetBird | Nebula |
